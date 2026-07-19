@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<!-- THROWAWAY multiplayer test harness for Spin the Food. Served by the spin-play edge function.
+     Shared game state lives in public.spin_play_state, synced via Supabase Realtime.
+     Not production - fake data, last-write-wins, open RLS. Drop the table before any real launch. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f59e0b">
+<title>Spin the Food</title>
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22Spin%20the%20Food%22%2C%22short_name%22%3A%22SpinFood%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23fafaf7%22%2C%22theme_color%22%3A%22%23f59e0b%22%2C%22start_url%22%3A%22.%22%2C%22icons%22%3A%5B%5D%7D">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root { --amber:#f59e0b; --amber-d:#b45309; --green:#10b981; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #fafaf7; color: #1f2937; overscroll-behavior: none;
+  }
+  #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 74px; }
+
+  /* identity gate */
+  .gate { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 28px; gap: 14px; text-align: center; }
+  .gate h1 { font-size: 30px; }
+  .gate p { color: #888; margin-bottom: 10px; }
+  .who-btn {
+    display: flex; align-items: center; gap: 14px; background: #fff; border: 2px solid #eee;
+    border-radius: 18px; padding: 16px 20px; font-size: 18px; font-weight: 700; cursor: pointer; text-align: left;
+  }
+  .who-btn .em { font-size: 30px; }
+  .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
+
+  /* top bar */
+  .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 8px; }
+  .me-pill { display: flex; align-items: center; gap: 8px; background: #fff; border: 1.5px solid #eee; border-radius: 999px; padding: 5px 12px 5px 6px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .me-pill .em { font-size: 20px; }
+  .presence { display: flex; gap: 3px; }
+  .presence .p { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; background: #fff; border: 1.5px solid #eee; opacity: .35; }
+  .presence .p.on { opacity: 1; border-color: var(--green); }
+  .screen-title { padding: 2px 20px 8px; }
+  .screen-title h2 { font-size: 22px; }
+  .screen-title .sub { color: #888; font-size: 13px; }
+
+  .btn { border: none; border-radius: 15px; padding: 13px 20px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .btn-primary { background: var(--amber); color: #fff; box-shadow: 0 4px 0 var(--amber-d); }
+  .btn-primary:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--amber-d); }
+  .btn-ghost { background: #fff; color: #444; border: 2px solid #e5e7eb; }
+  .chip { background: #fff; border: 1.5px solid #e5e7eb; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; user-select: none; }
+  .chip.on { border-color: var(--amber); background: #fef3c7; font-weight: 600; }
+  .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
+  .banner { margin: 12px 18px; padding: 13px 15px; border-radius: 16px; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 700; font-size: 14px; text-align: center; }
+
+  /* menu (D) */
+  .deadline { margin: 0 16px 8px; padding: 8px 14px; background: #1f2937; color: #fff; border-radius: 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .menu-list { padding: 0 14px; display: flex; flex-direction: column; gap: 8px; }
+  .day-block { background: #fff; border: 2px solid #eee; border-radius: 16px; overflow: hidden; }
+  .day-block.locked { border-color: var(--green); }
+  .day-hd { padding: 6px 12px 4px; font-weight: 800; font-size: 13px; color: #555; background: #fafaf9; border-bottom: 1px solid #f0f0ee; }
+  .slot { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid #f7f7f5; min-height: 42px; }
+  .slot:last-child { border-bottom: none; }
+  .slot.awaiting { background: #fffbeb; }
+  .slot-ico { width: 20px; font-size: 14px; }
+  .slot-main { flex: 1; }
+  .slot-dish { font-size: 13px; font-weight: 600; }
+  .slot-dish.empty { color: #bbb; font-weight: 400; }
+  .slot-cook { font-size: 11px; color: #999; margin-top: 1px; }
+  .slot-edit { background: none; border: none; font-size: 15px; cursor: pointer; color: #cbd5e1; }
+  .mini-row { display: flex; gap: 6px; margin-top: 4px; }
+  .mini-btn { border: 1.5px solid #e5e7eb; background: #fff; border-radius: 10px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: #555; }
+  .mini-btn.accept { border-color: var(--green); color: #059669; }
+  .mini-btn.reject { border-color: #ef4444; color: #ef4444; }
+  .prop { margin: 4px 12px 8px; padding: 8px 10px; background: #fff; border: 1px dashed var(--amber); border-radius: 10px; font-size: 12px; }
+
+  /* spin deck (A) */
+  .filter-row { display: flex; gap: 6px; padding: 0 18px 8px; overflow-x: auto; }
+  .filter-row .chip { font-size: 12px; padding: 6px 11px; white-space: nowrap; }
+  .stack { position: relative; height: 62vh; max-height: 440px; margin: 0 22px; }
+  .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
+  .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; }
+  .scard .ph small { position: absolute; bottom: 8px; right: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
+  .scard .bd { padding: 16px; }
+  .scard .ti { font-weight: 800; font-size: 22px; }
+  .scard .mt { font-size: 13px; color: #888; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .stamp { position: absolute; top: 20px; font-size: 24px; font-weight: 900; padding: 4px 14px; border-radius: 10px; border: 4px solid; opacity: 0; }
+  .stamp.yes { left: 16px; color: var(--green); border-color: var(--green); transform: rotate(-14deg); }
+  .stamp.no { right: 16px; color: #ef4444; border-color: #ef4444; transform: rotate(14deg); }
+  .deck-cta { display: flex; justify-content: center; gap: 20px; padding: 14px 0 4px; }
+  .round-btn { width: 58px; height: 58px; border-radius: 50%; border: 2px solid #eee; background: #fff; font-size: 25px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+  .hint { margin: 8px 20px; font-size: 11px; color: #aaa; text-align: center; }
+
+  /* wish (C) */
+  .card { margin: 8px 18px; background: #fff; border-radius: 18px; padding: 15px; border: 2px solid #e5e7eb; }
+  .card.granted { border-color: var(--green); background: #ecfdf5; }
+  .wish-head { display: flex; gap: 12px; align-items: center; }
+  .wish-dish { font-size: 38px; }
+  .wish-title { font-weight: 800; font-size: 17px; }
+  .wish-by { font-size: 12px; color: #888; }
+  .dots { display: flex; gap: 4px; margin-top: 10px; align-items: center; font-size: 12px; color: #888; min-height: 22px; }
+  .dot { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 1.5px solid #ccc; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+  .status { font-size: 12px; margin-top: 10px; color: var(--amber-d); font-weight: 600; }
+  .status.ok { color: #059669; }
+
+  /* duel (B) */
+  .duel { margin: 8px 18px; background: #fff; border-radius: 18px; padding: 14px; border: 2px solid #e5e7eb; cursor: pointer; position: relative; }
+  .duel.voted { border-color: #6366f1; background: #eef2ff; }
+  .duel.win { border-color: var(--green); background: #ecfdf5; }
+  .duel .pitch { font-size: 13px; color: #555; font-style: italic; margin-top: 6px; }
+  .crown-em { font-size: 15px; }
+
+  /* activity */
+  .activity { margin: 10px 18px 0; }
+  .activity .a { font-size: 12px; color: #777; padding: 5px 0; border-bottom: 1px solid #f0f0ee; }
+  .activity .a b { color: #444; }
+
+  /* modal */
+  .veil { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; display: flex; align-items: flex-end; }
+  #app { position: relative; }
+  .modal { background: #fff; width: 100%; max-width: 480px; margin: 0 auto; border-radius: 24px 24px 0 0; padding: 18px 20px 26px; animation: up .22s ease; max-height: 82vh; overflow-y: auto; }
+  @keyframes up { from { transform: translateY(30%); } to { transform: none; } }
+  .modal h3 { font-size: 17px; margin-bottom: 10px; }
+  .sect { font-size: 12px; color: #888; font-weight: 700; margin: 12px 0 6px; text-transform: uppercase; }
+
+  /* bottom nav */
+  .nav { position: fixed; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto; background: #fff; border-top: 1px solid #eee; display: flex; padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); }
+  .nav button { flex: 1; background: none; border: none; font-size: 11px; color: #9ca3af; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
+  .nav button .ic { font-size: 21px; }
+  .nav button.on { color: var(--amber); }
+
+  .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 60; max-width: 88%; text-align: center; }
+  .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 70; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON, { realtime: { params: { eventsPerSecond: 5 } } });
+
+const FAMILY_KEY = new URLSearchParams(location.search).get("family") || "kobzar-demo";
+
+// ── static data ──
+const FAMILY = [
+  { id: "mom",  em: "👩", en: "Mom",    ru: "Мама",    cook: true  },
+  { id: "dad",  em: "👨", en: "Dad",    ru: "Папа",    cook: true  },
+  { id: "gran", em: "👵", en: "Granny", ru: "Бабушка", cook: true  },
+  { id: "kid",  em: "👧", en: "Alisa",  ru: "Алиса",   cook: false },
+];
+const DISHES = [
+  { id: "borscht", em: "🍲", en: "Borscht",      ru: "Борщ",              g: "linear-gradient(135deg,#f87171,#b91c1c)", t: 90, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: ["gran"] },
+  { id: "ramen",   em: "🍜", en: "Ramen",        ru: "Рамен",             g: "linear-gradient(135deg,#fbbf24,#d97706)", t: 60, d: "●●●", p: "meat", c: "asian",   meals: ["lunch","dinner"], soup: true, special: ["dad"] },
+  { id: "solyanka",em: "🥣", en: "Solyanka",     ru: "Солянка",           g: "linear-gradient(135deg,#fdba74,#c2410c)", t: 75, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: [] },
+  { id: "pelmeni", em: "🥟", en: "Pelmeni",      ru: "Пельмени",          g: "linear-gradient(135deg,#e5e7eb,#9ca3af)", t: 45, d: "●○○", p: "meat", c: "russian", meals: ["dinner"], special: ["gran"] },
+  { id: "pizza",   em: "🍕", en: "Pizza",        ru: "Пицца",             g: "linear-gradient(135deg,#fb923c,#c2410c)", t: 40, d: "●○○", p: "meat", c: "italian", meals: ["dinner"], special: [] },
+  { id: "plov",    em: "🍛", en: "Plov",         ru: "Плов",              g: "linear-gradient(135deg,#fde047,#ca8a04)", t: 80, d: "●●○", p: "meat", c: "uzbek",   meals: ["dinner"], special: ["mom"] },
+  { id: "salad",   em: "🥗", en: "Greek salad",  ru: "Греческий салат",   g: "linear-gradient(135deg,#4ade80,#15803d)", t: 15, d: "●○○", p: "veg",  c: "greek",   meals: ["lunch","dinner"], special: [] },
+  { id: "salmon",  em: "🐟", en: "Baked salmon", ru: "Запечённый лосось", g: "linear-gradient(135deg,#f9a8d4,#be185d)", t: 35, d: "●●○", p: "fish", c: "nordic",  meals: ["dinner"], special: ["mom"] },
+  { id: "syrniki", em: "🥞", en: "Syrniki",      ru: "Сырники",           g: "linear-gradient(135deg,#fcd34d,#f59e0b)", t: 25, d: "●○○", p: "veg",  c: "russian", meals: ["breakfast"], special: ["gran"] },
+  { id: "omelette",em: "🍳", en: "Omelette",     ru: "Омлет",             g: "linear-gradient(135deg,#fef08a,#eab308)", t: 12, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: ["dad"] },
+  { id: "porridge",em: "🥣", en: "Oat porridge", ru: "Овсяная каша",      g: "linear-gradient(135deg,#d6d3d1,#78716c)", t: 15, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: [] },
+];
+const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const MEALS = [ { k: "breakfast", ic: "🍳", n: "Breakfast" }, { k: "lunch", ic: "🥪", n: "Lunch" }, { k: "dinner", ic: "🍲", n: "Dinner" } ];
+const dish = id => DISHES.find(d => d.id === id);
+const mem = id => FAMILY.find(m => m.id === id);
+
+// ── shared state ──
+let game = null;      // { week, wishes, duel, activity, locked }
+let me = localStorage.getItem("stf_me") || null;
+let tab = "menu";
+let modalOpen = false;
+let pendingRemote = null;
+let online = new Set();
+
+function seedGame() {
+  const cooks = ["mom","dad","gran"];
+  const week = DAYS.map(() => ({ breakfast: null, lunch: null, dinner: null }));
+  const bf = DISHES.filter(d => d.meals.includes("breakfast"));
+  const soups = DISHES.filter(d => d.soup);
+  const mains = DISHES.filter(d => d.meals.includes("dinner"));
+  let si = 0;
+  for (let i = 0; i < 7; i++) {
+    if (i < 5) week[i].breakfast = { dish: bf[i % bf.length].id, cook: cooks[i % 3], by: "ai", accepted: true };
+    if (!week[i].lunch) {
+      const s = soups[si++ % soups.length], ck = cooks[(i + 1) % 3];
+      week[i].lunch = { dish: s.id, cook: ck, by: "ai", accepted: true };
+      if (i + 1 < 7) week[i + 1].lunch = { dish: s.id, cook: ck, by: "ai", accepted: true, leftover: true };
+    }
+    if (i !== 5) week[i].dinner = { dish: mains[i % mains.length].id, cook: cooks[(i + 2) % 3], by: "ai", accepted: true };
+  }
+  return {
+    week, locked: false, wishes: [],
+    duel: { open: true, proposals: [
+      { dish: "borscht", chef: "gran", pitch: "Real borscht takes love. And I have beets.", votes: ["mom"] },
+      { dish: "ramen",   chef: "dad",  pitch: "Friday deserves broth that took 6 hours.", votes: [] },
+      { dish: "plov",    chef: "mom",  pitch: "Plov. One pot. Nothing to wash. Think about it.", votes: [] },
+    ]},
+    activity: [{ id: rid(), who: "ai", text: "AI drafted this week's menu", ts: Date.now() }],
+  };
+}
+function rid() { return Math.random().toString(36).slice(2, 9); }
+
+async function load() {
+  const { data } = await sb.from("spin_play_state").select("state").eq("family_key", FAMILY_KEY).maybeSingle();
+  if (data && data.state && data.state.week) { game = data.state; }
+  else { game = seedGame(); await persist(false); }
+}
+let saving = false;
+async function persist(logToast = true) {
+  saving = true;
+  const { error } = await sb.from("spin_play_state").upsert(
+    { family_key: FAMILY_KEY, state: game, updated_at: new Date().toISOString() },
+    { onConflict: "family_key" });
+  saving = false;
+  if (error) { toast("Sync error: " + error.message); document.body.insertAdjacentHTML("afterbegin", '<div class="offline">offline - changes may not sync</div>'); }
+}
+function act(text) { game.activity.unshift({ id: rid(), who: me, text, ts: Date.now() }); game.activity = game.activity.slice(0, 30); }
+
+function subscribe() {
+  sb.channel("spin-" + FAMILY_KEY)
+    .on("postgres_changes", { event: "*", schema: "public", table: "spin_play_state", filter: "family_key=eq." + FAMILY_KEY },
+      payload => {
+        if (!payload.new || !payload.new.state) return;
+        game = payload.new.state;
+        if (modalOpen) { pendingRemote = true; return; }
+        render();
+      })
+    .on("presence", { event: "sync" }, () => {
+      const st = presenceChan.presenceState();
+      online = new Set(Object.values(st).flat().map(p => p.who));
+      if (!modalOpen) render();
+    })
+    .subscribe();
+}
+let presenceChan;
+function joinPresence() {
+  presenceChan = sb.channel("presence-" + FAMILY_KEY, { config: { presence: { key: me } } });
+  presenceChan.on("presence", { event: "sync" }, () => {
+    online = new Set(Object.values(presenceChan.presenceState()).flat().map(p => p.who));
+    if (!modalOpen) render();
+  }).subscribe(async s => { if (s === "SUBSCRIBED") await presenceChan.track({ who: me }); });
+}
+
+// ── mutations (all persist) ──
+async function commitAndSync(text) { if (text) act(text); render(); await persist(); }
+
+function assignToSlot(day, mealKey, dishId, cook) {
+  const cur = game.week[day][mealKey];
+  const d = dish(dishId);
+  if (cur && cur.dish) {
+    cur.proposal = { dish: dishId, cook, by: me };
+    commitAndSync(`${mem(me).en} proposed ${d.em} ${d.en} for ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`);
+    toast("Replace proposal sent - family votes 🔔");
+  } else {
+    game.week[day][mealKey] = { dish: dishId, cook, by: me, accepted: cook === me };
+    const who = cook === me ? "" : ` - ${mem(cook).en} must accept`;
+    commitAndSync(`${mem(me).en} added ${d.em} ${d.en} to ${DAYS[day]}${who}`);
+    toast(cook === me ? "Added and you're cooking it ✅" : `Added - ${mem(cook).en} pinged to accept 🔔`);
+  }
+}
+function acceptCook(day, mealKey) {
+  const s = game.week[day][mealKey]; s.accepted = true;
+  commitAndSync(`${mem(me).en} accepted cooking ${dish(s.dish).em} on ${DAYS[day]}`);
+}
+function acceptProposal(day, mealKey) {
+  const s = game.week[day][mealKey]; const p = s.proposal;
+  game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, accepted: p.cook === p.by };
+  commitAndSync(`${mem(me).en} accepted the swap to ${dish(p.dish).em} on ${DAYS[day]}`);
+}
+function rejectProposal(day, mealKey) {
+  const s = game.week[day][mealKey]; const p = s.proposal; delete s.proposal;
+  commitAndSync(`${mem(me).en} rejected the ${dish(p.dish).em} swap for ${DAYS[day]}`);
+}
+function clearSlot(day, mealKey) {
+  game.week[day][mealKey] = null;
+  commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`);
+}
+
+// ── render ──
+const app = document.getElementById("app");
+function render() {
+  if (!me) return renderGate();
+  if (!game) { app.innerHTML = '<div class="gate"><h1>🍲</h1><p>Loading the family kitchen...</p></div>'; return; }
+  app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
+  wire();
+}
+function renderGate() {
+  app.innerHTML = `<div class="gate">
+    <h1>🍲 Spin the Food</h1>
+    <p>Who's on this phone?</p>
+    ${FAMILY.map(m => `<button class="who-btn" data-who="${m.id}"><span class="em">${m.em}</span>
+      <span>${m.en}<small>${m.cook ? "cooks" : "eats & votes"}</small></span></button>`).join("")}
+    <p style="margin-top:16px;font-size:12px">Family: <b>${FAMILY_KEY}</b></p>
+  </div>`;
+  app.querySelectorAll("[data-who]").forEach(b => b.onclick = async () => {
+    me = b.dataset.who; localStorage.setItem("stf_me", me);
+    joinPresence(); render();
+  });
+}
+function topbar() {
+  return `<div class="topbar">
+    <div class="me-pill" id="mePill"><span class="em">${mem(me).em}</span> ${mem(me).en} ▾</div>
+    <div class="presence">${FAMILY.map(m => `<div class="p ${online.has(m.id) ? "on" : ""}" title="${m.en}">${m.em}</div>`).join("")}</div>
+  </div>`;
+}
+
+function renderMenu() {
+  const g = game;
+  let h = `<div class="screen-title"><h2>This week's menu</h2><div class="sub">The backbone. Silence = consent by Sunday 20:00.</div></div>
+    <div class="deadline"><span>${g.locked ? "🔒 Confirmed - grocery list ready" : "⏰ Auto-confirms Sunday 20:00"}</span>
+      ${g.locked ? `<button class="mini-btn" id="unlock">reopen</button>` : `<button class="mini-btn" id="confirm">Confirm now</button>`}</div>
+    <div class="menu-list">`;
+  g.week.forEach((dayW, di) => {
+    h += `<div class="day-block ${g.locked ? "locked" : ""}"><div class="day-hd">${DAYS[di]}</div>`;
+    MEALS.forEach(m => {
+      const s = dayW[m.k];
+      const crown = s && dish(s.dish).special.includes(s.cook) ? ' <span class="crown-em">👑</span>' : "";
+      const awaiting = s && !s.accepted && !s.leftover;
+      h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main">`;
+      if (s) {
+        h += `<div class="slot-dish">${dish(s.dish).em} ${dish(s.dish).en}${crown}${s.leftover ? " ♻️" : ""}</div>
+          <div class="slot-cook">${s.leftover ? "already cooked - day 2 of the pot"
+            : `${mem(s.cook).em} ${mem(s.cook).en} cooks${crown ? " · their special" : ""} · ${s.by === "ai" ? "🤖 AI" : mem(s.by).em}`}</div>`;
+        if (awaiting) {
+          h += `<div class="mini-row">${s.cook === me
+            ? `<button class="mini-btn accept" data-cookacc="${di}-${m.k}">✅ Accept - I'll cook it</button>`
+            : `<span class="slot-cook">⏳ waiting for ${mem(s.cook).en} to accept</span>`}</div>`;
+        }
+        if (s.proposal) {
+          const p = s.proposal;
+          h += `<div class="prop">🔄 ${mem(p.by).en} suggests <b>${dish(p.dish).em} ${dish(p.dish).en}</b> (${mem(p.cook).en} cooks)
+            <div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ Accept</button>
+            <button class="mini-btn reject" data-proprej="${di}-${m.k}">❌ Reject</button></div></div>`;
+        }
+      } else {
+        h += `<div class="slot-dish empty">empty</div>
+          <div class="mini-row"><button class="mini-btn" data-spin="${di}-${m.k}">🎰 Spin</button>
+          <button class="mini-btn" data-wish="${di}-${m.k}">✨ Wish</button></div>`;
+      }
+      h += `</div>${!g.locked && s ? `<button class="slot-edit" data-edit="${di}-${m.k}">✏️</button>` : ""}</div>`;
+    });
+    h += `</div>`;
+  });
+  h += `</div>${g.locked ? `<div class="banner">🛒 Grocery list generated from the locked menu</div>` : ""}`;
+  return h;
+}
+
+let deckFilter = "all";
+const FILTERS = [["all","All"],["meat","🥩 Meat"],["fish","🐟 Fish"],["veg","🥗 Veg"],["russian","Russian"],["italian","Italian"],["asian","Asian"]];
+let deckOrder = DISHES.map(d => d.id);
+function deck() { return deckOrder.map(dish).filter(d => deckFilter === "all" || d.p === deckFilter || d.c === deckFilter); }
+function renderSpin() {
+  const dk = deck();
+  let h = `<div class="screen-title"><h2>Spin the Food</h2><div class="sub">Swipe left = next. Right = onto the menu.</div></div>
+    <div class="filter-row">${FILTERS.map(([k,l]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${l}</div>`).join("")}</div>
+    <div class="stack" id="stack">`;
+  if (!dk.length) h += `<div style="text-align:center;color:#aaa;padding-top:120px">No dishes match</div>`;
+  else dk.slice(0, 3).reverse().forEach((d, i, arr) => {
+    const top = i === arr.length - 1, dep = arr.length - 1 - i;
+    h += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
+      <div class="ph" style="background:${d.g}">${d.em}<small>photo placeholder</small></div>
+      <div class="bd"><div class="ti">${d.en}</div><div class="mt"><span>⏱ ${d.t} min</span><span>${d.d}</span><span>${d.c}</span></div></div>
+      <div class="stamp yes">MENU!</div><div class="stamp no">NOPE</div></div>`;
+  });
+  h += `</div><div class="deck-cta"><button class="round-btn" id="nope">👎</button>
+    <button class="round-btn" id="add" style="font-size:22px">➕</button>
+    <button class="round-btn" id="like">❤️</button></div>
+    <div class="hint">🤖 AI fills the menu Thursday before the week. Until then, build it together.</div>`;
+  return h;
+}
+
+function renderWish() {
+  let h = `<div class="screen-title"><h2>Make a Wish</h2><div class="sub">Wish - the family sees it - a hero cooks it.</div></div>`;
+  if (!game.wishes.length) h += `<div class="hint">No wishes yet. Tap below to make one.</div>`;
+  game.wishes.forEach((w, i) => {
+    const by = mem(w.by), commit = w.committed ? mem(w.committed) : null;
+    const title = w.kind === "dish" ? `${dish(w.dish).em} ${dish(w.dish).en}` : w.kind === "cuisine" ? `🌍 ${w.cuisine} night` : "🎁 Cook's choice";
+    const want = w.wishCook === "any" ? "anyone" : `${mem(w.wishCook).en} ${mem(w.wishCook).em}`;
+    const iVoted = w.votes.includes(me);
+    h += `<div class="card ${commit ? "granted" : ""}"><div class="wish-head">
+      <div class="wish-dish">${w.kind==="dish"?dish(w.dish).em:w.kind==="cuisine"?"🌍":"🎁"}</div>
+      <div><div class="wish-title">${title}</div><div class="wish-by">${by.em} ${by.en} wishes · from ${want} · ${DAYS[w.day]}</div></div></div>
+      <div class="dots">${w.votes.map(v => `<div class="dot">${mem(v).em}</div>`).join("")} ${w.votes.length} vote${w.votes.length!==1?"s":""}</div>`;
+    if (commit) h += `<div class="status ok">✅ ${commit.en} ${commit.em} takes it - added to the menu · +5 hero pts</div>`;
+    else {
+      h += `<div class="mini-row" style="margin-top:10px">`;
+      if (w.by !== me && !iVoted) h += `<button class="mini-btn" data-wvote="${i}">👍 Vote</button>`;
+      if (mem(me).cook) h += `<button class="mini-btn accept" data-wcommit="${i}">👨‍🍳 I'll cook it!</button>`;
+      h += `</div><div class="status">⏳ waiting for a hero...</div>`;
+    }
+    h += `</div>`;
+  });
+  h += `<div style="margin:14px 18px"><button class="btn btn-primary" id="newWish" style="width:100%">✨ Make a wish</button></div>`;
+  return h;
+}
+
+function renderDuel() {
+  const d = game.duel;
+  const winner = !d.open ? [...d.proposals].sort((a,b)=>b.votes.length-a.votes.length)[0] : null;
+  let h = `<div class="screen-title"><h2>Chef's Duel</h2><div class="sub">Pitch it - you cook it. Family votes.</div></div>`;
+  d.proposals.forEach((p, i) => {
+    const chef = mem(p.chef), win = winner === p, iVoted = p.votes.includes(me);
+    h += `<div class="duel ${iVoted?"voted":""} ${win?"win":""}" ${d.open&&!votedInDuel()?`data-duel="${i}"`:""}>
+      ${win?`<div style="position:absolute;top:-10px;right:14px;font-size:22px">👑</div>`:""}
+      <div style="display:flex;gap:10px;align-items:center"><div style="font-size:28px">${dish(p.dish).em}</div>
+      <div><div style="font-weight:700">${dish(p.dish).en}</div><div style="font-size:12px;color:#777">${chef.em} ${chef.en} cooks this</div></div></div>
+      <div class="pitch">"${p.pitch}"</div>
+      <div class="dots">${p.votes.map(v=>`<div class="dot">${mem(v).em}</div>`).join("")}</div></div>`;
+  });
+  if (!d.open && winner) h += `<div class="banner">👑 ${dish(winner.dish).en} wins - ${mem(winner.chef).en} cooks it</div>`;
+  else if (votedInDuel()) h += `<div class="hint">Your vote is in. Waiting for the rest of the family...</div>`;
+  else h += `<div class="hint">Tap a dish to vote.</div>`;
+  return h;
+}
+function votedInDuel() { return game.duel.proposals.some(p => p.votes.includes(me)); }
+
+function renderFeed() {
+  let h = `<div class="screen-title"><h2>Family activity</h2><div class="sub">Who did what, live.</div></div><div class="activity">`;
+  game.activity.forEach(a => {
+    const who = a.who === "ai" ? "🤖 AI" : `${mem(a.who).em} ${mem(a.who).en}`;
+    h += `<div class="a"><b>${who}</b> — ${a.text.replace(new RegExp("^"+(mem(a.who)?.en||"")+" "), "")} · ${ago(a.ts)}</div>`;
+  });
+  return h + `</div>`;
+}
+function ago(ts) { const s = (Date.now()-ts)/1000; if (s<60) return "just now"; if (s<3600) return Math.floor(s/60)+"m ago"; return Math.floor(s/3600)+"h ago"; }
+
+function nav() {
+  const tabs = [["menu","🗓","Menu"],["spin","🎰","Spin"],["wish","✨","Wish"],["duel","⚔️","Duel"],["feed","📣","Family"]];
+  return `<div class="nav">${tabs.map(([k,ic,l]) => `<button class="${tab===k?"on":""}" data-tab="${k}"><span class="ic">${ic}</span>${l}</button>`).join("")}</div>`;
+}
+
+// ── wiring ──
+function wire() {
+  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+  const pill = document.getElementById("mePill");
+  if (pill) pill.onclick = () => { localStorage.removeItem("stf_me"); me = null; render(); };
+
+  // menu
+  document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => { game.locked = true; game.week.forEach(d=>MEALS.forEach(m=>{ if(d[m.k]) delete d[m.k].proposal; })); commitAndSync(`${mem(me).en} confirmed the week`); });
+  document.getElementById("unlock") && (document.getElementById("unlock").onclick = () => { game.locked = false; commitAndSync(`${mem(me).en} reopened the menu`); });
+  document.querySelectorAll("[data-cookacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookacc.split("-"); acceptCook(+d,k); });
+  document.querySelectorAll("[data-propacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.propacc.split("-"); acceptProposal(+d,k); });
+  document.querySelectorAll("[data-proprej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.proprej.split("-"); rejectProposal(+d,k); });
+  document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(`Swipe right to fill ${DAYS[+d]} ${MEALS.find(m=>m.k===k).ic}`); });
+  document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); tab="wish"; render(); openWish(+d); });
+  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
+
+  // spin
+  document.querySelectorAll("[data-f]").forEach(c => c.onclick = () => { deckFilter=c.dataset.f; render(); });
+  const topCard = document.querySelector(".scard.top");
+  const fly = dir => {
+    if (!topCard) return;
+    const id = topCard.dataset.dish;
+    topCard.style.transition = "transform .35s, opacity .35s";
+    topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
+    setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); else render(); }, 300);
+  };
+  document.getElementById("nope") && (document.getElementById("nope").onclick = () => fly(-1));
+  document.getElementById("like") && (document.getElementById("like").onclick = () => fly(1));
+  document.getElementById("add") && (document.getElementById("add").onclick = openAdd);
+  if (topCard) {
+    let sx=0,dx=0,drag=false;
+    topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
+    topCard.addEventListener("pointermove", e => { if(!drag)return; dx=e.clientX-sx; topCard.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`;
+      topCard.querySelector(".stamp.yes").style.opacity = dx>40?Math.min(1,dx/120):0; topCard.querySelector(".stamp.no").style.opacity = dx<-40?Math.min(1,-dx/120):0; });
+    topCard.addEventListener("pointerup", () => { drag=false; if(dx>90)fly(1); else if(dx<-90)fly(-1);
+      else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0; });
+  }
+
+  // wish
+  document.getElementById("newWish") && (document.getElementById("newWish").onclick = () => openWish(null));
+  document.querySelectorAll("[data-wvote]").forEach(b => b.onclick = () => { game.wishes[+b.dataset.wvote].votes.push(me); commitAndSync(`${mem(me).en} voted for a wish`); });
+  document.querySelectorAll("[data-wcommit]").forEach(b => b.onclick = () => {
+    const w = game.wishes[+b.dataset.wcommit]; w.committed = me;
+    const d = w.kind==="dish" ? w.dish : DISHES.filter(x=>w.kind!=="cuisine"||x.c===w.cuisine)[0]?.id || "plov";
+    if (!game.week[w.day].dinner) game.week[w.day].dinner = { dish: d, cook: me, by: me, accepted: true };
+    else game.week[w.day].dinner.proposal = { dish: d, cook: me, by: me };
+    commitAndSync(`${mem(me).en} granted ${mem(w.by).en}'s wish`);
+    toast("Wish granted - added to the menu 🎉");
+  });
+
+  // duel
+  document.querySelectorAll("[data-duel]").forEach(c => c.onclick = () => {
+    const p = game.duel.proposals[+c.dataset.duel]; p.votes.push(me);
+    if (game.duel.proposals.reduce((n,x)=>n+x.votes.length,0) >= 3) game.duel.open = false;
+    commitAndSync(`${mem(me).en} voted in the duel`);
+  });
+}
+
+// ── modals ──
+let spinTarget = null;
+function modal(html) {
+  closeModal();
+  modalOpen = true;
+  const v = document.createElement("div"); v.className = "veil";
+  v.innerHTML = `<div class="modal">${html}</div>`;
+  v.onclick = e => { if (e.target === v) closeModal(); };
+  document.getElementById("app").appendChild(v);
+  return v;
+}
+function closeModal() {
+  document.querySelectorAll(".veil").forEach(v => v.remove());
+  if (modalOpen) { modalOpen = false; if (pendingRemote) { pendingRemote = false; render(); } }
+}
+function openAssign(dishId) {
+  let selDay = spinTarget ? spinTarget.day : null, selMeal = spinTarget ? spinTarget.meal : "dinner", selCook = mem(me).cook ? me : "gran";
+  spinTarget = null;
+  const v = modal(`<h3>${dish(dishId).em} ${dish(dishId).en} → the menu</h3>
+    <div class="sect">Which day?</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip" data-d="${i}">${d}</div>`).join("")}</div>
+    <div class="sect">Which meal?</div><div class="chips-wrap" id="M">${MEALS.map(m=>`<div class="chip ${m.k==="dinner"?"on":""}" data-m="${m.k}">${m.ic} ${m.n}</div>`).join("")}</div>
+    <div class="sect">Who should cook it?</div><div class="chips-wrap" id="C">${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip ${m.id===selCook?"on":""}" data-c="${m.id}">${m.em} ${m.en}</div>`).join("")}</div>
+    <button class="btn btn-primary" id="go" style="width:100%;margin-top:16px;opacity:${selDay!==null?1:.4}">Send to the menu</button>
+    <div style="font-size:11px;color:#999;margin-top:8px">The cook gets pinged and must accept.</div>`);
+  const upd = () => { v.querySelectorAll("#D .chip").forEach(c=>c.classList.toggle("on",+c.dataset.d===selDay));
+    v.querySelectorAll("#M .chip").forEach(c=>c.classList.toggle("on",c.dataset.m===selMeal));
+    v.querySelectorAll("#C .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCook));
+    v.querySelector("#go").style.opacity = selDay!==null?1:.4; };
+  v.querySelectorAll("#D .chip").forEach(c=>c.onclick=()=>{selDay=+c.dataset.d;upd();});
+  v.querySelectorAll("#M .chip").forEach(c=>c.onclick=()=>{selMeal=c.dataset.m;upd();});
+  v.querySelectorAll("#C .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
+  v.querySelector("#go").onclick = () => { if(selDay===null)return; closeModal(); assignToSlot(selDay,selMeal,dishId,selCook); };
+}
+function openEdit(day, mealKey) {
+  const v = modal(`<h3>✏️ ${DAYS[day]} · ${MEALS.find(m=>m.k===mealKey).n}</h3>
+    <div class="sect">Suggest a different dish</div>
+    <div class="chips-wrap">${DISHES.map(d=>`<div class="chip" data-s="${d.id}">${d.em} ${d.en}</div>`).join("")}</div>
+    <button class="btn btn-ghost" id="clear" style="width:100%;margin-top:14px">🗑 Clear this slot</button>`);
+  v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:"gran"); });
+  v.querySelector("#clear").onclick = () => { closeModal(); clearSlot(day,mealKey); };
+}
+function openWish(presetDay) {
+  const v = modal(`<h3>✨ What kind of wish?</h3>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-ghost" data-k="dish" style="text-align:left">🍛 A specific dish</button>
+      <button class="btn btn-ghost" data-k="cuisine" style="text-align:left">🌍 A cuisine night (chef picks)</button>
+      <button class="btn btn-ghost" data-k="choice" style="text-align:left">🎁 Cook's choice (surprise me)</button>
+    </div>`);
+  v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => wishStep2(b.dataset.k, presetDay));
+}
+function wishStep2(kind, presetDay) {
+  let selDish=null, selCui=null, selCook="any", selDay=presetDay??null;
+  const cuisines = ["russian","italian","asian","greek","uzbek"];
+  const v = modal(`<h3>${kind==="dish"?"🍛 Which dish?":kind==="cuisine"?"🌍 Which cuisine?":"🎁 Cook's choice"}</h3>
+    ${kind==="dish"?`<div class="chips-wrap" id="WD">${DISHES.map(d=>`<div class="chip" data-i="${d.id}">${d.em} ${d.en}</div>`).join("")}</div>`:""}
+    ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${cuisines.map(c=>`<div class="chip" data-c="${c}">${c}</div>`).join("")}</div>`:""}
+    <div class="sect">Who should cook it?</div>
+    <div class="chips-wrap" id="WK"><div class="chip on" data-c="any">🎲 Anyone</div>${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip" data-c="${m.id}">${m.em} ${m.en}</div>`).join("")}</div>
+    <div class="sect">Which day?</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${d}</div>`).join("")}</div>
+    <button class="btn btn-primary" id="wgo" style="width:100%;margin-top:16px;opacity:.4">✨ Wish it</button>`);
+  const ok = () => selDay!==null && (kind==="choice" || (kind==="dish"?selDish:selCui));
+  const upd = () => { v.querySelectorAll("#WD .chip").forEach(c=>c.classList.toggle("on",c.dataset.i===selDish));
+    v.querySelectorAll("#WC .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCui));
+    v.querySelectorAll("#WK .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCook));
+    v.querySelectorAll("#WY .chip").forEach(c=>c.classList.toggle("on",+c.dataset.d===selDay));
+    v.querySelector("#wgo").style.opacity = ok()?1:.4; };
+  v.querySelectorAll("#WD .chip").forEach(c=>c.onclick=()=>{selDish=c.dataset.i;upd();});
+  v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
+  v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
+  v.querySelectorAll("#WY .chip").forEach(c=>c.onclick=()=>{selDay=+c.dataset.d;upd();});
+  v.querySelector("#wgo").onclick = () => { if(!ok())return; closeModal();
+    game.wishes.unshift({ id: rid(), kind, dish: selDish, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay });
+    commitAndSync(`${mem(me).en} made a wish`); tab="wish"; render(); toast("Wish sent to the family ✨"); };
+}
+function openAdd() {
+  const emojis = ["🍝","🥘","🍤","🥧","🍱","🌮"]; let em = "🍝";
+  const v = modal(`<h3>➕ Add a dish</h3>
+    <div class="sect">Name</div><input id="nm" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px" placeholder="e.g. Lasagna">
+    <div class="sect">Photo (placeholder)</div><div class="chips-wrap" id="EM">${emojis.map(e=>`<div class="chip ${e===em?"on":""}" data-e="${e}">${e}</div>`).join("")}</div>
+    <div class="sect">Then what?</div>
+    <button class="btn btn-ghost" id="book" style="width:100%">📖 Save to recipe book</button>
+    <button class="btn btn-primary" id="day" style="width:100%;margin-top:8px">📅 Assign to a day</button>`);
+  v.querySelectorAll("#EM .chip").forEach(c=>c.onclick=()=>{em=c.dataset.e; v.querySelectorAll("#EM .chip").forEach(x=>x.classList.toggle("on",x.dataset.e===em));});
+  const mk = () => { const name = v.querySelector("#nm").value || "New dish";
+    const id = "custom-"+rid(); DISHES.push({ id, em, en: name, ru: name, g:"linear-gradient(135deg,#a5b4fc,#4f46e5)", t:45, d:"●●○", p:"meat", c:"family", meals:["dinner"], special:[] }); deckOrder.push(id); return id; };
+  v.querySelector("#book").onclick = () => { mk(); closeModal(); toast("Saved to the recipe book 📖"); render(); };
+  v.querySelector("#day").onclick = () => { const id = mk(); closeModal(); openAssign(id); };
+}
+
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach(t=>t.remove());
+  const t = document.createElement("div"); t.className="toast"; t.textContent=msg;
+  document.body.appendChild(t); setTimeout(()=>t.remove(), 2200);
+}
+
+// ── boot ──
+(async function () {
+  render(); // gate or loading
+  if (me) joinPresence();
+  await load();
+  subscribe();
+  render();
+})();
+</script>
+</body>
+</html>
