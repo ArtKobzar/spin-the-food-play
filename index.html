@@ -29,6 +29,32 @@
   .who-btn .em { font-size: 30px; }
   .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
 
+  /* onboarding */
+  .ob { flex: 1; display: flex; flex-direction: column; padding: 22px 24px 30px; }
+  .ob-nav { display: flex; align-items: center; gap: 10px; }
+  .ob-back { background: none; border: none; font-size: 24px; cursor: pointer; color: #999; padding: 0 4px; }
+  .ob-prog { display: flex; gap: 5px; flex: 1; }
+  .ob-prog i { height: 4px; flex: 1; border-radius: 2px; background: #eee; }
+  .ob-prog i.done { background: var(--amber); }
+  .ob-q { font-size: 24px; font-weight: 800; line-height: 1.25; margin: 18px 0 18px; }
+  .ob-big { display: flex; flex-direction: column; gap: 12px; }
+  .ob-big .btn { font-size: 17px; padding: 17px; }
+  .ob-note { color: #999; font-size: 13px; padding-top: 12px; }
+  .rate-row { display: flex; flex-wrap: wrap; gap: 7px; }
+  .rate-btn { width: 44px; height: 44px; border-radius: 12px; border: 1.5px solid #e5e7eb; background: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+  .rate-btn.on { background: var(--amber); color: #fff; border-color: var(--amber-d); }
+  .rate-btn.seven { color: #ccc; text-decoration: line-through; }
+  .ob-text { width: 100%; min-height: 110px; border: 2px solid #e5e7eb; border-radius: 16px; padding: 12px; font-size: 15px; font-family: inherit; resize: none; background: #fff; }
+  .ob-next { margin-top: auto; }
+  .mealgrid { display: grid; grid-template-columns: 52px repeat(3, 1fr); gap: 6px; font-size: 12px; }
+  .mealgrid.two { grid-template-columns: 52px repeat(2, 1fr); }
+  .mealgrid.one { grid-template-columns: 52px 1fr; }
+  .mealgrid .hd { text-align: center; color: #888; font-weight: 600; padding: 2px 0; }
+  .mealgrid .dy { color: #666; font-weight: 700; align-self: center; }
+  .mg-cell { height: 34px; border-radius: 9px; background: #ecfdf5; border: 1.5px solid var(--green); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .mg-cell.off { background: #f5f5f4; border-color: #e5e7eb; color: #ccc; }
+  .ob-sum { background: #fff; border: 1.5px solid #eee; border-radius: 16px; padding: 14px; font-size: 14px; line-height: 1.7; }
+
   /* top bar */
   .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px 8px; }
   .me-pill { display: flex; align-items: center; gap: 8px; background: #fff; border: 1.5px solid #eee; border-radius: 999px; padding: 5px 12px 5px 6px; font-weight: 700; font-size: 14px; cursor: pointer; }
@@ -164,6 +190,14 @@ const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MEALS = [ { k: "breakfast", ic: "🍳", n: "Breakfast" }, { k: "lunch", ic: "🥪", n: "Lunch" }, { k: "dinner", ic: "🍲", n: "Dinner" } ];
 const dish = id => DISHES.find(d => d.id === id);
 const mem = id => FAMILY.find(m => m.id === id);
+// crown sources: static specials + dishes named in a member's registered top-3
+function specials(d) {
+  const s = new Set(d.special);
+  for (const [id, p] of Object.entries(game?.profiles ?? {})) {
+    if (p.top3 && (p.top3.toLowerCase().includes(d.en.toLowerCase()) || p.top3.toLowerCase().includes(d.ru.toLowerCase()))) s.add(id);
+  }
+  return s;
+}
 
 // ── shared state ──
 let game = null;      // { week, wishes, duel, activity, locked }
@@ -190,7 +224,7 @@ function seedGame() {
     if (i !== 5) week[i].dinner = { dish: mains[i % mains.length].id, cook: cooks[(i + 2) % 3], by: "ai", accepted: true };
   }
   return {
-    week, locked: false, wishes: [],
+    week, locked: false, wishes: [], profiles: {},
     duel: { open: true, proposals: [
       { dish: "borscht", chef: "gran", pitch: "Real borscht takes love. And I have beets.", votes: ["mom"] },
       { dish: "ramen",   chef: "dad",  pitch: "Friday deserves broth that took 6 hours.", votes: [] },
@@ -203,7 +237,7 @@ function rid() { return Math.random().toString(36).slice(2, 9); }
 
 async function load() {
   const { data } = await sb.from("spin_play_state").select("state").eq("family_key", FAMILY_KEY).maybeSingle();
-  if (data && data.state && data.state.week) { game = data.state; }
+  if (data && data.state && data.state.week) { game = data.state; if (!game.profiles) game.profiles = {}; }
   else { game = seedGame(); await persist(false); }
 }
 let saving = false;
@@ -282,20 +316,138 @@ const app = document.getElementById("app");
 function render() {
   if (!me) return renderGate();
   if (!game) { app.innerHTML = '<div class="gate"><h1>🍲</h1><p>Loading the family kitchen...</p></div>'; return; }
+  if (!game.profiles[me]) return renderOnboard();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
   wire();
+}
+
+// ── onboarding (registration gate - every member passes it once) ──
+let ob = null;
+function obReset() { ob = { step: 0, lang: "en", isCook: null, avail: [], cookGrid: {}, rating: null, top3: "", allergies: [], eatGrid: {} }; }
+const OB_ALG = [["nuts","Nuts","Орехи"],["dairy","Dairy","Молочка"],["gluten","Gluten","Глютен"],["eggs","Eggs","Яйца"],["shellfish","Shellfish","Морепродукты"],["none","None","Нет"]];
+function obSteps() { return ob.isCook === false ? ["lang","cookq","eat","done"] : ["lang","cookq","avail","cookweek","rate","top3","eat","done"]; }
+function renderOnboard() {
+  if (!ob) obReset();
+  const t = (en, ru) => (ob.lang === "en" ? en : ru);
+  const steps = obSteps(), cur = steps[ob.step];
+  const nav = `<div class="ob-nav">${ob.step > 0 && cur !== "done" ? `<button class="ob-back" id="obBack">‹</button>` : ""}
+    <div class="ob-prog">${steps.map((_, i) => `<i class="${i <= ob.step ? "done" : ""}"></i>`).join("")}</div></div>`;
+  let inner = "";
+  if (cur === "lang") {
+    inner = `<div class="ob-q">🌍 Language / Язык</div>
+      <div class="ob-big">
+        <button class="btn btn-ghost" data-lang="en">🇬🇧 English</button>
+        <button class="btn btn-ghost" data-lang="ru">🇷🇺 Русский</button>
+      </div>
+      <div class="ob-note">Hi ${mem(me).em} ${mem(me).en}! Chosen once - later it hides behind settings.</div>`;
+  } else if (cur === "cookq") {
+    inner = `<div class="ob-q">${t("Do you cook for your family?", "Ты готовишь для семьи?")}</div>
+      <div class="ob-big">
+        <button class="btn btn-primary" data-cook="yes">👨‍🍳 ${t("Yes, I cook", "Да, я готовлю")}</button>
+        <button class="btn btn-ghost" data-cook="no">🍽️ ${t("No, I just eat", "Нет, я только ем")}</button>
+      </div>`;
+  } else if (cur === "avail") {
+    inner = `<div class="ob-q">${t("Which meals can you cook?", "Какие приёмы пищи можешь готовить?")}</div>
+      <div class="chips-wrap">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
+      <button class="btn btn-primary ob-next" id="obNext" ${ob.avail.length ? "" : `disabled style="opacity:.4"`}>${t("Next", "Дальше")}</button>`;
+  } else if (cur === "cookweek") {
+    const chosen = MEALS.filter(m => ob.avail.includes(m.k));
+    const cls = chosen.length === 1 ? "one" : chosen.length === 2 ? "two" : "";
+    inner = `<div class="ob-q">${t("Your cooking week", "Твоя неделя готовки")}</div>
+      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap to free a day.", "Мы назначили тебе все приёмы, что ты умеешь. Нажми, чтобы освободить день.")}</div>
+      <div class="mealgrid ${cls}"><div></div>${chosen.map(m => `<div class="hd">${m.ic}</div>`).join("")}
+        ${DAYS.map((d, di) => `<div class="dy">${d}</div>` + chosen.map(m => {
+          const k = di + "-" + m.k, on = ob.cookGrid[k] !== false;
+          return `<div class="mg-cell ${on ? "" : "off"}" data-cw="${k}">${on ? "👨‍🍳" : ""}</div>`;
+        }).join("")).join("")}
+      </div>
+      <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
+  } else if (cur === "rate") {
+    inner = `<div class="ob-q">${t("Rate your cooking skills", "Оцени свои кулинарные навыки")}</div>
+      <div class="rate-row">${Array.from({length:10},(_,i)=>i+1).map(n =>
+        `<button class="rate-btn ${ob.rating === n ? "on" : ""} ${n === 7 ? "seven" : ""}" data-rate="${n}">${n}</button>`).join("")}</div>
+      <div class="ob-note">${t("Yes, there is no 7. Decide.", "Да, семёрки нет. Определись.")}</div>
+      <button class="btn btn-primary ob-next" id="obNext" ${ob.rating ? "" : `disabled style="opacity:.4"`}>${t("Next", "Дальше")}</button>`;
+  } else if (cur === "top3") {
+    inner = `<div class="ob-q">${t("Your top-3 dishes to cook for your loved ones", "Твои топ-3 блюда для любимых")}</div>
+      <textarea class="ob-text" id="obTop3" placeholder="${t("e.g. plov, borscht, syrniki...", "например: плов, борщ, сырники...")}">${ob.top3}</textarea>
+      <div class="ob-note">${t("Dishes you name here get your 👑 crown on the menu.", "Названные блюда получат твою корону 👑 в меню.")}</div>
+      <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
+  } else if (cur === "eat") {
+    inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ешь дома?")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Allergies?", "Аллергии?")}</div>
+      <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap to toggle.", "Какие приёмы пищи ты дома? Нажми, чтобы переключить.")}</div>
+      <div class="mealgrid"><div></div>${MEALS.map(m => `<div class="hd">${m.ic}</div>`).join("")}
+        ${DAYS.map((d, di) => `<div class="dy">${d}</div>` + MEALS.map((m, mi) => {
+          const k = di + "-" + mi, on = ob.eatGrid[k] !== false;
+          return `<div class="mg-cell ${on ? "" : "off"}" data-eat="${k}">${on ? "✓" : ""}</div>`;
+        }).join("")).join("")}
+      </div>
+      <button class="btn btn-primary ob-next" id="obNext">${t("Submit", "Отправить")}</button>`;
+  } else {
+    inner = `<div class="ob-q">🎉 ${t("Profile ready!", "Профиль готов!")}</div>
+      <div class="ob-sum">
+        ${ob.isCook ? `👨‍🍳 ${t("Cook", "Повар")}: ${ob.avail.map(k => MEALS.find(m => m.k === k).ic).join(" ")}<br>
+        📊 ${t("Skill", "Навык")}: ${ob.rating ?? "-"}/10<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
+        ⚠️ ${ob.allergies.length ? ob.allergies.join(", ") : t("no allergies", "без аллергий")}
+      </div>
+      <button class="btn btn-primary ob-next" id="obDone">${t("To this week's menu →", "К меню недели →")}</button>`;
+  }
+  app.innerHTML = `<div class="ob">${nav}${inner}</div>`;
+
+  const back = document.getElementById("obBack");
+  if (back) back.onclick = () => { ob.step--; render(); };
+  app.querySelectorAll("[data-lang]").forEach(b => b.onclick = () => { ob.lang = b.dataset.lang; ob.step++; render(); });
+  app.querySelectorAll("[data-cook]").forEach(b => b.onclick = () => { ob.isCook = b.dataset.cook === "yes"; ob.step++; render(); });
+  app.querySelectorAll("[data-avail]").forEach(b => b.onclick = () => {
+    const k = b.dataset.avail;
+    ob.avail = ob.avail.includes(k) ? ob.avail.filter(x => x !== k) : [...ob.avail, k];
+    render();
+  });
+  app.querySelectorAll("[data-cw]").forEach(b => b.onclick = () => { ob.cookGrid[b.dataset.cw] = ob.cookGrid[b.dataset.cw] === false; render(); });
+  app.querySelectorAll("[data-rate]").forEach(b => b.onclick = () => {
+    const n = +b.dataset.rate;
+    if (n === 7) { toast(ob.lang === "en" ? "There is no 7. Be honest." : "Семёрки нет. Будь честен."); return; }
+    ob.rating = n; render();
+  });
+  app.querySelectorAll("[data-al]").forEach(b => b.onclick = () => {
+    const k = b.dataset.al;
+    if (k === "none") ob.allergies = ["none"];
+    else { ob.allergies = ob.allergies.filter(x => x !== "none");
+      ob.allergies = ob.allergies.includes(k) ? ob.allergies.filter(x => x !== k) : [...ob.allergies, k]; }
+    render();
+  });
+  app.querySelectorAll("[data-eat]").forEach(b => b.onclick = () => { ob.eatGrid[b.dataset.eat] = ob.eatGrid[b.dataset.eat] === false; render(); });
+  const next = document.getElementById("obNext");
+  if (next) next.onclick = () => {
+    const ta = document.getElementById("obTop3");
+    if (ta) ob.top3 = ta.value;
+    if (next.disabled) return;
+    ob.step++; render();
+  };
+  const done = document.getElementById("obDone");
+  if (done) done.onclick = async () => {
+    game.profiles[me] = { lang: ob.lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, rating: ob.rating, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
+    ob = null; tab = "menu";
+    await commitAndSync(`${mem(me).en} registered their profile`);
+    toast("Welcome to the family kitchen 🍲");
+  };
 }
 function renderGate() {
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>Who's on this phone?</p>
-    ${FAMILY.map(m => `<button class="who-btn" data-who="${m.id}"><span class="em">${m.em}</span>
-      <span>${m.en}<small>${m.cook ? "cooks" : "eats & votes"}</small></span></button>`).join("")}
+    <p>Who's on this phone? New members register first.</p>
+    ${FAMILY.map(m => {
+      const reg = game?.profiles?.[m.id];
+      return `<button class="who-btn" data-who="${m.id}"><span class="em">${m.em}</span>
+      <span>${m.en}<small>${reg ? "✓ registered" : "not registered yet - onboarding first"}</small></span></button>`;
+    }).join("")}
     <p style="margin-top:16px;font-size:12px">Family: <b>${FAMILY_KEY}</b></p>
   </div>`;
   app.querySelectorAll("[data-who]").forEach(b => b.onclick = async () => {
     me = b.dataset.who; localStorage.setItem("stf_me", me);
-    joinPresence(); render();
+    obReset(); joinPresence(); render();
   });
 }
 function topbar() {
@@ -315,7 +467,7 @@ function renderMenu() {
     h += `<div class="day-block ${g.locked ? "locked" : ""}"><div class="day-hd">${DAYS[di]}</div>`;
     MEALS.forEach(m => {
       const s = dayW[m.k];
-      const crown = s && dish(s.dish).special.includes(s.cook) ? ' <span class="crown-em">👑</span>' : "";
+      const crown = s && specials(dish(s.dish)).has(s.cook) ? ' <span class="crown-em">👑</span>' : "";
       const awaiting = s && !s.accepted && !s.leftover;
       h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main">`;
       if (s) {
@@ -434,7 +586,7 @@ function nav() {
 function wire() {
   document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
   const pill = document.getElementById("mePill");
-  if (pill) pill.onclick = () => { localStorage.removeItem("stf_me"); me = null; render(); };
+  if (pill) pill.onclick = () => { localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
 
   // menu
   document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => { game.locked = true; game.week.forEach(d=>MEALS.forEach(m=>{ if(d[m.k]) delete d[m.k].proposal; })); commitAndSync(`${mem(me).en} confirmed the week`); });
