@@ -384,7 +384,8 @@ function renderOnboard() {
         <button class="btn btn-primary" data-cook="yes">👨‍🍳 ${t("Yes, I cook", "Да, я готовлю")}</button>
         <button class="btn btn-ghost" data-cook="no">🍽️ ${t("No, I just eat", "Нет, я только ем")}</button>
       </div>
-      <div class="ob-note">${mem(me).em} ${t("Hi", "Привет")}, ${mName(mem(me))}!</div>`;
+      <div class="ob-note">${mem(me).em} ${t("Hi", "Привет")}, ${mName(mem(me))}!
+        <a href="#" id="notMe" style="color:#f59e0b;font-weight:600;margin-left:6px">${t("Not you? Switch", "Это не ты? Сменить")}</a></div>`;
   } else if (cur === "avail") {
     inner = `<div class="ob-q">${t("Which meals can you cook?", "Какие приёмы пищи можешь готовить?")}</div>
       <div class="chips-wrap">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
@@ -437,6 +438,8 @@ function renderOnboard() {
 
   const back = document.getElementById("obBack");
   if (back) back.onclick = () => { ob.step--; render(); };
+  const notMe = document.getElementById("notMe");
+  if (notMe) notMe.onclick = e => { e.preventDefault(); localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
   app.querySelectorAll("[data-cook]").forEach(b => b.onclick = () => { ob.isCook = b.dataset.cook === "yes"; ob.step++; render(); });
   app.querySelectorAll("[data-avail]").forEach(b => b.onclick = () => {
     const k = b.dataset.avail;
