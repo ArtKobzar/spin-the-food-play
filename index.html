@@ -164,7 +164,15 @@ const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON, { realtime: { params: { eventsPerSecond: 5 } } });
 
-const FAMILY_KEY = new URLSearchParams(location.search).get("family") || "kobzar-demo";
+// Family key is the shared "room". It must survive a lost ?family= param
+// (installed PWAs open at start_url "." with no query), so once seen it is
+// remembered on the device. Otherwise members silently split into separate kitchens.
+function resolveFamilyKey() {
+  const q = new URLSearchParams(location.search).get("family");
+  if (q) { localStorage.setItem("stf_family", q); return q; }
+  return localStorage.getItem("stf_family") || "kobzar-demo";
+}
+const FAMILY_KEY = resolveFamilyKey();
 
 // ── language: chosen FIRST, before identity; carried through the whole app ──
 let lang = localStorage.getItem("stf_lang") || null;
@@ -248,37 +256,85 @@ function seedGame() {
 }
 function rid() { return Math.random().toString(36).slice(2, 9); }
 
+let lastSeenTs = 0;
+
 async function load() {
-  const { data } = await sb.from("spin_play_state").select("state").eq("family_key", FAMILY_KEY).maybeSingle();
-  if (data && data.state && data.state.week) { game = data.state; if (!game.profiles) game.profiles = {}; }
-  else { game = seedGame(); await persist(false); }
+  const { data } = await sb.from("spin_play_state").select("state, updated_at").eq("family_key", FAMILY_KEY).maybeSingle();
+  if (data && data.state && data.state.week) {
+    game = data.state; if (!game.profiles) game.profiles = {};
+    lastSeenTs = new Date(data.updated_at).getTime();
+  } else { game = seedGame(); await persist(false); }
 }
+
+// Apply a fresher remote state. Deferred while a modal is open or mid-registration
+// so it never disrupts what the user is filling in.
+function shouldDefer() {
+  if (modalOpen) return true;
+  if (me && game && !game.profiles[me] && ob && ob.step > 0) return true;
+  return false;
+}
+function applyRemote(state, ts) {
+  if (!state || !state.week) return;
+  if (ts && ts <= lastSeenTs) return;   // ignore stale / our own echo
+  lastSeenTs = ts || lastSeenTs;
+  game = state; if (!game.profiles) game.profiles = {};
+  if (shouldDefer()) { pendingRemote = true; return; }
+  render();
+}
+
+// Belt-and-braces sync: realtime is the fast path, but mobile browsers silently
+// kill the websocket when backgrounded. A refetch on focus + a light poll while
+// visible guarantee everyone converges even if the socket dropped.
+async function pullLatest() {
+  const { data } = await sb.from("spin_play_state").select("state, updated_at").eq("family_key", FAMILY_KEY).maybeSingle();
+  if (data && data.state) applyRemote(data.state, new Date(data.updated_at).getTime());
+}
+
+function unionById(remoteArr, localArr) {
+  const m = new Map();
+  for (const x of (remoteArr || [])) m.set(x.id, x);
+  for (const x of (localArr || [])) m.set(x.id, x);
+  return [...m.values()];
+}
+
 let saving = false;
-async function persist(logToast = true) {
+async function persist() {
   saving = true;
+  // Merge on write so a stale client cannot clobber another member's profile/wish/activity.
+  // Re-read the freshest row, overlay this device's additive changes, then write.
+  const { data: fresh } = await sb.from("spin_play_state").select("state").eq("family_key", FAMILY_KEY).maybeSingle();
+  const r = fresh && fresh.state;
+  if (r && r.week) {
+    game.profiles = { ...r.profiles, ...game.profiles };
+    game.wishes   = unionById(r.wishes, game.wishes);
+    game.activity = unionById(r.activity, game.activity).sort((a, b) => b.ts - a.ts).slice(0, 30);
+  }
+  const ts = new Date().toISOString();
+  lastSeenTs = new Date(ts).getTime();
   const { error } = await sb.from("spin_play_state").upsert(
-    { family_key: FAMILY_KEY, state: game, updated_at: new Date().toISOString() },
-    { onConflict: "family_key" });
+    { family_key: FAMILY_KEY, state: game, updated_at: ts }, { onConflict: "family_key" });
   saving = false;
   if (error) { toast("Sync error: " + error.message); document.body.insertAdjacentHTML("afterbegin", '<div class="offline">offline - changes may not sync</div>'); }
 }
 function act(text) { game.activity.unshift({ id: rid(), who: me, text, ts: Date.now() }); game.activity = game.activity.slice(0, 30); }
 
+let rtChan;
 function subscribe() {
-  sb.channel("spin-" + FAMILY_KEY)
+  if (rtChan) sb.removeChannel(rtChan);
+  rtChan = sb.channel("spin-" + FAMILY_KEY)
     .on("postgres_changes", { event: "*", schema: "public", table: "spin_play_state", filter: "family_key=eq." + FAMILY_KEY },
       payload => {
         if (!payload.new || !payload.new.state) return;
-        game = payload.new.state;
-        if (modalOpen) { pendingRemote = true; return; }
-        render();
+        applyRemote(payload.new.state, new Date(payload.new.updated_at).getTime());
       })
-    .on("presence", { event: "sync" }, () => {
-      const st = presenceChan.presenceState();
-      online = new Set(Object.values(st).flat().map(p => p.who));
-      if (!modalOpen) render();
-    })
     .subscribe();
+}
+function startSyncWatchers() {
+  const wake = () => { if (!document.hidden) { pullLatest(); if (rtChan && rtChan.state !== "joined") subscribe(); } };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("focus", wake);
+  window.addEventListener("online", wake);
+  setInterval(() => { if (!document.hidden) pullLatest(); }, 4000);
 }
 let presenceChan;
 function joinPresence() {
@@ -356,6 +412,8 @@ function openSettings() {
       <div class="chip ${lang === "en" ? "on" : ""}" data-sl="en">🇬🇧 English</div>
       <div class="chip ${lang === "ru" ? "on" : ""}" data-sl="ru">🇷🇺 Русский</div>
     </div>
+    <div class="sect">${T("Family", "Семья")}</div>
+    <div style="font-size:13px;color:#666;margin-bottom:10px">${T("Everyone must share this code to see each other", "Все должны быть в одной семье, чтобы видеть друг друга")}: <b>${FAMILY_KEY}</b></div>
     <div class="sect">${T("This phone", "Этот телефон")}</div>
     <button class="btn btn-ghost" id="swUser" style="width:100%">${T("Switch family member", "Сменить члена семьи")}</button>`);
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
@@ -787,6 +845,7 @@ function toast(msg) {
   if (me) joinPresence();
   await load();
   subscribe();
+  startSyncWatchers();
   render();
 })();
 </script>
