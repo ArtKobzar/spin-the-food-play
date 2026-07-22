@@ -197,17 +197,17 @@ const FAMILY = [
   { id: "kid",  em: "👧", en: "Alisa",  ru: "Алиса",   cook: false },
 ];
 const DISHES = [
-  { id: "borscht", em: "🍲", en: "Borscht",      ru: "Борщ",              g: "linear-gradient(135deg,#f87171,#b91c1c)", t: 90, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: ["gran"] },
-  { id: "ramen",   em: "🍜", en: "Ramen",        ru: "Рамен",             g: "linear-gradient(135deg,#fbbf24,#d97706)", t: 60, d: "●●●", p: "meat", c: "asian",   meals: ["lunch","dinner"], soup: true, special: ["dad"] },
-  { id: "solyanka",em: "🥣", en: "Solyanka",     ru: "Солянка",           g: "linear-gradient(135deg,#fdba74,#c2410c)", t: 75, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: [] },
-  { id: "pelmeni", em: "🥟", en: "Pelmeni",      ru: "Пельмени",          g: "linear-gradient(135deg,#e5e7eb,#9ca3af)", t: 45, d: "●○○", p: "meat", c: "russian", meals: ["dinner"], special: ["gran"] },
-  { id: "pizza",   em: "🍕", en: "Pizza",        ru: "Пицца",             g: "linear-gradient(135deg,#fb923c,#c2410c)", t: 40, d: "●○○", p: "meat", c: "italian", meals: ["dinner"], special: [] },
-  { id: "plov",    em: "🍛", en: "Plov",         ru: "Плов",              g: "linear-gradient(135deg,#fde047,#ca8a04)", t: 80, d: "●●○", p: "meat", c: "uzbek",   meals: ["dinner"], special: ["mom"] },
-  { id: "salad",   em: "🥗", en: "Greek salad",  ru: "Греческий салат",   g: "linear-gradient(135deg,#4ade80,#15803d)", t: 15, d: "●○○", p: "veg",  c: "greek",   meals: ["lunch","dinner"], special: [] },
-  { id: "salmon",  em: "🐟", en: "Baked salmon", ru: "Запечённый лосось", g: "linear-gradient(135deg,#f9a8d4,#be185d)", t: 35, d: "●●○", p: "fish", c: "nordic",  meals: ["dinner"], special: ["mom"] },
-  { id: "syrniki", em: "🥞", en: "Syrniki",      ru: "Сырники",           g: "linear-gradient(135deg,#fcd34d,#f59e0b)", t: 25, d: "●○○", p: "veg",  c: "russian", meals: ["breakfast"], special: ["gran"] },
-  { id: "omelette",em: "🍳", en: "Omelette",     ru: "Омлет",             g: "linear-gradient(135deg,#fef08a,#eab308)", t: 12, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: ["dad"] },
-  { id: "porridge",em: "🥣", en: "Oat porridge", ru: "Овсяная каша",      g: "linear-gradient(135deg,#d6d3d1,#78716c)", t: 15, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: [] },
+  { id: "borscht", em: "🍲", en: "Borscht",      ru: "Борщ",              g: "linear-gradient(135deg,#f87171,#b91c1c)", t: 90, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: ["gran"], allergens: ["dairy"] },
+  { id: "ramen",   em: "🍜", en: "Ramen",        ru: "Рамен",             g: "linear-gradient(135deg,#fbbf24,#d97706)", t: 60, d: "●●●", p: "meat", c: "asian",   meals: ["lunch","dinner"], soup: true, special: ["dad"], allergens: ["gluten","eggs"] },
+  { id: "solyanka",em: "🥣", en: "Solyanka",     ru: "Солянка",           g: "linear-gradient(135deg,#fdba74,#c2410c)", t: 75, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: [], allergens: ["dairy"] },
+  { id: "pelmeni", em: "🥟", en: "Pelmeni",      ru: "Пельмени",          g: "linear-gradient(135deg,#e5e7eb,#9ca3af)", t: 45, d: "●○○", p: "meat", c: "russian", meals: ["dinner"], special: ["gran"], allergens: ["gluten","eggs"] },
+  { id: "pizza",   em: "🍕", en: "Pizza",        ru: "Пицца",             g: "linear-gradient(135deg,#fb923c,#c2410c)", t: 40, d: "●○○", p: "meat", c: "italian", meals: ["dinner"], special: [], allergens: ["gluten","dairy"] },
+  { id: "plov",    em: "🍛", en: "Plov",         ru: "Плов",              g: "linear-gradient(135deg,#fde047,#ca8a04)", t: 80, d: "●●○", p: "meat", c: "uzbek",   meals: ["dinner"], special: ["mom"], allergens: [] },
+  { id: "salad",   em: "🥗", en: "Greek salad",  ru: "Греческий салат",   g: "linear-gradient(135deg,#4ade80,#15803d)", t: 15, d: "●○○", p: "veg",  c: "greek",   meals: ["lunch","dinner"], special: [], allergens: ["dairy"] },
+  { id: "salmon",  em: "🐟", en: "Baked salmon", ru: "Запечённый лосось", g: "linear-gradient(135deg,#f9a8d4,#be185d)", t: 35, d: "●●○", p: "fish", c: "nordic",  meals: ["dinner"], special: ["mom"], allergens: [] },
+  { id: "syrniki", em: "🥞", en: "Syrniki",      ru: "Сырники",           g: "linear-gradient(135deg,#fcd34d,#f59e0b)", t: 25, d: "●○○", p: "veg",  c: "russian", meals: ["breakfast"], special: ["gran"], allergens: ["dairy","eggs","gluten"] },
+  { id: "omelette",em: "🍳", en: "Omelette",     ru: "Омлет",             g: "linear-gradient(135deg,#fef08a,#eab308)", t: 12, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: ["dad"], allergens: ["eggs","dairy"] },
+  { id: "porridge",em: "🥣", en: "Oat porridge", ru: "Овсяная каша",      g: "linear-gradient(135deg,#d6d3d1,#78716c)", t: 15, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: [], allergens: ["dairy"] },
 ];
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
@@ -229,6 +229,65 @@ function specials(d) {
     if (p.top3 && (p.top3.toLowerCase().includes(d.en.toLowerCase()) || p.top3.toLowerCase().includes(d.ru.toLowerCase()))) s.add(id);
   }
   return s;
+}
+
+// ── recipe filters (essential set used by leading recipe apps: meal type,
+//    dietary/allergy match, time, difficulty — layered on top of protein/cuisine) ──
+const MEAL_FILTERS = [["all","Any meal","Любой приём"],["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🥪 Lunch","🥪 Обед"],["dinner","🍲 Dinner","🍲 Ужин"]];
+const TIME_FILTERS = [["all","Any time","Любое время"],["quick","⚡ <20 min","⚡ <20 мин"],["medium","⏱ 20-45 min","⏱ 20-45 мин"],["long","🕒 45+ min","🕒 45+ мин"]];
+const DIFF_FILTERS = [["all","Any difficulty","Любая сложность"],["easy","● Easy","● Легко"],["medium","●● Medium","●● Средне"],["hard","●●● Hard","●●● Сложно"]];
+function diffLevel(d) { return (d.d.match(/●/g) || []).length; }
+function timeBucket(d) { return d.t <= 20 ? "quick" : d.t <= 45 ? "medium" : "long"; }
+// A dish is "safe for everyone" when no registered member's allergies overlap its allergen tags.
+// "custom" allergies can't be checked against tags, so they're excluded from this quick filter
+// (matches the plan-level rule that custom-allergy members need manual recipe review).
+function isSafeForEveryone(d) {
+  const allergens = d.allergens || [];
+  if (!allergens.length) return true;
+  for (const p of Object.values(game?.profiles ?? {})) {
+    const al = (p.allergies || []).filter(a => a !== "none" && a !== "custom");
+    if (al.some(a => allergens.includes(a))) return false;
+  }
+  return true;
+}
+function newAdvFilters() { return { meal: "all", time: "all", diff: "all", safeOnly: false }; }
+function matchesAdvFilters(d, f) {
+  if (f.meal !== "all" && !d.meals.includes(f.meal)) return false;
+  if (f.time !== "all" && timeBucket(d) !== f.time) return false;
+  if (f.diff !== "all" && diffLevel(d) !== { easy: 1, medium: 2, hard: 3 }[f.diff]) return false;
+  if (f.safeOnly && !isSafeForEveryone(d)) return false;
+  return true;
+}
+// Renders the collapsible "More filters" panel HTML. idPrefix keeps ids unique per surface.
+function advFilterPanelHtml(idPrefix, f, open) {
+  const row = (list, key, id) => `<div class="chips-wrap" id="${id}">${list.map(([k,l,lru]) =>
+    `<div class="chip ${f[key]===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>`;
+  return `
+    <button class="mini-btn" id="${idPrefix}Toggle">⚙️ ${T("More filters", "Больше фильтров")}</button>
+    <div id="${idPrefix}Panel" style="display:${open ? "block" : "none"}">
+      <div class="sect">${T("Meal", "Приём пищи")}</div>${row(MEAL_FILTERS, "meal", idPrefix+"Meal")}
+      <div class="sect">${T("Time", "Время")}</div>${row(TIME_FILTERS, "time", idPrefix+"Time")}
+      <div class="sect">${T("Difficulty", "Сложность")}</div>${row(DIFF_FILTERS, "diff", idPrefix+"Diff")}
+      <div class="sect">${T("Dietary", "Диета")}</div>
+      <div class="chips-wrap"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>
+    </div>`;
+}
+// Wires the panel built by advFilterPanelHtml. `panelState` is {open:bool}, mutated here so the
+// open/closed state survives a full re-render. onChange runs after any filter edit.
+function wireAdvFilterPanel(root, idPrefix, f, panelState, onChange) {
+  const toggle = root.querySelector("#"+idPrefix+"Toggle");
+  const panel = root.querySelector("#"+idPrefix+"Panel");
+  toggle.onclick = () => { panelState.open = !panelState.open; panel.style.display = panelState.open ? "block" : "none"; };
+  const wireRow = (id, key) => root.querySelectorAll("#"+id+" .chip").forEach(c => c.onclick = () => {
+    f[key] = c.dataset.k;
+    root.querySelectorAll("#"+id+" .chip").forEach(x => x.classList.toggle("on", x.dataset.k === f[key]));
+    onChange();
+  });
+  wireRow(idPrefix+"Meal", "meal");
+  wireRow(idPrefix+"Time", "time");
+  wireRow(idPrefix+"Diff", "diff");
+  const safe = root.querySelector("#"+idPrefix+"Safe");
+  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
 }
 
 // ── shared state ──
@@ -662,27 +721,69 @@ function renderMenu() {
 }
 
 let deckFilter = "all";
+let deckSearch = "";
+let deckAdv = newAdvFilters();
+let deckPanel = { open: false };
 const FILTERS = [["all","All","Все"],["meat","🥩 Meat","🥩 Мясо"],["fish","🐟 Fish","🐟 Рыба"],["veg","🥗 Veg","🥗 Овощи"],["russian","Russian","Русская"],["italian","Italian","Итальянская"],["asian","Asian","Азиатская"]];
 let deckOrder = DISHES.map(d => d.id);
-function deck() { return deckOrder.map(dish).filter(d => deckFilter === "all" || d.p === deckFilter || d.c === deckFilter); }
-function renderSpin() {
-  const dk = deck();
-  let h = `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
-    <div class="filter-row">${FILTERS.map(([k,l,lru]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${T(l, lru)}</div>`).join("")}</div>
-    <div class="stack" id="stack">`;
-  if (!dk.length) h += `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
-  else dk.slice(0, 3).reverse().forEach((d, i, arr) => {
+function deck() {
+  const q = deckSearch.trim().toLowerCase();
+  return deckOrder.map(dish).filter(d => {
+    if (deckFilter !== "all" && d.p !== deckFilter && d.c !== deckFilter) return false;
+    if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
+    return matchesAdvFilters(d, deckAdv);
+  });
+}
+function stackHtml(dk) {
+  if (!dk.length) return `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
+  let s = "";
+  dk.slice(0, 3).reverse().forEach((d, i, arr) => {
     const top = i === arr.length - 1, dep = arr.length - 1 - i;
-    h += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
+    s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
       <div class="ph" style="background:${d.g}">${d.em}<small>${T("photo placeholder", "фото-заглушка")}</small></div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
   });
-  h += `</div><div class="deck-cta"><button class="round-btn" id="nope">👎</button>
+  return s;
+}
+function renderSpin() {
+  return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
+    <input id="deckSearch" style="width:calc(100% - 40px);margin:0 20px 8px;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+    <div class="filter-row">${FILTERS.map(([k,l,lru]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${T(l, lru)}</div>`).join("")}</div>
+    <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
+    <div class="stack" id="stack">${stackHtml(deck())}</div>
+    <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
     <button class="round-btn" id="add" style="font-size:22px">➕</button>
     <button class="round-btn" id="like">❤️</button></div>
     <div class="hint">🤖 ${T("AI fills the menu Thursday before the week. Until then, build it together.", "ИИ заполнит меню в четверг до начала недели. До этого собирайте вместе.")}</div>`;
-  return h;
+}
+function refreshDeck() {
+  const stackEl = document.getElementById("stack");
+  if (!stackEl) return;
+  stackEl.innerHTML = stackHtml(deck());
+  wireStack();
+}
+function wireStack() {
+  const topCard = document.querySelector(".scard.top");
+  const fly = dir => {
+    if (!topCard) return;
+    const id = topCard.dataset.dish;
+    topCard.style.transition = "transform .35s, opacity .35s";
+    topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
+    setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); refreshDeck(); }, 300);
+  };
+  const nope = document.getElementById("nope"), like = document.getElementById("like"), add = document.getElementById("add");
+  if (nope) nope.onclick = () => fly(-1);
+  if (like) like.onclick = () => fly(1);
+  if (add) add.onclick = openAdd;
+  if (topCard) {
+    let sx=0,dx=0,drag=false;
+    topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
+    topCard.addEventListener("pointermove", e => { if(!drag)return; dx=e.clientX-sx; topCard.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`;
+      topCard.querySelector(".stamp.yes").style.opacity = dx>40?Math.min(1,dx/120):0; topCard.querySelector(".stamp.no").style.opacity = dx<-40?Math.min(1,-dx/120):0; });
+    topCard.addEventListener("pointerup", () => { drag=false; if(dx>90)fly(1); else if(dx<-90)fly(-1);
+      else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0; });
+  }
 }
 
 function renderWish() {
@@ -768,26 +869,15 @@ function wire() {
   document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
 
   // spin
-  document.querySelectorAll("[data-f]").forEach(c => c.onclick = () => { deckFilter=c.dataset.f; render(); });
-  const topCard = document.querySelector(".scard.top");
-  const fly = dir => {
-    if (!topCard) return;
-    const id = topCard.dataset.dish;
-    topCard.style.transition = "transform .35s, opacity .35s";
-    topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
-    setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); else render(); }, 300);
-  };
-  document.getElementById("nope") && (document.getElementById("nope").onclick = () => fly(-1));
-  document.getElementById("like") && (document.getElementById("like").onclick = () => fly(1));
-  document.getElementById("add") && (document.getElementById("add").onclick = openAdd);
-  if (topCard) {
-    let sx=0,dx=0,drag=false;
-    topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
-    topCard.addEventListener("pointermove", e => { if(!drag)return; dx=e.clientX-sx; topCard.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`;
-      topCard.querySelector(".stamp.yes").style.opacity = dx>40?Math.min(1,dx/120):0; topCard.querySelector(".stamp.no").style.opacity = dx<-40?Math.min(1,-dx/120):0; });
-    topCard.addEventListener("pointerup", () => { drag=false; if(dx>90)fly(1); else if(dx<-90)fly(-1);
-      else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0; });
-  }
+  const deckSearchEl = document.getElementById("deckSearch");
+  if (deckSearchEl) deckSearchEl.addEventListener("input", e => { deckSearch = e.target.value; refreshDeck(); });
+  document.querySelectorAll("[data-f]").forEach(c => c.onclick = () => {
+    deckFilter = c.dataset.f;
+    document.querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x.dataset.f === deckFilter));
+    refreshDeck();
+  });
+  if (document.getElementById("deckAdvToggle")) wireAdvFilterPanel(app, "deckAdv", deckAdv, deckPanel, refreshDeck);
+  wireStack();
 
   // wish
   document.getElementById("newWish") && (document.getElementById("newWish").onclick = () => openWish(null));
@@ -892,11 +982,14 @@ function openWish(presetDay) {
 function wishStep2(kind, presetDay) {
   let selDish=null, selCui=null, selCook="any", selDay=presetDay??null;
   let dishFilter="all", dishSearch="";
+  const dishAdv = newAdvFilters();
+  const dishPanel = { open: false };
   const cuisines = ["russian","italian","asian","greek","uzbek"];
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
       <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
       <div class="filter-row" id="dishFilterRow">${FILTERS.map(([k,l,lru]) => `<div class="chip ${k==="all"?"on":""}" data-df="${k}">${T(l, lru)}</div>`).join("")}</div>
+      <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
       <div class="chips-wrap" id="WD"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${cuisines.map(c=>`<div class="chip" data-c="${c}">${c}</div>`).join("")}</div>`:""}
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div>
@@ -909,7 +1002,7 @@ function wishStep2(kind, presetDay) {
     const list = DISHES.filter(d => {
       if (dishFilter !== "all" && d.p !== dishFilter && d.c !== dishFilter) return false;
       if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
-      return true;
+      return matchesAdvFilters(d, dishAdv);
     });
     const wd = v.querySelector("#WD");
     wd.innerHTML = list.length
@@ -930,6 +1023,7 @@ function wishStep2(kind, presetDay) {
       v.querySelectorAll("#dishFilterRow .chip").forEach(x => x.classList.toggle("on", x.dataset.df === dishFilter));
       renderDishList();
     });
+    wireAdvFilterPanel(v, "dishAdv", dishAdv, dishPanel, renderDishList);
   }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
   v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
