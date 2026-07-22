@@ -891,21 +891,46 @@ function openWish(presetDay) {
 }
 function wishStep2(kind, presetDay) {
   let selDish=null, selCui=null, selCook="any", selDay=presetDay??null;
+  let dishFilter="all", dishSearch="";
   const cuisines = ["russian","italian","asian","greek","uzbek"];
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
-    ${kind==="dish"?`<div class="chips-wrap" id="WD">${DISHES.map(d=>`<div class="chip" data-i="${d.id}">${d.em} ${dName(d)}</div>`).join("")}</div>`:""}
+    ${kind==="dish"?`
+      <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
+      <div class="filter-row" id="dishFilterRow">${FILTERS.map(([k,l,lru]) => `<div class="chip ${k==="all"?"on":""}" data-df="${k}">${T(l, lru)}</div>`).join("")}</div>
+      <div class="chips-wrap" id="WD"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${cuisines.map(c=>`<div class="chip" data-c="${c}">${c}</div>`).join("")}</div>`:""}
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div>
     <div class="chips-wrap" id="WK"><div class="chip on" data-c="any">🎲 ${T("Anyone", "Кто угодно")}</div>${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
     <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
     <button class="btn btn-primary" id="wgo" style="width:100%;margin-top:16px;opacity:.4">✨ ${T("Wish it", "Загадать")}</button>`);
   const ok = () => selDay!==null && (kind==="choice" || (kind==="dish"?selDish:selCui));
+  function renderDishList() {
+    const q = dishSearch.trim().toLowerCase();
+    const list = DISHES.filter(d => {
+      if (dishFilter !== "all" && d.p !== dishFilter && d.c !== dishFilter) return false;
+      if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    const wd = v.querySelector("#WD");
+    wd.innerHTML = list.length
+      ? list.map(d => `<div class="chip ${selDish===d.id?"on":""}" data-i="${d.id}">${d.em} ${dName(d)}</div>`).join("")
+      : `<div style="color:#aaa;font-size:13px;padding:6px 0">${T("No recipes match", "Нет подходящих рецептов")}</div>`;
+    wd.querySelectorAll("[data-i]").forEach(c => c.onclick = () => { selDish = c.dataset.i; renderDishList(); upd(); });
+  }
   const upd = () => { v.querySelectorAll("#WD .chip").forEach(c=>c.classList.toggle("on",c.dataset.i===selDish));
     v.querySelectorAll("#WC .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCui));
     v.querySelectorAll("#WK .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCook));
     v.querySelectorAll("#WY .chip").forEach(c=>c.classList.toggle("on",+c.dataset.d===selDay));
     v.querySelector("#wgo").style.opacity = ok()?1:.4; };
-  v.querySelectorAll("#WD .chip").forEach(c=>c.onclick=()=>{selDish=c.dataset.i;upd();});
+  if (kind === "dish") {
+    renderDishList();
+    v.querySelector("#dishSearch").addEventListener("input", e => { dishSearch = e.target.value; renderDishList(); });
+    v.querySelectorAll("#dishFilterRow .chip").forEach(c => c.onclick = () => {
+      dishFilter = c.dataset.df;
+      v.querySelectorAll("#dishFilterRow .chip").forEach(x => x.classList.toggle("on", x.dataset.df === dishFilter));
+      renderDishList();
+    });
+  }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
   v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
   v.querySelectorAll("#WY .chip").forEach(c=>c.onclick=()=>{selDay=+c.dataset.d;upd();});
