@@ -630,7 +630,7 @@ function renderMenu() {
       if (s) {
         h += `<div class="slot-dish">${dish(s.dish).em} ${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
-            : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${s.by === "ai" ? "🤖 AI" : mem(s.by).em}`}</div>`;
+            : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${s.by === "ai" ? "🤖 " + T("suggested by AI", "предложено ИИ") : T("suggested by", "предложил(а)") + " " + mName(mem(s.by))}`}</div>`;
         if (awaiting) {
           h += `<div class="mini-row">${s.cook === me
             ? `<button class="mini-btn accept" data-cookacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
