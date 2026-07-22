@@ -75,6 +75,17 @@
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
   .banner { margin: 12px 18px; padding: 13px 15px; border-radius: 16px; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 700; font-size: 14px; text-align: center; }
 
+  /* AI fill CTA - the big glaring button at the top of an empty menu */
+  .ai-fill {
+    margin: 4px 16px 12px; padding: 14px 18px; border: none; border-radius: 18px;
+    background: linear-gradient(135deg, #f59e0b, #b45309);
+    color: #fff; font-weight: 800; font-size: 16px; cursor: pointer;
+    width: calc(100% - 32px); box-shadow: 0 6px 0 #92400e; text-align: left;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .ai-fill small { display: block; font-weight: 400; font-size: 12px; opacity: .9; }
+  .ai-fill:active { transform: translateY(3px); box-shadow: 0 3px 0 #92400e; }
+
   /* menu (D) */
   .deadline { margin: 0 16px 8px; padding: 8px 14px; background: #1f2937; color: #fff; border-radius: 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
   .menu-list { padding: 0 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -223,36 +234,60 @@ function specials(d) {
 // ── shared state ──
 let game = null;      // { week, wishes, duel, activity, locked }
 let me = localStorage.getItem("stf_me") || null;
+let previousMe = null; // set when leaving the app to the member picker, so a back arrow can restore the session
 let tab = "menu";
 let modalOpen = false;
 let pendingRemote = null;
 let online = new Set();
 
+function emptyWeek() { return DAYS.map(() => ({ breakfast: null, lunch: null, dinner: null })); }
 function seedGame() {
-  const cooks = ["mom","dad","gran"];
-  const week = DAYS.map(() => ({ breakfast: null, lunch: null, dinner: null }));
-  const bf = DISHES.filter(d => d.meals.includes("breakfast"));
-  const soups = DISHES.filter(d => d.soup);
-  const mains = DISHES.filter(d => d.meals.includes("dinner"));
-  let si = 0;
-  for (let i = 0; i < 7; i++) {
-    if (i < 5) week[i].breakfast = { dish: bf[i % bf.length].id, cook: cooks[i % 3], by: "ai", accepted: true };
-    if (!week[i].lunch) {
-      const s = soups[si++ % soups.length], ck = cooks[(i + 1) % 3];
-      week[i].lunch = { dish: s.id, cook: ck, by: "ai", accepted: true };
-      if (i + 1 < 7) week[i + 1].lunch = { dish: s.id, cook: ck, by: "ai", accepted: true, leftover: true };
-    }
-    if (i !== 5) week[i].dinner = { dish: mains[i % mains.length].id, cook: cooks[(i + 2) % 3], by: "ai", accepted: true };
-  }
   return {
-    week, locked: false, wishes: [], profiles: {},
+    week: emptyWeek(), locked: false, wishes: [], profiles: {},
     duel: { open: true, proposals: [
       { dish: "borscht", chef: "gran", pitch: "Real borscht takes love. And I have beets.", votes: ["mom"] },
       { dish: "ramen",   chef: "dad",  pitch: "Friday deserves broth that took 6 hours.", votes: [] },
       { dish: "plov",    chef: "mom",  pitch: "Plov. One pot. Nothing to wash. Think about it.", votes: [] },
     ]},
-    activity: [{ id: rid(), who: "ai", text: "AI drafted this week's menu", ts: Date.now() }],
+    activity: [{ id: rid(), who: "ai", text: "Family kitchen opened — empty week", ts: Date.now() }],
   };
+}
+
+// AI populate. Empty slots get accepted:false so the assigned cook must accept.
+// Slots that already hold a user-added dish become a proposal (the family must
+// approve, matching the existing swap flow).
+function aiPopulateWeek() {
+  const cooks = ["mom","dad","gran"];
+  const bf = DISHES.filter(d => d.meals.includes("breakfast"));
+  const soups = DISHES.filter(d => d.soup);
+  const mains = DISHES.filter(d => d.meals.includes("dinner"));
+  let si = 0;
+  const overwritten = [];
+  for (let i = 0; i < 7; i++) {
+    // breakfast (skip weekends)
+    if (i < 5) {
+      const pick = { dish: bf[i % bf.length].id, cook: cooks[i % 3], by: "ai", accepted: false };
+      if (game.week[i].breakfast) { game.week[i].breakfast.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
+      else game.week[i].breakfast = pick;
+    }
+    // lunch (soup, day-2 leftover)
+    if (!game.week[i].lunch || !game.week[i].lunch?.leftover) {
+      const s = soups[si++ % soups.length], ck = cooks[(i + 1) % 3];
+      const pick = { dish: s.id, cook: ck, by: "ai", accepted: false };
+      if (game.week[i].lunch) { game.week[i].lunch.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
+      else game.week[i].lunch = pick;
+      if (i + 1 < 7 && !game.week[i + 1].lunch) {
+        game.week[i + 1].lunch = { dish: s.id, cook: ck, by: "ai", accepted: false, leftover: true };
+      }
+    }
+    // dinner (skip Sat)
+    if (i !== 5) {
+      const pick = { dish: mains[i % mains.length].id, cook: cooks[(i + 2) % 3], by: "ai", accepted: false };
+      if (game.week[i].dinner) { game.week[i].dinner.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
+      else game.week[i].dinner = pick;
+    }
+  }
+  return overwritten.length;
 }
 function rid() { return Math.random().toString(36).slice(2, 9); }
 
@@ -354,7 +389,7 @@ function assignToSlot(day, mealKey, dishId, cook) {
   if (cur && cur.dish) {
     cur.proposal = { dish: dishId, cook, by: me };
     commitAndSync(`${mem(me).en} proposed ${d.em} ${d.en} for ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`);
-    toast(T("Replace proposal sent - family votes 🔔", "Предложение замены отправлено - семья решает 🔔"));
+    toast(T("Sent to the menu - family votes 🔔", "Отправлено в меню - семья решает 🔔"));
   } else {
     game.week[day][mealKey] = { dish: dishId, cook, by: me, accepted: cook === me };
     const who = cook === me ? "" : ` - ${mem(cook).en} must accept`;
@@ -365,6 +400,18 @@ function assignToSlot(day, mealKey, dishId, cook) {
 function acceptCook(day, mealKey) {
   const s = game.week[day][mealKey]; s.accepted = true;
   commitAndSync(`${mem(me).en} accepted cooking ${dish(s.dish).em} on ${DAYS[day]}`);
+}
+function declineCook(day, mealKey) {
+  const s = game.week[day][mealKey]; const d = dish(s.dish);
+  game.week[day][mealKey] = null;
+  commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`);
+  toast(T("Declined - the meal was removed", "Отклонено - блюдо убрано из меню"));
+}
+function reassignCook(day, mealKey, newCook) {
+  const s = game.week[day][mealKey];
+  s.cook = newCook; s.accepted = false; s.by = me;
+  commitAndSync(`${mem(me).en} reassigned ${dish(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`);
+  toast(T("Sent - ", "Отправлено - ") + mName(mem(newCook)) + T(" must accept, decline, or reassign", " должен принять, отклонить или передать дальше"));
 }
 function acceptProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal;
@@ -421,7 +468,7 @@ function openSettings() {
     if (me && game?.profiles?.[me]) { game.profiles[me].lang = lang; persist(false); }
     closeModal(); render();
   });
-  v.querySelector("#swUser").onclick = () => { closeModal(); localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
+  v.querySelector("#swUser").onclick = () => { closeModal(); previousMe = me; localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
 }
 
 // ── onboarding (registration gate - every member passes it once) ──
@@ -535,6 +582,7 @@ function renderOnboard() {
 }
 function renderGate() {
   app.innerHTML = `<div class="gate">
+    ${previousMe ? `<button class="ob-back" id="gateBack" style="align-self:flex-start">‹ ${T("Back", "Назад")}</button>` : ""}
     <h1>🍲 Spin the Food</h1>
     <p>${T("Who's on this phone? New members register first.", "Кто за этим телефоном? Новые участники сначала регистрируются.")}</p>
     ${FAMILY.map(m => {
@@ -545,9 +593,14 @@ function renderGate() {
     <p style="margin-top:16px;font-size:12px">${T("Family", "Семья")}: <b>${FAMILY_KEY}</b></p>
   </div>`;
   app.querySelectorAll("[data-who]").forEach(b => b.onclick = async () => {
-    me = b.dataset.who; localStorage.setItem("stf_me", me);
+    me = b.dataset.who; localStorage.setItem("stf_me", me); previousMe = null;
     obReset(); joinPresence(); render();
   });
+  const back = document.getElementById("gateBack");
+  if (back) back.onclick = () => {
+    me = previousMe; localStorage.setItem("stf_me", me); previousMe = null;
+    render();
+  };
 }
 function topbar() {
   return `<div class="topbar">
@@ -561,7 +614,9 @@ function topbar() {
 
 function renderMenu() {
   const g = game;
-  let h = `<div class="screen-title"><h2>${T("This week's menu", "Меню недели")}</h2><div class="sub">${T("The backbone. Silence = consent by Sunday 20:00.", "Основа основ. Молчание - согласие до вс 20:00.")}</div></div>
+  const anyMeals = g.week.some(d => d.breakfast || d.lunch || d.dinner);
+  let h = `<div class="screen-title"><h2>${T("This week's menu", "Меню недели")}</h2><div class="sub">${T("Build it together, or let AI draft a full week.", "Собирайте вместе или доверьте черновик ИИ.")}</div></div>
+    <button class="ai-fill" id="aiFill">🤖 ${T("Generate a full AI menu", "Собрать меню на неделю с ИИ")}<small>${anyMeals ? T("will overwrite existing meals — family must approve", "перезапишет существующие блюда — семья должна одобрить") : T("empty slots get filled — cooks accept their meals", "заполнит пустые слоты — повара подтвердят")}</small></button>
     <div class="deadline"><span>${g.locked ? "🔒 " + T("Confirmed - grocery list ready", "Подтверждено - список покупок готов") : "⏰ " + T("Auto-confirms Sunday 20:00", "Подтвердится в вс 20:00")}</span>
       ${g.locked ? `<button class="mini-btn" id="unlock">${T("reopen", "открыть")}</button>` : `<button class="mini-btn" id="confirm">${T("Confirm now", "Подтвердить")}</button>`}</div>
     <div class="menu-list">`;
@@ -578,14 +633,20 @@ function renderMenu() {
             : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${s.by === "ai" ? "🤖 AI" : mem(s.by).em}`}</div>`;
         if (awaiting) {
           h += `<div class="mini-row">${s.cook === me
-            ? `<button class="mini-btn accept" data-cookacc="${di}-${m.k}">✅ ${T("Accept - I'll cook it", "Принять - я готовлю")}</button>`
+            ? `<button class="mini-btn accept" data-cookacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
+               <button class="mini-btn reject" data-cookrej="${di}-${m.k}">❌ ${T("Decline", "Отказать")}</button>
+               <button class="mini-btn" data-cookreassign="${di}-${m.k}">👉 ${T("Assign someone else", "Передать другому")}</button>`
             : `<span class="slot-cook">⏳ ${T("waiting for", "ждём")} ${mName(mem(s.cook))}</span>`}</div>`;
         }
         if (s.proposal) {
           const p = s.proposal;
-          h += `<div class="prop">🔄 ${mName(mem(p.by))} ${T("suggests", "предлагает")} <b>${dish(p.dish).em} ${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
-            <div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
-            <button class="mini-btn reject" data-proprej="${di}-${m.k}">❌ ${T("Reject", "Отклонить")}</button></div></div>`;
+          const iMade = p.by === me;
+          const proposerLabel = p.by === "ai" ? "🤖 AI" : mName(mem(p.by));
+          h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dish(p.dish).em} ${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
+            ${iMade
+              ? `<div class="slot-cook" style="margin-top:4px">⏳ ${T("waiting for the family to accept your swap", "ждём, пока семья примет твою замену")}</div>`
+              : `<div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
+                <button class="mini-btn reject" data-proprej="${di}-${m.k}">❌ ${T("Reject", "Отклонить")}</button></div>`}</div>`;
         }
       } else {
         h += `<div class="slot-dish empty">${T("empty", "пусто")}</div>
@@ -688,14 +749,18 @@ function nav() {
 function wire() {
   document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
   const pill = document.getElementById("mePill");
-  if (pill) pill.onclick = () => { localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
+  if (pill) pill.onclick = () => { previousMe = me; localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
   const settings = document.getElementById("settingsBtn");
   if (settings) settings.onclick = openSettings;
 
   // menu
   document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => { game.locked = true; game.week.forEach(d=>MEALS.forEach(m=>{ if(d[m.k]) delete d[m.k].proposal; })); commitAndSync(`${mem(me).en} confirmed the week`); });
   document.getElementById("unlock") && (document.getElementById("unlock").onclick = () => { game.locked = false; commitAndSync(`${mem(me).en} reopened the menu`); });
+  const aiBtn = document.getElementById("aiFill");
+  if (aiBtn) aiBtn.onclick = openAiFill;
   document.querySelectorAll("[data-cookacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookacc.split("-"); acceptCook(+d,k); });
+  document.querySelectorAll("[data-cookrej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookrej.split("-"); declineCook(+d,k); });
+  document.querySelectorAll("[data-cookreassign]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookreassign.split("-"); openReassignCook(+d,k); });
   document.querySelectorAll("[data-propacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.propacc.split("-"); acceptProposal(+d,k); });
   document.querySelectorAll("[data-proprej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.proprej.split("-"); rejectProposal(+d,k); });
   document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(T("Swipe right to fill ", "Свайпни вправо, чтобы заполнить ") + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic); });
@@ -784,6 +849,36 @@ function openEdit(day, mealKey) {
     <button class="btn btn-ghost" id="clear" style="width:100%;margin-top:14px">🗑 ${T("Clear this slot", "Очистить слот")}</button>`);
   v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:"gran"); });
   v.querySelector("#clear").onclick = () => { closeModal(); clearSlot(day,mealKey); };
+}
+function openReassignCook(day, mealKey) {
+  const s = game.week[day][mealKey];
+  const others = FAMILY.filter(m => m.cook && m.id !== me);
+  const v = modal(`<h3>👉 ${T("Assign someone else", "Передать другому")}</h3>
+    <div class="sect">${T("Who should cook it instead?", "Кто приготовит вместо тебя?")}</div>
+    <div class="chips-wrap">${others.map(m => `<div class="chip" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>`);
+  v.querySelectorAll("[data-c]").forEach(c => c.onclick = () => { closeModal(); reassignCook(day, mealKey, c.dataset.c); });
+}
+function openAiFill() {
+  const anyMeals = game.week.some(d => d.breakfast || d.lunch || d.dinner);
+  const v = modal(`<h3>🤖 ${T("Generate a full AI menu?", "Собрать меню с ИИ?")}</h3>
+    <div style="font-size:14px;color:#555;line-height:1.6">
+      ${anyMeals
+        ? T("This will touch every day of the week. Meals already on the menu become swap proposals - the family (and anyone whose spin or wish is on that slot) must approve before they change. Newly filled empty slots still need their assigned cook to accept.",
+            "Это затронет каждый день недели. Уже стоящие блюда станут предложениями замены - семья (и те, чей спин или желание там стоит) должны одобрить, прежде чем что-то изменится. Новые пустые слоты всё равно ждут подтверждения от назначенного повара.")
+        : T("Every empty slot gets a suggested dish and cook. Each assigned cook must accept before it's final.",
+            "Каждый пустой слот получит блюдо и повара. Каждый назначенный повар должен подтвердить, прежде чем это станет окончательным.")}
+    </div>
+    <button class="btn btn-primary" id="aiGo" style="width:100%;margin-top:16px">🤖 ${T("Yes, generate it", "Да, собрать")}</button>
+    <button class="btn btn-ghost" id="aiCancel" style="width:100%;margin-top:8px">${T("Cancel", "Отмена")}</button>`);
+  v.querySelector("#aiGo").onclick = () => {
+    closeModal();
+    const overwrittenCount = aiPopulateWeek();
+    commitAndSync(`${mem(me).en} triggered an AI menu ${anyMeals ? "refresh" : "fill"}`);
+    toast(overwrittenCount
+      ? T("AI menu sent - ", "Меню от ИИ отправлено - ") + overwrittenCount + T(" swap(s) need family approval", " замен(а/ы) требуют одобрения семьи")
+      : T("AI menu ready - cooks need to accept their meals", "Меню от ИИ готово - поварам нужно подтвердить блюда"));
+  };
+  v.querySelector("#aiCancel").onclick = closeModal;
 }
 function openWish(presetDay) {
   const v = modal(`<h3>✨ ${T("What kind of wish?", "Какое желание?")}</h3>
