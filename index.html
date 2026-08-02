@@ -231,7 +231,41 @@ async function refreshMembership() {
 const inviteTokenInUrl = new URLSearchParams(location.search).get("invite");
 
 // ── language: chosen FIRST, before identity; carried through the whole app ──
-let lang = localStorage.getItem("stf_lang") || null;
+// stf_lang = device default (pre-sign-in). stf_ob_lang_<member_id> = per-person
+// onboarding choice so a new family member never inherits a sibling's Russian.
+let lang = null;
+
+function onboardLangKey(memberId) {
+  return memberId ? `stf_ob_lang_${memberId}` : null;
+}
+
+function syncLangFromStorage() {
+  const memberId = membership?.member_id;
+  if (memberId) {
+    const ob = localStorage.getItem(onboardLangKey(memberId));
+    if (ob) { lang = ob; return; }
+  }
+  lang = localStorage.getItem("stf_lang") || null;
+}
+
+function saveLangChoice(l, { forOnboard = false } = {}) {
+  lang = l;
+  localStorage.setItem("stf_lang", l);
+  const memberId = membership?.member_id || me;
+  if (forOnboard && memberId) {
+    localStorage.setItem(onboardLangKey(memberId), l);
+  }
+}
+
+function needsDeviceLangGate() {
+  return !localStorage.getItem("stf_lang");
+}
+
+function needsOnboardLangGate(memberId) {
+  return memberId && !localStorage.getItem(onboardLangKey(memberId));
+}
+
+syncLangFromStorage();
 const T = (en, ru) => (lang === "ru" ? ru : en);
 
 // ── static data (Family Cookbook loaded from DB; FAMILY roster from members RPC) ──
@@ -681,20 +715,25 @@ function clearSlot(day, mealKey) {
 // ── render ──
 const app = document.getElementById("app");
 function render() {
-  // Auth gate: no session -> sign-in screen. If the invite token is in the URL
-  // but the user hasn't signed in yet, we still send them through the sign-in
-  // gate first; the token survives in the URL and is picked up post-auth.
+  syncLangFromStorage();
+
+  // 1. Language first (device-level, before sign-in).
+  if (needsDeviceLangGate()) return renderLangGate();
+
+  // 2. Auth gate.
   if (!authSession) return renderSignInGate();
-  // Signed in, but no membership yet:
-  //   - If ?invite=<token> is present, show the invitation onboarding modal
-  //     (the invitee picks avatar_role + display_name; RPC creates member row).
-  //   - Otherwise this is a signed-in stranger (edge case) or an owner whose
-  //     row we couldn't fetch. Show a soft error with a "retry" button.
+
+  // 3. Invitation / membership onboarding.
   if (!membership) return renderInvitationOnboarding();
-  if (!lang) return renderLangGate();
-  // Derive game identity from the real membership. Kept in `me` to avoid
-  // rewriting every downstream reference (mem(me), profiles[me], etc.).
+
   if (!me && membership) me = membership.member_id;
+
+  // 4. Per-member language before profile onboarding (avoids inheriting stf_lang from another user on the same phone).
+  if (game && me && !game.profiles[me] && needsOnboardLangGate(me)) {
+    return renderLangGate({ forOnboard: true });
+  }
+
+  syncLangFromStorage();
   if (!game) { app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`; return; }
   if (!game.profiles[me]) return renderOnboard();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
@@ -702,15 +741,19 @@ function render() {
 }
 
 // language gate - the very first screen, bilingual by nature
-function renderLangGate() {
+function renderLangGate({ forOnboard = false } = {}) {
+  const subtitle = forOnboard
+    ? "Pick your language before we set up your profile / Выбери язык перед настройкой профиля"
+    : "Language / Язык";
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>Language / Язык</p>
+    <p>${subtitle}</p>
     <button class="who-btn" data-l="en"><span class="em">🇬🇧</span><span>English</span></button>
     <button class="who-btn" data-l="ru"><span class="em">🇷🇺</span><span>Русский</span></button>
   </div>`;
   app.querySelectorAll("[data-l]").forEach(b => b.onclick = () => {
-    lang = b.dataset.l; localStorage.setItem("stf_lang", lang); render();
+    saveLangChoice(b.dataset.l, { forOnboard });
+    render();
   });
 }
 
@@ -880,6 +923,8 @@ function renderInvitationOnboarding() {
     await refreshMembership();
     // Load game state + start realtime now that we know the family.
     if (me === null) me = membership.member_id;
+    // If they already picked a device language before sign-in, stamp it for this member.
+    if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
     joinPresence();
     await load();
     subscribe();
@@ -911,8 +956,8 @@ function openSettings() {
     <div class="sect" style="margin-top:16px">${T("Session", "Сессия")}</div>
     <button class="btn btn-ghost" id="signoutBtn3" style="width:100%">${T("Sign out", "Выйти")}</button>`);
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
-    lang = c.dataset.sl; localStorage.setItem("stf_lang", lang);
-    if (me && game?.profiles?.[me]) { game.profiles[me].lang = lang; persist(false); }
+    saveLangChoice(c.dataset.sl, { forOnboard: true });
+    if (me && game?.profiles?.[me]) game.profiles[me].lang = lang;
     closeModal(); render();
   });
   const inviteBtn = v.querySelector("#inviteBtn");
