@@ -54,7 +54,7 @@
   .mealgrid .dy.bulk { padding: 4px 6px; }
   .mealgrid .hd.bulk:active, .mealgrid .dy.bulk:active { background: #f3f4f6; }
   .mealgrid .hd.bulk.dim, .mealgrid .dy.bulk.dim { color: #ccc; }
-  .mg-cell { height: 34px; border-radius: 9px; background: #ecfdf5; border: 1.5px solid var(--green); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .mg-cell { height: 34px; border-radius: 9px; background: #ecfdf5; border: 1.5px solid var(--green); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; touch-action: none; user-select: none; }
   .mg-cell.off { background: #f5f5f4; border-color: #e5e7eb; color: #ccc; }
   .ob-sum { background: #fff; border: 1.5px solid #eee; border-radius: 16px; padding: 14px; font-size: 14px; line-height: 1.7; }
 
@@ -1071,6 +1071,69 @@ function obToggleEatCol(mealIdx) {
   const allOn = DAYS.every((_, di) => obEatCellOn(di, mealIdx));
   DAYS.forEach((_, di) => obSetEatCell(di, mealIdx, !allOn));
 }
+function refreshCookBulkDims(root) {
+  root.querySelectorAll("[data-cw-col]").forEach(h => {
+    const allOn = DAYS.every((_, di) => obCookCellOn(di, h.dataset.cwCol));
+    h.classList.toggle("dim", !allOn);
+  });
+  root.querySelectorAll("[data-cw-row]").forEach(h => {
+    const di = +h.dataset.cwRow;
+    const allOn = obCookSlotsOn().every(m => obCookCellOn(di, m.k));
+    h.classList.toggle("dim", !allOn);
+  });
+}
+function refreshEatBulkDims(root) {
+  root.querySelectorAll("[data-eat-col]").forEach(h => {
+    const mi = +h.dataset.eatCol;
+    const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
+    h.classList.toggle("dim", !allOn);
+  });
+  root.querySelectorAll("[data-eat-row]").forEach(h => {
+    const di = +h.dataset.eatRow;
+    const allOn = MEALS.every((_, mi) => obEatCellOn(di, mi));
+    h.classList.toggle("dim", !allOn);
+  });
+}
+// Drag (or click) across mg-cell tiles to paint on/off without lifting finger or mouse button.
+function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell, onEnd }) {
+  let painting = false;
+  let modeOn = true;
+  const visited = new Set();
+  const paint = cell => {
+    const key = getKey(cell);
+    if (visited.has(key)) return;
+    visited.add(key);
+    if (isOn(key) === modeOn) return;
+    setOn(key, modeOn);
+    refreshCell(cell, modeOn);
+  };
+  const end = () => {
+    if (!painting) return;
+    painting = false;
+    visited.clear();
+    onEnd?.();
+  };
+  root.querySelectorAll(cellSelector).forEach(cell => {
+    cell.addEventListener("pointerdown", e => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      painting = true;
+      modeOn = !isOn(getKey(cell));
+      visited.clear();
+      paint(cell);
+      cell.setPointerCapture(e.pointerId);
+    });
+    cell.addEventListener("pointermove", e => {
+      if (!painting) return;
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const target = hit?.closest?.(cellSelector);
+      if (target && root.contains(target)) paint(target);
+    });
+    cell.addEventListener("pointerup", end);
+    cell.addEventListener("pointercancel", end);
+    cell.addEventListener("lostpointercapture", end);
+  });
+}
 function obSteps() { return ob.isCook === false ? ["cookq","eat","done"] : ["cookq","avail","cookweek","rate","top3","eat","done"]; }
 function renderOnboard() {
   if (!ob) obReset();
@@ -1095,7 +1158,7 @@ function renderOnboard() {
     const chosen = obCookSlotsOn();
     const cls = chosen.length === 1 ? "one" : chosen.length === 2 ? "two" : "";
     inner = `<div class="ob-q">${t("Your cooking week", "Твоя неделя готовки")}</div>
-      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap a cell to free one slot, or tap a day / meal icon to clear the whole row or column.", "Мы назначили тебе все приёмы, что ты умеешь. Нажми на ячейку, чтобы освободить один слот, или на день / иконку приёма — чтобы очистить всю строку или столбец.")}</div>
+      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap or drag across cells to free slots. Tap a day or meal icon to clear a whole row or column.", "Мы назначили тебе все приёмы, что ты умеешь. Нажми или проведи по ячейкам, чтобы освободить слоты. Нажми на день или иконку приёма — чтобы очистить всю строку или столбец.")}</div>
       <div class="mealgrid ${cls}"><div></div>${chosen.map(m => {
         const allOn = DAYS.every((_, di) => obCookCellOn(di, m.k));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-cw-col="${m.k}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
@@ -1125,7 +1188,7 @@ function renderOnboard() {
     inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ешь дома?")}</div>
       <div class="ob-note" style="padding:0 0 6px">${t("Allergies?", "Аллергии?")}</div>
       <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap a cell to toggle one slot, or tap a day / meal icon to clear the whole row or column.", "Какие приёмы пищи ты дома? Нажми на ячейку, чтобы переключить один слот, или на день / иконку приёма — чтобы очистить всю строку или столбец.")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap or drag across cells. Tap a day or meal icon for a whole row or column.", "Какие приёмы пищи ты дома? Нажми или проведи по ячейкам. Нажми на день или иконку приёма — для всей строки или столбца.")}</div>
       <div class="mealgrid"><div></div>${MEALS.map((m, mi) => {
         const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-eat-col="${mi}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
@@ -1168,9 +1231,19 @@ function renderOnboard() {
     ob.avail = ob.avail.includes(k) ? ob.avail.filter(x => x !== k) : [...ob.avail, k];
     render();
   });
-  app.querySelectorAll("[data-cw]").forEach(b => b.onclick = () => { ob.cookGrid[b.dataset.cw] = ob.cookGrid[b.dataset.cw] === false; render(); });
   app.querySelectorAll("[data-cw-row]").forEach(b => b.onclick = () => { obToggleCookRow(+b.dataset.cwRow); render(); });
   app.querySelectorAll("[data-cw-col]").forEach(b => b.onclick = () => { obToggleCookCol(b.dataset.cwCol); render(); });
+  if (cur === "cookweek") {
+    const grid = app.querySelector(".mealgrid");
+    if (grid) wireObGridPaint(grid, {
+      cellSelector: "[data-cw]",
+      getKey: el => el.dataset.cw,
+      isOn: key => ob.cookGrid[key] !== false,
+      setOn: (key, on) => { if (on) delete ob.cookGrid[key]; else ob.cookGrid[key] = false; },
+      refreshCell: (el, on) => { el.classList.toggle("off", !on); el.textContent = on ? "👨‍🍳" : ""; },
+      onEnd: () => refreshCookBulkDims(grid),
+    });
+  }
   app.querySelectorAll("[data-rate]").forEach(b => b.onclick = () => {
     const n = +b.dataset.rate;
     if (n === 7) { toast(T("There is no 7. Be honest.", "Семёрки нет. Будь честен.")); return; }
@@ -1183,9 +1256,19 @@ function renderOnboard() {
       ob.allergies = ob.allergies.includes(k) ? ob.allergies.filter(x => x !== k) : [...ob.allergies, k]; }
     render();
   });
-  app.querySelectorAll("[data-eat]").forEach(b => b.onclick = () => { ob.eatGrid[b.dataset.eat] = ob.eatGrid[b.dataset.eat] === false; render(); });
   app.querySelectorAll("[data-eat-row]").forEach(b => b.onclick = () => { obToggleEatRow(+b.dataset.eatRow); render(); });
   app.querySelectorAll("[data-eat-col]").forEach(b => b.onclick = () => { obToggleEatCol(+b.dataset.eatCol); render(); });
+  if (cur === "eat") {
+    const grid = app.querySelector(".mealgrid");
+    if (grid) wireObGridPaint(grid, {
+      cellSelector: "[data-eat]",
+      getKey: el => el.dataset.eat,
+      isOn: key => ob.eatGrid[key] !== false,
+      setOn: (key, on) => { if (on) delete ob.eatGrid[key]; else ob.eatGrid[key] = false; },
+      refreshCell: (el, on) => { el.classList.toggle("off", !on); el.textContent = on ? "✓" : ""; },
+      onEnd: () => refreshEatBulkDims(grid),
+    });
+  }
   const next = document.getElementById("obNext");
   if (next) next.onclick = () => {
     const ta = document.getElementById("obTop3");
