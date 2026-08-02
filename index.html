@@ -117,7 +117,7 @@
   .filter-row .chip { font-size: 12px; padding: 6px 11px; white-space: nowrap; }
   .stack { position: relative; height: 62vh; max-height: 440px; margin: 0 22px; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
-  .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; }
+  .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; right: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
   .scard .bd { padding: 16px; }
   .scard .ti { font-weight: 800; font-size: 22px; }
@@ -1574,7 +1574,7 @@ function stackHtml(dk) {
   dk.slice(0, 3).reverse().forEach((d, i, arr) => {
     const top = i === arr.length - 1, dep = arr.length - 1 - i;
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="background:${d.g}">${d.em}<small>${T("photo placeholder", "фото-заглушка")}</small></div>
+      <div class="ph" style="background:${d.g}">${d.photo_url ? "" : d.em + `<small>${T("photo placeholder", "фото-заглушка")}</small>`}</div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
   });
