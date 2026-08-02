@@ -25,6 +25,7 @@
     border-radius: 18px; padding: 16px 20px; font-size: 18px; font-weight: 700; cursor: pointer; text-align: left;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent; width: 100%;
   }
+  .who-btn:active { background: #fef3c7; border-color: var(--amber); }
   .who-btn .em { font-size: 30px; }
   .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
 
@@ -283,12 +284,22 @@ function saveLangChoice(l, { forOnboard = false } = {}) {
 }
 
 function needsDeviceLangGate() {
-  return !stfGet("stf_lang");
+  return !stfGet("stf_lang") && !lang;
 }
 
 function needsOnboardLangGate(memberId) {
   return memberId && !stfGet(onboardLangKey(memberId));
 }
+
+// Safari iOS often drops addEventListener on buttons replaced by innerHTML.
+// Expose a global handler for inline onclick (most reliable), plus a module fn.
+let langGateForOnboard = false;
+function pickLanguage(code) {
+  if (code !== "en" && code !== "ru") return;
+  saveLangChoice(code, { forOnboard: langGateForOnboard });
+  render();
+}
+globalThis.stfPickLang = pickLanguage;
 
 syncLangFromStorage();
 const T = (en, ru) => (lang === "ru" ? ru : en);
@@ -756,7 +767,11 @@ function render() {
 
   // 4. Per-member language before profile onboarding (avoids inheriting stf_lang from another user on the same phone).
   if (game && me && !game.profiles[me] && needsOnboardLangGate(me)) {
-    return renderLangGate({ forOnboard: true });
+    if (stfGet("stf_lang") || lang) {
+      saveLangChoice(stfGet("stf_lang") || lang, { forOnboard: true });
+    } else {
+      return renderLangGate({ forOnboard: true });
+    }
   }
 
   syncLangFromStorage();
@@ -779,22 +794,16 @@ function render() {
 
 // language gate - the very first screen, bilingual by nature
 function renderLangGate({ forOnboard = false } = {}) {
+  langGateForOnboard = forOnboard;
   const subtitle = forOnboard
     ? "Pick your language before we set up your profile / Выбери язык перед настройкой профиля"
     : "Language / Язык";
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
     <p>${subtitle}</p>
-    <button type="button" class="who-btn" data-l="en"><span class="em">🇬🇧</span><span>English</span></button>
-    <button type="button" class="who-btn" data-l="ru"><span class="em">🇷🇺</span><span>Русский</span></button>
+    <button type="button" class="who-btn" onclick="stfPickLang('en')"><span class="em">🇬🇧</span><span>English</span></button>
+    <button type="button" class="who-btn" onclick="stfPickLang('ru')"><span class="em">🇷🇺</span><span>Русский</span></button>
   </div>`;
-  app.querySelectorAll("[data-l]").forEach(b => {
-    b.addEventListener("click", e => {
-      e.preventDefault();
-      saveLangChoice(b.dataset.l, { forOnboard });
-      render();
-    }, { passive: false });
-  });
 }
 
 // ── auth screens (Week 1) ─────────────────────────────────────────
@@ -1779,6 +1788,8 @@ function toast(msg) {
   // React to future auth events (magic-link login, sign-out, tab sync).
   sb.auth.onAuthStateChange(async (event, session) => {
     authSession = session;
+    // Don't re-render over the language gate — Safari loses dynamic tap handlers.
+    if (needsDeviceLangGate()) return;
     if (event === "SIGNED_IN") {
       await refreshMembership();
       // On first-time sign-in for an existing member, kick off the game plumbing.
@@ -1808,7 +1819,8 @@ function toast(msg) {
   render(); // sign-in gate / invitation onboarding / lang gate / app
 
   // If we already have auth + membership on cold boot, start the game plumbing.
-  if (authSession && membership) {
+  // Skip while the language gate is showing — let the user pick first.
+  if (authSession && membership && !needsDeviceLangGate()) {
     if (!me && membership) me = membership.member_id;
     joinPresence();
     await load();
