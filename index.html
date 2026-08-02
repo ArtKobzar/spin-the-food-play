@@ -310,6 +310,37 @@ let DISHES = [];
 let activePlanId = null;
 let lastEventSeq = 0;
 let loadInFlight = false;
+let loadError = null;
+
+function profileCacheKey(memberId) {
+  return memberId ? `stf_profile_${memberId}` : null;
+}
+
+function restoreProfile(memberId) {
+  try {
+    const raw = stfGet(profileCacheKey(memberId));
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn("[stf-data] profile cache read failed:", e);
+  }
+  return null;
+}
+
+function cacheProfile(memberId, profile) {
+  if (!memberId || !profile) return;
+  try {
+    stfSet(profileCacheKey(memberId), JSON.stringify(profile));
+  } catch (e) {
+    console.warn("[stf-data] profile cache write failed:", e);
+  }
+}
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out (${Math.round(ms / 1000)}s)`)), ms)),
+  ]);
+}
 
 const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", other: "🧑" };
 
@@ -414,12 +445,19 @@ function snapshotToGame(snap) {
   };
 }
 
+function isoLocalDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function nextMondayIso() {
   const d = new Date();
   const day = d.getDay();
   const add = day === 0 ? 1 : day === 1 ? 7 : 8 - day;
   d.setDate(d.getDate() + add);
-  return d.toISOString().slice(0, 10);
+  return isoLocalDate(d);
 }
 
 async function ensureActivePlan() {
@@ -432,7 +470,8 @@ async function ensureActivePlan() {
       p_set_active: true,
     });
     if (ce) throw ce;
-    activePlanId = created.plan_id;
+    activePlanId = created?.plan_id;
+    if (!activePlanId) throw new Error("create_plan returned no plan_id");
     ({ data: snap } = await sb.rpc("spin_food_snapshot"));
   } else {
     activePlanId = snap.active_plan_id;
@@ -454,7 +493,20 @@ const MEALS = [
 ];
 const mealN = m => (lang === "ru" ? m.nru : m.n);
 const dish = id => DISHES.find(d => d.id === id);
-const mem = id => FAMILY.find(m => m.id === id);
+const mem = id => {
+  const row = FAMILY.find(m => m.id === id);
+  if (row) return row;
+  if (membership?.member_id === id) {
+    return {
+      id,
+      em: avatarEmoji(membership.avatar_role),
+      en: membership.display_name || "Member",
+      ru: membership.display_name || "Member",
+      cook: !!membership.is_cook,
+    };
+  }
+  return { id, em: "🧑", en: "Member", ru: "Member", cook: true };
+};
 const dName = d => (lang === "ru" ? d.ru : d.en);
 const mName = m => (lang === "ru" ? m.ru : m.en);
 // crown sources: static specials + dishes named in a member's registered top-3
@@ -588,17 +640,40 @@ function rid() { return Math.random().toString(36).slice(2, 9); }
 let lastSeenTs = 0;
 
 async function load() {
-  await loadCatalog();
+  loadError = null;
   try {
-    const snap = await ensureActivePlan();
-    game = snapshotToGame(snap);
-    if (!game.profiles) game.profiles = {};
-    if (!game.activity.length) {
-      game.activity = [{ id: rid(), who: me, text: T("Family kitchen opened — plan next week", "Семейная кухня открыта — планируем следующую неделю"), ts: Date.now() }];
-    }
+    await withTimeout((async () => {
+      await loadCatalog();
+      const snap = await ensureActivePlan();
+      game = snapshotToGame(snap);
+      if (!game.profiles) game.profiles = {};
+      if (me) {
+        const cached = restoreProfile(me);
+        if (cached) game.profiles[me] = cached;
+      }
+      if (!game.activity.length) {
+        game.activity = [{ id: rid(), who: me, text: T("Family kitchen opened — plan next week", "Семейная кухня открыта — планируем следующую неделю"), ts: Date.now() }];
+      }
+    })(), 25000, "Kitchen load");
   } catch (e) {
     console.error("[stf-data] load failed:", e);
-    game = seedGame();
+    loadError = e?.message || String(e);
+    if (!game) game = seedGame();
+    if (me) {
+      const cached = restoreProfile(me);
+      if (cached) game.profiles[me] = cached;
+    }
+  }
+}
+
+async function kickLoad() {
+  if (loadInFlight) return;
+  loadInFlight = true;
+  try {
+    await load();
+  } finally {
+    loadInFlight = false;
+    render();
   }
 }
 
@@ -777,11 +852,26 @@ function render() {
   syncLangFromStorage();
   if (!game) {
     if (authSession && membership) {
-      app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`;
-      if (!loadInFlight) {
-        loadInFlight = true;
-        load().finally(() => { loadInFlight = false; render(); });
+      if (loadError) {
+        app.innerHTML = `<div class="gate"><h1>🍲</h1>
+          <p>${T("Could not load the family kitchen.", "Не удалось загрузить семейную кухню.")}</p>
+          <p style="font-size:12px;opacity:.75;max-width:320px">${loadError}</p>
+          <button class="who-btn" id="loadRetry" style="margin-top:12px">${T("Try again", "Повторить")}</button>
+          <button class="mini-btn" id="loadSignOut" style="margin-top:8px">${T("Sign out", "Выйти")}</button></div>`;
+        document.getElementById("loadRetry").onclick = () => { loadError = null; game = null; kickLoad(); };
+        document.getElementById("loadSignOut").onclick = async () => {
+          await sb.auth.signOut();
+          authSession = null;
+          membership = null;
+          me = null;
+          game = null;
+          loadError = null;
+          render();
+        };
+        return;
       }
+      app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`;
+      kickLoad();
       return;
     }
     app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`;
@@ -1323,9 +1413,11 @@ function renderOnboard() {
   const done = document.getElementById("obDone");
   if (done) done.onclick = async () => {
     game.profiles[me] = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, rating: ob.rating, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
+    cacheProfile(me, game.profiles[me]);
     ob = null; tab = "menu";
     await commitAndSync(`${mem(me).en} registered their profile`);
     toast(T("Welcome to the family kitchen 🍲", "Добро пожаловать на семейную кухню 🍲"));
+    render();
   };
 }
 function renderGate() {
@@ -1792,15 +1884,17 @@ function toast(msg) {
     if (needsDeviceLangGate()) return;
     if (event === "SIGNED_IN") {
       await refreshMembership();
-      // On first-time sign-in for an existing member, kick off the game plumbing.
       if (membership && !rtChan) {
+        if (!me) me = membership.member_id;
         joinPresence();
-        await load();
-        subscribe();
-        startSyncWatchers();
+        await kickLoad();
+        if (game) {
+          subscribe();
+          startSyncWatchers();
+        }
       }
     } else if (event === "SIGNED_OUT") {
-      membership = null; me = null; game = null;
+      membership = null; me = null; game = null; loadError = null;
     }
     render();
   });
@@ -1823,9 +1917,11 @@ function toast(msg) {
   if (authSession && membership && !needsDeviceLangGate()) {
     if (!me && membership) me = membership.member_id;
     joinPresence();
-    await load();
-    subscribe();
-    startSyncWatchers();
+    if (!game) await kickLoad();
+    if (game) {
+      subscribe();
+      startSyncWatchers();
+    }
     render();
   }
 })();
