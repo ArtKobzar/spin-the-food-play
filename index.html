@@ -23,6 +23,7 @@
   .who-btn {
     display: flex; align-items: center; gap: 14px; background: #fff; border: 2px solid #eee;
     border-radius: 18px; padding: 16px 20px; font-size: 18px; font-weight: 700; cursor: pointer; text-align: left;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent; width: 100%;
   }
   .who-btn .em { font-size: 30px; }
   .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
@@ -189,10 +190,29 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
 // remembered on the device. Otherwise members silently split into separate kitchens.
 function resolveFamilyKey() {
   const q = new URLSearchParams(location.search).get("family");
-  if (q) { localStorage.setItem("stf_family", q); return q; }
-  return localStorage.getItem("stf_family") || "kobzar-demo";
+  if (q) { stfSet("stf_family", q); return q; }
+  return stfGet("stf_family") || "kobzar-demo";
 }
 const FAMILY_KEY = resolveFamilyKey();
+
+// Safari Private Browsing can block localStorage — keep an in-memory mirror so gates
+// (language picker, family key) still advance after a tap.
+const stfMem = {};
+function stfGet(key) {
+  try {
+    const v = localStorage.getItem(key);
+    if (v != null) { stfMem[key] = v; return v; }
+  } catch (e) { console.warn("[stf] storage read blocked:", e.message); }
+  return stfMem[key] ?? null;
+}
+function stfSet(key, val) {
+  stfMem[key] = val;
+  try { localStorage.setItem(key, val); } catch (e) { console.warn("[stf] storage write blocked:", e.message); }
+}
+function stfDel(key) {
+  delete stfMem[key];
+  try { localStorage.removeItem(key); } catch (e) { /* noop */ }
+}
 
 // ── auth + membership (Week 1 cutover) ─────────────────────────────
 // Every family member now signs in via Supabase Auth magic link. After sign-in,
@@ -247,27 +267,27 @@ function onboardLangKey(memberId) {
 function syncLangFromStorage() {
   const memberId = membership?.member_id;
   if (memberId) {
-    const ob = localStorage.getItem(onboardLangKey(memberId));
+    const ob = stfGet(onboardLangKey(memberId));
     if (ob) { lang = ob; return; }
   }
-  lang = localStorage.getItem("stf_lang") || null;
+  lang = stfGet("stf_lang") || lang || null;
 }
 
 function saveLangChoice(l, { forOnboard = false } = {}) {
   lang = l;
-  localStorage.setItem("stf_lang", l);
+  stfSet("stf_lang", l);
   const memberId = membership?.member_id || me;
   if (forOnboard && memberId) {
-    localStorage.setItem(onboardLangKey(memberId), l);
+    stfSet(onboardLangKey(memberId), l);
   }
 }
 
 function needsDeviceLangGate() {
-  return !localStorage.getItem("stf_lang");
+  return !stfGet("stf_lang");
 }
 
 function needsOnboardLangGate(memberId) {
-  return memberId && !localStorage.getItem(onboardLangKey(memberId));
+  return memberId && !stfGet(onboardLangKey(memberId));
 }
 
 syncLangFromStorage();
@@ -278,6 +298,7 @@ let FAMILY = [];
 let DISHES = [];
 let activePlanId = null;
 let lastEventSeq = 0;
+let loadInFlight = false;
 
 const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", other: "🧑" };
 
@@ -739,7 +760,18 @@ function render() {
   }
 
   syncLangFromStorage();
-  if (!game) { app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`; return; }
+  if (!game) {
+    if (authSession && membership) {
+      app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`;
+      if (!loadInFlight) {
+        loadInFlight = true;
+        load().finally(() => { loadInFlight = false; render(); });
+      }
+      return;
+    }
+    app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`;
+    return;
+  }
   if (!game.profiles[me]) return renderOnboard();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
   wire();
@@ -753,12 +785,15 @@ function renderLangGate({ forOnboard = false } = {}) {
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
     <p>${subtitle}</p>
-    <button class="who-btn" data-l="en"><span class="em">🇬🇧</span><span>English</span></button>
-    <button class="who-btn" data-l="ru"><span class="em">🇷🇺</span><span>Русский</span></button>
+    <button type="button" class="who-btn" data-l="en"><span class="em">🇬🇧</span><span>English</span></button>
+    <button type="button" class="who-btn" data-l="ru"><span class="em">🇷🇺</span><span>Русский</span></button>
   </div>`;
-  app.querySelectorAll("[data-l]").forEach(b => b.onclick = () => {
-    saveLangChoice(b.dataset.l, { forOnboard });
-    render();
+  app.querySelectorAll("[data-l]").forEach(b => {
+    b.addEventListener("click", e => {
+      e.preventDefault();
+      saveLangChoice(b.dataset.l, { forOnboard });
+      render();
+    }, { passive: false });
   });
 }
 
