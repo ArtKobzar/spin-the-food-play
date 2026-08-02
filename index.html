@@ -1057,6 +1057,20 @@ function obToggleCookCol(mealKey) {
   const allOn = DAYS.every((_, di) => obCookCellOn(di, mealKey));
   DAYS.forEach((_, di) => obSetCookCell(di, mealKey, !allOn));
 }
+function obEatCellOn(dayIdx, mealIdx) { return ob.eatGrid[dayIdx + "-" + mealIdx] !== false; }
+function obSetEatCell(dayIdx, mealIdx, on) {
+  const k = dayIdx + "-" + mealIdx;
+  if (on) delete ob.eatGrid[k];
+  else ob.eatGrid[k] = false;
+}
+function obToggleEatRow(dayIdx) {
+  const allOn = MEALS.every((_, mi) => obEatCellOn(dayIdx, mi));
+  MEALS.forEach((_, mi) => obSetEatCell(dayIdx, mi, !allOn));
+}
+function obToggleEatCol(mealIdx) {
+  const allOn = DAYS.every((_, di) => obEatCellOn(di, mealIdx));
+  DAYS.forEach((_, di) => obSetEatCell(di, mealIdx, !allOn));
+}
 function obSteps() { return ob.isCook === false ? ["cookq","eat","done"] : ["cookq","avail","cookweek","rate","top3","eat","done"]; }
 function renderOnboard() {
   if (!ob) obReset();
@@ -1111,12 +1125,19 @@ function renderOnboard() {
     inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ешь дома?")}</div>
       <div class="ob-note" style="padding:0 0 6px">${t("Allergies?", "Аллергии?")}</div>
       <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap to toggle.", "Какие приёмы пищи ты дома? Нажми, чтобы переключить.")}</div>
-      <div class="mealgrid"><div></div>${MEALS.map(m => `<div class="hd">${m.ic}</div>`).join("")}
-        ${DAYS.map((d, di) => `<div class="dy">${dayN(di)}</div>` + MEALS.map((m, mi) => {
-          const k = di + "-" + mi, on = ob.eatGrid[k] !== false;
-          return `<div class="mg-cell ${on ? "" : "off"}" data-eat="${k}">${on ? "✓" : ""}</div>`;
-        }).join("")).join("")}
+      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap a cell to toggle one slot, or tap a day / meal icon to clear the whole row or column.", "Какие приёмы пищи ты дома? Нажми на ячейку, чтобы переключить один слот, или на день / иконку приёма — чтобы очистить всю строку или столбец.")}</div>
+      <div class="mealgrid"><div></div>${MEALS.map((m, mi) => {
+        const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
+        return `<div class="hd bulk ${allOn ? "" : "dim"}" data-eat-col="${mi}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
+      }).join("")}
+        ${DAYS.map((d, di) => {
+          const rowAllOn = MEALS.every((_, mi) => obEatCellOn(di, mi));
+          return `<div class="dy bulk ${rowAllOn ? "" : "dim"}" data-eat-row="${di}" title="${t("Toggle all meals on", "Переключить все приёмы")} ${dayN(di)}">${dayN(di)}</div>`
+            + MEALS.map((m, mi) => {
+              const k = di + "-" + mi, on = obEatCellOn(di, mi);
+              return `<div class="mg-cell ${on ? "" : "off"}" data-eat="${k}">${on ? "✓" : ""}</div>`;
+            }).join("");
+        }).join("")}
       </div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Submit", "Отправить")}</button>`;
   } else {
@@ -1163,6 +1184,8 @@ function renderOnboard() {
     render();
   });
   app.querySelectorAll("[data-eat]").forEach(b => b.onclick = () => { ob.eatGrid[b.dataset.eat] = ob.eatGrid[b.dataset.eat] === false; render(); });
+  app.querySelectorAll("[data-eat-row]").forEach(b => b.onclick = () => { obToggleEatRow(+b.dataset.eatRow); render(); });
+  app.querySelectorAll("[data-eat-col]").forEach(b => b.onclick = () => { obToggleEatCol(+b.dataset.eatCol); render(); });
   const next = document.getElementById("obNext");
   if (next) next.onclick = () => {
     const ta = document.getElementById("obTop3");
