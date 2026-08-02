@@ -293,10 +293,12 @@ function needsOnboardLangGate(memberId) {
 
 // Safari iOS often drops addEventListener on buttons replaced by innerHTML.
 // Expose a global handler for inline onclick (most reliable), plus a module fn.
-let langGateForOnboard = false;
+// This is the one and only language gate: device-level, shown before sign-in.
+// Per-member language overrides (settings screen, invitation accept) are a
+// separate, always-available concern and don't need their own gate screen.
 function pickLanguage(code) {
   if (code !== "en" && code !== "ru") return;
-  saveLangChoice(code, { forOnboard: langGateForOnboard });
+  saveLangChoice(code);
   render();
 }
 globalThis.stfPickLang = pickLanguage;
@@ -840,16 +842,6 @@ function render() {
 
   if (!me && membership) me = membership.member_id;
 
-  // 4. Per-member language before profile onboarding (avoids inheriting stf_lang from another user on the same phone).
-  if (game && me && !game.profiles[me] && needsOnboardLangGate(me)) {
-    if (stfGet("stf_lang") || lang) {
-      saveLangChoice(stfGet("stf_lang") || lang, { forOnboard: true });
-    } else {
-      return renderLangGate({ forOnboard: true });
-    }
-  }
-
-  syncLangFromStorage();
   if (!game) {
     if (authSession && membership) {
       if (loadError) {
@@ -883,14 +875,10 @@ function render() {
 }
 
 // language gate - the very first screen, bilingual by nature
-function renderLangGate({ forOnboard = false } = {}) {
-  langGateForOnboard = forOnboard;
-  const subtitle = forOnboard
-    ? "Pick your language before we set up your profile / Выбери язык перед настройкой профиля"
-    : "Language / Язык";
+function renderLangGate() {
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>${subtitle}</p>
+    <p>Language / Язык</p>
     <button type="button" class="who-btn" onclick="stfPickLang('en')"><span class="em">🇬🇧</span><span>English</span></button>
     <button type="button" class="who-btn" onclick="stfPickLang('ru')"><span class="em">🇷🇺</span><span>Русский</span></button>
   </div>`;
