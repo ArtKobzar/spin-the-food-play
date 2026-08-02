@@ -437,13 +437,30 @@ function snapshotToGame(snap) {
     ts: new Date(e.created_at).getTime(),
   }));
   if (snap.events && snap.events.length) lastEventSeq = snap.events[0].seq;
+  // Profiles are shared, safety-critical state (allergies, cook availability) -
+  // hydrate from the server's member rows so every family member sees every
+  // other member's registered profile, not just their own device's cache.
+  const profiles = { ...(game?.profiles || {}) };
+  for (const m of (snap.members || [])) {
+    if (!m.eater_profile && !m.cook_profile) continue; // not registered yet
+    profiles[m.member_id] = {
+      isCook: !!m.is_cook,
+      allergies: m.allergen_flags || [],
+      rating: m.eater_profile?.rating ?? null,
+      top3: m.eater_profile?.top3 || "",
+      eatGrid: m.eater_profile?.eatGrid || {},
+      avail: m.cook_profile?.avail || [],
+      cookGrid: m.cook_profile?.cookGrid || {},
+      registeredAt: m.eater_profile?.registeredAt || Date.now(),
+    };
+  }
   return {
     week,
     locked: snap.plan?.status === "confirmed",
     wishes,
     duel,
     activity,
-    profiles: game?.profiles || {},
+    profiles,
   };
 }
 
@@ -602,39 +619,44 @@ function seedGame() {
 
 // AI populate. Empty slots get accepted:false so the assigned cook must accept.
 // Slots that already hold a user-added dish become a proposal (the family must
-// approve, matching the existing swap flow).
+// approve, matching the existing swap flow). Mutates game.week for the instant
+// render, and returns the food.events this needs to become durable - the
+// caller must apply every one of them, or the fill is a local-only illusion
+// that reverts on the next sync/reload/other-device view.
 function aiPopulateWeek() {
-  const cooks = ["mom","dad","gran"];
+  const cookIds = FAMILY.filter(m => m.cook).map(m => m.id);
+  const cooks = cookIds.length ? cookIds : FAMILY.map(m => m.id);
+  const events = [];
+  if (!cooks.length) return { overwrittenCount: 0, events };
   const bf = DISHES.filter(d => d.meals.includes("breakfast"));
   const soups = DISHES.filter(d => d.soup);
   const mains = DISHES.filter(d => d.meals.includes("dinner"));
   let si = 0;
   const overwritten = [];
+  const fillOrPropose = (day, mealKey, dishId, cook, isLeftover = false) => {
+    const cur = game.week[day][mealKey];
+    if (cur && cur.dish) {
+      game.week[day][mealKey].proposal = { dish: dishId, cook, by: "ai" };
+      overwritten.push(1);
+      events.push(["slot_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me } })]);
+    } else {
+      game.week[day][mealKey] = { dish: dishId, cook, by: "ai", accepted: false, leftover: isLeftover };
+      events.push(["slot_filled", slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, is_leftover: isLeftover })]);
+    }
+  };
   for (let i = 0; i < 7; i++) {
     // breakfast (skip weekends)
-    if (i < 5) {
-      const pick = { dish: bf[i % bf.length].id, cook: cooks[i % 3], by: "ai", accepted: false };
-      if (game.week[i].breakfast) { game.week[i].breakfast.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
-      else game.week[i].breakfast = pick;
-    }
+    if (i < 5 && bf.length) fillOrPropose(i, "breakfast", bf[i % bf.length].id, cooks[i % cooks.length]);
     // lunch (soup, day-2 leftover)
-    if (!game.week[i].lunch || !game.week[i].lunch?.leftover) {
-      const s = soups[si++ % soups.length], ck = cooks[(i + 1) % 3];
-      const pick = { dish: s.id, cook: ck, by: "ai", accepted: false };
-      if (game.week[i].lunch) { game.week[i].lunch.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
-      else game.week[i].lunch = pick;
-      if (i + 1 < 7 && !game.week[i + 1].lunch) {
-        game.week[i + 1].lunch = { dish: s.id, cook: ck, by: "ai", accepted: false, leftover: true };
-      }
+    if ((!game.week[i].lunch || !game.week[i].lunch?.leftover) && soups.length) {
+      const s = soups[si++ % soups.length], ck = cooks[(i + 1) % cooks.length];
+      fillOrPropose(i, "lunch", s.id, ck);
+      if (i + 1 < 7 && !game.week[i + 1].lunch) fillOrPropose(i + 1, "lunch", s.id, ck, true);
     }
     // dinner (skip Sat)
-    if (i !== 5) {
-      const pick = { dish: mains[i % mains.length].id, cook: cooks[(i + 2) % 3], by: "ai", accepted: false };
-      if (game.week[i].dinner) { game.week[i].dinner.proposal = { dish: pick.dish, cook: pick.cook, by: "ai" }; overwritten.push(1); }
-      else game.week[i].dinner = pick;
-    }
+    if (i !== 5 && mains.length) fillOrPropose(i, "dinner", mains[i % mains.length].id, cooks[(i + 2) % cooks.length]);
   }
-  return overwritten.length;
+  return { overwrittenCount: overwritten.length, events };
 }
 function rid() { return Math.random().toString(36).slice(2, 9); }
 
@@ -1419,8 +1441,14 @@ function renderOnboard() {
   if (done) done.onclick = async () => {
     game.profiles[me] = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, rating: ob.rating, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
     cacheProfile(me, game.profiles[me]);
+    const profilePayload = {
+      is_cook: !!ob.isCook,
+      allergen_flags: ob.allergies || [],
+      eater_profile: { rating: ob.rating ?? null, top3: ob.top3 || "", eatGrid: ob.eatGrid || {}, registeredAt: Date.now() },
+      cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {} },
+    };
     ob = null; tab = "menu";
-    await commitAndSync(`${mem(me).en} registered their profile`);
+    await commitAndSync(`${mem(me).en} registered their profile`, "member_profile_updated", profilePayload);
     toast(T("Welcome to the family kitchen 🍲", "Добро пожаловать на семейную кухню 🍲"));
     render();
   };
@@ -1785,13 +1813,22 @@ function openAiFill() {
     </div>
     <button class="btn btn-primary" id="aiGo" style="width:100%;margin-top:16px">🤖 ${T("Yes, generate it", "Да, собрать")}</button>
     <button class="btn btn-ghost" id="aiCancel" style="width:100%;margin-top:8px">${T("Cancel", "Отмена")}</button>`);
-  v.querySelector("#aiGo").onclick = () => {
+  v.querySelector("#aiGo").onclick = async () => {
     closeModal();
-    const overwrittenCount = aiPopulateWeek();
-    commitAndSync(`${mem(me).en} triggered an AI menu ${anyMeals ? "refresh" : "fill"}`);
-    toast(overwrittenCount
-      ? T("AI menu sent - ", "Меню от ИИ отправлено - ") + overwrittenCount + T(" swap(s) need family approval", " замен(а/ы) требуют одобрения семьи")
-      : T("AI menu ready - cooks need to accept their meals", "Меню от ИИ готово - поварам нужно подтвердить блюда"));
+    const { overwrittenCount, events } = aiPopulateWeek();
+    act(`${mem(me).en} triggered an AI menu ${anyMeals ? "refresh" : "fill"}`);
+    render();
+    let failed = 0;
+    for (const [eventType, payload] of events) {
+      const ok = await applyEvent(eventType, payload);
+      if (!ok) failed++;
+    }
+    await pullLatest();
+    toast(failed
+      ? T("AI menu partially synced - ", "Меню от ИИ синхронизировано частично - ") + failed + T(" slot(s) failed, try again", " слот(а/ов) не удалось, попробуйте снова")
+      : overwrittenCount
+        ? T("AI menu sent - ", "Меню от ИИ отправлено - ") + overwrittenCount + T(" swap(s) need family approval", " замен(а/ы) требуют одобрения семьи")
+        : T("AI menu ready - cooks need to accept their meals", "Меню от ИИ готово - поварам нужно подтвердить блюда"));
   };
   v.querySelector("#aiCancel").onclick = closeModal;
 }
