@@ -185,16 +185,6 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
 });
 
-// Family key is the shared "room". It must survive a lost ?family= param
-// (installed PWAs open at start_url "." with no query), so once seen it is
-// remembered on the device. Otherwise members silently split into separate kitchens.
-function resolveFamilyKey() {
-  const q = new URLSearchParams(location.search).get("family");
-  if (q) { stfSet("stf_family", q); return q; }
-  return stfGet("stf_family") || "kobzar-demo";
-}
-const FAMILY_KEY = resolveFamilyKey();
-
 // Safari Private Browsing can block localStorage — keep an in-memory mirror so gates
 // (language picker, family key) still advance after a tap.
 const stfMem = {};
@@ -213,6 +203,16 @@ function stfDel(key) {
   delete stfMem[key];
   try { localStorage.removeItem(key); } catch (e) { /* noop */ }
 }
+
+// Family key is the shared "room". It must survive a lost ?family= param
+// (installed PWAs open at start_url "." with no query), so once seen it is
+// remembered on the device. Otherwise members silently split into separate kitchens.
+function resolveFamilyKey() {
+  const q = new URLSearchParams(location.search).get("family");
+  if (q) { stfSet("stf_family", q); return q; }
+  return stfGet("stf_family") || "kobzar-demo";
+}
+const FAMILY_KEY = resolveFamilyKey();
 
 // ── auth + membership (Week 1 cutover) ─────────────────────────────
 // Every family member now signs in via Supabase Auth magic link. After sign-in,
