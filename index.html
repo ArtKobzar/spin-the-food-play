@@ -173,7 +173,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
-const sb = createClient(SUPABASE_URL, SUPABASE_ANON, { realtime: { params: { eventsPerSecond: 5 } } });
+// detectSessionInUrl handles the magic-link callback: Supabase Auth appends
+// #access_token=... to the URL after email confirmation, and this option makes
+// supabase-js parse it, persist the session to localStorage, and clean the URL.
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
+  realtime: { params: { eventsPerSecond: 5 } },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
+});
 
 // Family key is the shared "room". It must survive a lost ?family= param
 // (installed PWAs open at start_url "." with no query), so once seen it is
@@ -184,6 +190,48 @@ function resolveFamilyKey() {
   return localStorage.getItem("stf_family") || "kobzar-demo";
 }
 const FAMILY_KEY = resolveFamilyKey();
+
+// ── auth + membership (Week 1 cutover) ─────────────────────────────
+// Every family member now signs in via Supabase Auth magic link. After sign-in,
+// spin_food_my_membership() returns the caller's food.family_members row.
+// The old hardcoded FAMILY picker is now the invitation-onboarding step for
+// invitees; existing members skip straight to the app.
+let authSession = null;   // Supabase Auth session (null before sign-in)
+let membership = null;    // { member_id, family_id, family_name, avatar_role, other_label, display_name, is_owner, is_cook, ... } or null
+
+// Week 1 backward-compat map: the game engine uses "mom"/"dad"/"gran"/"kid" as
+// slot ids everywhere (game state, wishes, activity feed, presence). The new
+// avatar_role enum has 6 values (mom, dad, grandpa, grandma, kid, other).
+// Grandpa/grandma collapse to "gran"; "other" falls back to "dad" for Week 1.
+// Week 3 rewires the FAMILY array to real DB rows and retires this map.
+const AVATAR_TO_LEGACY = {
+  mom: "mom", dad: "dad", grandpa: "gran", grandma: "gran", kid: "kid", other: "dad",
+};
+
+// When a real membership arrives, override the hardcoded FAMILY slot's display
+// name (and is_cook flag if we have it) so the topbar/pill/menu show real names
+// instead of "Mom" / "Dad" / "Granny".
+function applyMembershipToFamily() {
+  if (!membership) return;
+  const slotId = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
+  const slot = FAMILY.find(m => m.id === slotId);
+  if (slot && membership.display_name) {
+    slot.en = membership.display_name;
+    slot.ru = membership.display_name;
+  }
+  if (slot && typeof membership.is_cook === "boolean") slot.cook = membership.is_cook;
+}
+
+async function refreshMembership() {
+  const { data, error } = await sb.rpc("spin_food_my_membership");
+  if (error) { console.error("[stf-auth] membership fetch failed:", error); membership = null; return; }
+  membership = data;
+  applyMembershipToFamily();
+}
+
+// The invitation token in ?invite=<hex>. Present only for invitees arriving via
+// magic-link email. We stash it early so onAuthStateChange can pick it up.
+const inviteTokenInUrl = new URLSearchParams(location.search).get("invite");
 
 // ── language: chosen FIRST, before identity; carried through the whole app ──
 let lang = localStorage.getItem("stf_lang") || null;
@@ -489,8 +537,20 @@ function clearSlot(day, mealKey) {
 // ── render ──
 const app = document.getElementById("app");
 function render() {
+  // Auth gate: no session -> sign-in screen. If the invite token is in the URL
+  // but the user hasn't signed in yet, we still send them through the sign-in
+  // gate first; the token survives in the URL and is picked up post-auth.
+  if (!authSession) return renderSignInGate();
+  // Signed in, but no membership yet:
+  //   - If ?invite=<token> is present, show the invitation onboarding modal
+  //     (the invitee picks avatar_role + display_name; RPC creates member row).
+  //   - Otherwise this is a signed-in stranger (edge case) or an owner whose
+  //     row we couldn't fetch. Show a soft error with a "retry" button.
+  if (!membership) return renderInvitationOnboarding();
   if (!lang) return renderLangGate();
-  if (!me) return renderGate();
+  // Derive game identity from the real membership. Kept in `me` to avoid
+  // rewriting every downstream reference (mem(me), profiles[me], etc.).
+  if (!me) me = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
   if (!game) { app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`; return; }
   if (!game.profiles[me]) return renderOnboard();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
@@ -510,24 +570,277 @@ function renderLangGate() {
   });
 }
 
+// ── auth screens (Week 1) ─────────────────────────────────────────
+// Sign-in gate: email input -> Supabase Auth sends a magic link. On click,
+// the invitee is redirected back to this page with the session established
+// and the invite token still in the URL (if any).
+function renderSignInGate() {
+  // Language-agnostic since the user may not have picked a language yet.
+  const hasInvite = Boolean(inviteTokenInUrl);
+  app.innerHTML = `<div class="gate">
+    <h1>🍲 Spin the Food</h1>
+    <p>${hasInvite ? "You've been invited to a family kitchen.<br>Sign in with your email to join." : "Sign in to your family kitchen"}</p>
+    <input id="signinEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"
+      style="width:100%;padding:14px;font-size:16px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
+    <button class="btn btn-primary" id="signinGo" style="width:100%">Send magic link ✉️</button>
+    <div id="signinNote" style="color:#888;font-size:13px;line-height:1.5">
+      We'll email you a one-tap link. No password.
+    </div>
+  </div>`;
+  const input = document.getElementById("signinEmail");
+  const btn = document.getElementById("signinGo");
+  const note = document.getElementById("signinNote");
+  const submit = async () => {
+    const email = (input.value || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      note.textContent = "That doesn't look like a valid email.";
+      note.style.color = "#ef4444";
+      return;
+    }
+    btn.disabled = true; btn.textContent = "Sending...";
+    // The redirect URL preserves invite + family params so a fresh browser
+    // that opens the emailed link lands in the same room as the owner.
+    const redirectUrl = new URL(location.href);
+    // Strip supabase-added auth fragments if any (belt & braces).
+    redirectUrl.hash = "";
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectUrl.toString() },
+    });
+    if (error) {
+      note.textContent = "Send failed: " + error.message;
+      note.style.color = "#ef4444";
+      btn.disabled = false; btn.textContent = "Send magic link ✉️";
+      return;
+    }
+    note.innerHTML = `📬 Check <b>${email}</b><br>The link expires in 1 hour.`;
+    note.style.color = "#059669";
+    btn.style.display = "none";
+    input.disabled = true;
+  };
+  btn.onclick = submit;
+  input.onkeydown = e => { if (e.key === "Enter") submit(); };
+  input.focus();
+}
+
+// Invitation onboarding: caller is signed in but has no food.family_members row.
+// If they arrived with ?invite=<token>, show the avatar-role + display-name
+// picker and call spin_food_accept_invitation. Otherwise show a soft error.
+function renderInvitationOnboarding() {
+  const email = authSession?.user?.email || "";
+  if (!inviteTokenInUrl) {
+    app.innerHTML = `<div class="gate">
+      <h1>🍲 Spin the Food</h1>
+      <p>Signed in as <b>${email}</b><br>but you're not in a family kitchen yet.</p>
+      <p style="color:#888;font-size:14px;line-height:1.5">
+        Ask the family owner to send you an invitation from Settings → Invite family member.
+      </p>
+      <button class="btn btn-ghost" id="signoutBtn" style="width:100%">Sign out</button>
+    </div>`;
+    document.getElementById("signoutBtn").onclick = async () => {
+      await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
+    };
+    return;
+  }
+  // Have a token. Pick avatar + name, then submit.
+  const AVATAR_CHOICES = [
+    { r: "mom", em: "👩", en: "Mom", ru: "Мама" },
+    { r: "dad", em: "👨", en: "Dad", ru: "Папа" },
+    { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка" },
+    { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка" },
+    { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
+    { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
+  ];
+  let selRole = null;
+  let displayName = "";
+  let otherLabel = "";
+  app.innerHTML = `<div class="ob">
+    <h2 style="font-size:22px;margin-bottom:6px">🍲 Welcome to the family kitchen</h2>
+    <div style="color:#666;font-size:14px;margin-bottom:18px">
+      Signed in as <b>${email}</b>. Tell us who you are in the family.
+    </div>
+    <div class="sect">Your role</div>
+    <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
+      <div class="chip" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${c.en}</div>
+    `).join("")}</div>
+    <div id="otherLabelWrap" style="display:none;margin-top:10px">
+      <div class="sect">What should we call this role?</div>
+      <input id="otherLabelInput" placeholder="e.g. Uncle, Nanny, Roommate" maxlength="30"
+        style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    </div>
+    <div class="sect" style="margin-top:14px">Your display name</div>
+    <input id="displayNameInput" placeholder="How the family will see your name" maxlength="40"
+      style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    <button class="btn btn-primary" id="acceptBtn" style="width:100%;margin-top:20px;opacity:.4" disabled>
+      Join the family kitchen →
+    </button>
+    <button class="btn btn-ghost" id="signoutBtn2" style="width:100%;margin-top:8px;color:#888">
+      Not you? Sign out
+    </button>
+    <div id="acceptNote" style="color:#888;font-size:13px;margin-top:10px;line-height:1.5"></div>
+  </div>`;
+
+  const roleChips = app.querySelectorAll("#roleWrap .chip");
+  const otherWrap = document.getElementById("otherLabelWrap");
+  const otherInput = document.getElementById("otherLabelInput");
+  const nameInput = document.getElementById("displayNameInput");
+  const acceptBtn = document.getElementById("acceptBtn");
+  const note = document.getElementById("acceptNote");
+
+  const validate = () => {
+    const nameOk = nameInput.value.trim().length > 0;
+    const roleOk = selRole !== null;
+    const otherOk = selRole !== "other" || otherInput.value.trim().length > 0;
+    const ok = roleOk && nameOk && otherOk;
+    acceptBtn.disabled = !ok;
+    acceptBtn.style.opacity = ok ? "1" : ".4";
+  };
+
+  roleChips.forEach(c => c.onclick = () => {
+    selRole = c.dataset.r;
+    roleChips.forEach(x => x.classList.toggle("on", x.dataset.r === selRole));
+    otherWrap.style.display = selRole === "other" ? "block" : "none";
+    // Prefill display name with the auth email's local part on first pick, so
+    // the invitee always has *something*, but they can freely edit it.
+    if (!nameInput.value && email) nameInput.value = email.split("@")[0];
+    validate();
+  });
+  otherInput.oninput = validate;
+  nameInput.oninput = validate;
+
+  document.getElementById("signoutBtn2").onclick = async () => {
+    await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
+  };
+
+  acceptBtn.onclick = async () => {
+    if (acceptBtn.disabled) return;
+    acceptBtn.disabled = true; acceptBtn.textContent = "Joining...";
+    note.textContent = ""; note.style.color = "#888";
+    const { data, error } = await sb.rpc("spin_food_accept_invitation", {
+      p_token: inviteTokenInUrl,
+      p_avatar_role: selRole,
+      p_display_name: nameInput.value.trim(),
+      p_other_label: selRole === "other" ? otherInput.value.trim() : null,
+    });
+    if (error) {
+      note.textContent = "Couldn't join: " + error.message;
+      note.style.color = "#ef4444";
+      acceptBtn.disabled = false;
+      acceptBtn.textContent = "Try again →";
+      return;
+    }
+    // Success. Strip ?invite= from the URL so a refresh doesn't retry the flow.
+    const url = new URL(location.href);
+    url.searchParams.delete("invite");
+    history.replaceState({}, "", url.toString());
+    await refreshMembership();
+    // Load game state + start realtime now that we know the family.
+    if (me === null) me = AVATAR_TO_LEGACY[membership?.avatar_role] || "dad";
+    joinPresence();
+    await load();
+    subscribe();
+    startSyncWatchers();
+    render();
+    toast("Welcome to the family kitchen 🍲");
+  };
+}
+
 // settings - always reachable from the ⚙️ in the top bar
 function openSettings() {
+  const isOwner = Boolean(membership?.is_owner);
+  const email = authSession?.user?.email || "";
   const v = modal(`<h3>⚙️ ${T("Settings", "Настройки")}</h3>
+    <div class="sect">${T("Signed in as", "Вошёл(-ла) как")}</div>
+    <div style="font-size:14px;color:#333;margin-bottom:6px">
+      ${membership?.display_name ? `<b>${membership.display_name}</b> · ` : ""}${email}
+    </div>
     <div class="sect">${T("Language", "Язык")}</div>
     <div class="chips-wrap">
       <div class="chip ${lang === "en" ? "on" : ""}" data-sl="en">🇬🇧 English</div>
       <div class="chip ${lang === "ru" ? "on" : ""}" data-sl="ru">🇷🇺 Русский</div>
     </div>
     <div class="sect">${T("Family", "Семья")}</div>
-    <div style="font-size:13px;color:#666;margin-bottom:10px">${T("Everyone must share this code to see each other", "Все должны быть в одной семье, чтобы видеть друг друга")}: <b>${FAMILY_KEY}</b></div>
-    <div class="sect">${T("This phone", "Этот телефон")}</div>
-    <button class="btn btn-ghost" id="swUser" style="width:100%">${T("Switch family member", "Сменить члена семьи")}</button>`);
+    <div style="font-size:13px;color:#666;margin-bottom:10px">${membership?.family_name ? `<b>${membership.family_name}</b> · ` : ""}${T("shared code", "общий код")}: <b>${FAMILY_KEY}</b></div>
+    ${isOwner ? `
+      <button class="btn btn-primary" id="inviteBtn" style="width:100%">👥 ${T("Invite family member", "Пригласить члена семьи")}</button>
+    ` : ""}
+    <div class="sect" style="margin-top:16px">${T("Session", "Сессия")}</div>
+    <button class="btn btn-ghost" id="signoutBtn3" style="width:100%">${T("Sign out", "Выйти")}</button>`);
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
     lang = c.dataset.sl; localStorage.setItem("stf_lang", lang);
     if (me && game?.profiles?.[me]) { game.profiles[me].lang = lang; persist(false); }
     closeModal(); render();
   });
-  v.querySelector("#swUser").onclick = () => { closeModal(); previousMe = me; localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
+  const inviteBtn = v.querySelector("#inviteBtn");
+  if (inviteBtn) inviteBtn.onclick = () => { closeModal(); openInviteFlow(); };
+  v.querySelector("#signoutBtn3").onclick = async () => {
+    closeModal();
+    await sb.auth.signOut();
+    authSession = null; membership = null; me = null; game = null; ob = null;
+    localStorage.removeItem("stf_me");
+    render();
+  };
+}
+
+// Owner-only. Prompts for an email, calls the spin-food-invite Edge Function,
+// which creates the food.family_invitations row and sends the magic-link email.
+function openInviteFlow() {
+  const v = modal(`<h3>👥 ${T("Invite family member", "Пригласить члена семьи")}</h3>
+    <div style="font-size:13px;color:#666;margin-bottom:10px">
+      ${T("They'll get a one-tap magic link. On first sign-in they pick their role and name.", "Они получат ссылку-магию. При входе выберут роль и имя.")}
+    </div>
+    <div class="sect">${T("Email address", "Email")}</div>
+    <input id="inviteEmail" type="email" inputmode="email" placeholder="them@example.com"
+      style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    <button class="btn btn-primary" id="inviteGo" style="width:100%;margin-top:14px">
+      ✉️ ${T("Send invitation", "Отправить приглашение")}
+    </button>
+    <div id="inviteNote" style="color:#888;font-size:13px;margin-top:10px;line-height:1.5"></div>`);
+
+  const input = v.querySelector("#inviteEmail");
+  const go = v.querySelector("#inviteGo");
+  const note = v.querySelector("#inviteNote");
+  input.focus();
+  const submit = async () => {
+    const email = (input.value || "").trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      note.textContent = T("That doesn't look like a valid email.", "Похоже, это не валидный email.");
+      note.style.color = "#ef4444";
+      return;
+    }
+    go.disabled = true; go.textContent = T("Sending...", "Отправляю...");
+    const accessToken = authSession?.access_token;
+    if (!accessToken) { note.textContent = "Session expired, please sign in again."; note.style.color = "#ef4444"; return; }
+    let resp, result;
+    try {
+      resp = await fetch(SUPABASE_URL + "/functions/v1/spin-food-invite", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, family_key: FAMILY_KEY }),
+      });
+      result = await resp.json();
+    } catch (e) {
+      note.textContent = "Network error: " + (e?.message || e);
+      note.style.color = "#ef4444";
+      go.disabled = false; go.textContent = "✉️ " + T("Send invitation", "Отправить приглашение");
+      return;
+    }
+    if (!result?.ok) {
+      note.textContent = T("Failed: ", "Ошибка: ") + (result?.error || "unknown");
+      note.style.color = "#ef4444";
+      go.disabled = false; go.textContent = "✉️ " + T("Send invitation", "Отправить приглашение");
+      return;
+    }
+    note.innerHTML = `📬 ${T("Sent to", "Отправлено на")} <b>${email}</b>.<br>${T("They have 14 days to accept.", "У них 14 дней, чтобы принять.")}`;
+    note.style.color = "#059669";
+    go.textContent = "✓ " + T("Sent", "Отправлено");
+    setTimeout(() => closeModal(), 2500);
+  };
+  go.onclick = submit;
+  input.onkeydown = e => { if (e.key === "Enter") submit(); };
 }
 
 // ── onboarding (registration gate - every member passes it once) ──
@@ -603,7 +916,14 @@ function renderOnboard() {
   const back = document.getElementById("obBack");
   if (back) back.onclick = () => { ob.step--; render(); };
   const notMe = document.getElementById("notMe");
-  if (notMe) notMe.onclick = e => { e.preventDefault(); localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
+  // "Not you?" during game onboarding now signs out (identity is auth-bound).
+  if (notMe) notMe.onclick = async e => {
+    e.preventDefault();
+    await sb.auth.signOut();
+    authSession = null; membership = null; me = null; ob = null; game = null;
+    localStorage.removeItem("stf_me");
+    render();
+  };
   app.querySelectorAll("[data-cook]").forEach(b => b.onclick = () => { ob.isCook = b.dataset.cook === "yes"; ob.step++; render(); });
   app.querySelectorAll("[data-avail]").forEach(b => b.onclick = () => {
     const k = b.dataset.avail;
@@ -850,7 +1170,9 @@ function nav() {
 function wire() {
   document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
   const pill = document.getElementById("mePill");
-  if (pill) pill.onclick = () => { previousMe = me; localStorage.removeItem("stf_me"); me = null; ob = null; render(); };
+  // The "me" pill now opens Settings (which is where sign-out + invite live).
+  // The old member-switcher is gone: identity is bound to the auth session.
+  if (pill) pill.onclick = openSettings;
   const settings = document.getElementById("settingsBtn");
   if (settings) settings.onclick = openSettings;
 
@@ -1054,13 +1376,53 @@ function toast(msg) {
 }
 
 // ── boot ──
+// Auth-first: check for an existing session (or a magic-link callback in the
+// URL fragment, handled by detectSessionInUrl). Only start realtime + load
+// spin_play_state once we have both a session and a membership row.
 (async function () {
-  render(); // gate or loading
-  if (me) joinPresence();
-  await load();
-  subscribe();
-  startSyncWatchers();
-  render();
+  const { data: sessData } = await sb.auth.getSession();
+  authSession = sessData.session;
+
+  // React to future auth events (magic-link login, sign-out, tab sync).
+  sb.auth.onAuthStateChange(async (event, session) => {
+    authSession = session;
+    if (event === "SIGNED_IN") {
+      await refreshMembership();
+      // On first-time sign-in for an existing member, kick off the game plumbing.
+      if (membership && !rtChan) {
+        joinPresence();
+        await load();
+        subscribe();
+        startSyncWatchers();
+      }
+    } else if (event === "SIGNED_OUT") {
+      membership = null; me = null; game = null;
+    }
+    render();
+  });
+
+  if (authSession) await refreshMembership();
+
+  // Housekeeping: if the caller lands with ?invite=<token> in the URL but is
+  // already a member (e.g. they clicked their own old invite link), strip the
+  // token so a refresh doesn't try to accept it again.
+  if (authSession && membership && inviteTokenInUrl) {
+    const u = new URL(location.href);
+    u.searchParams.delete("invite");
+    history.replaceState({}, "", u.toString());
+  }
+
+  render(); // sign-in gate / invitation onboarding / lang gate / app
+
+  // If we already have auth + membership on cold boot, start the game plumbing.
+  if (authSession && membership) {
+    if (!me) me = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
+    joinPresence();
+    await load();
+    subscribe();
+    startSyncWatchers();
+    render();
+  }
 })();
 </script>
 </body>
