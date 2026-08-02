@@ -528,13 +528,12 @@ const DIFF_FILTERS = [["all","Any difficulty","Любая сложность"],[
 function diffLevel(d) { return (d.d.match(/●/g) || []).length; }
 function timeBucket(d) { return d.t <= 20 ? "quick" : d.t <= 45 ? "medium" : "long"; }
 // A dish is "safe for everyone" when no registered member's allergies overlap its allergen tags.
-// "custom" allergies can't be checked against tags, so they're excluded from this quick filter
-// (matches the plan-level rule that custom-allergy members need manual recipe review).
+// Both sides now speak the same vocabulary: food.allergen_classes (EU FIC 14, see ALLERGEN_META).
 function isSafeForEveryone(d) {
   const allergens = d.allergens || [];
   if (!allergens.length) return true;
   for (const p of Object.values(game?.profiles ?? {})) {
-    const al = (p.allergies || []).filter(a => a !== "none" && a !== "custom");
+    const al = (p.allergies || []).filter(a => a !== "none");
     if (al.some(a => allergens.includes(a))) return false;
   }
   return true;
@@ -1162,7 +1161,25 @@ function openInviteFlow() {
 // ── onboarding (registration gate - every member passes it once) ──
 let ob = null;
 function obReset() { ob = { step: 0, isCook: null, avail: [], cookGrid: {}, rating: null, top3: "", allergies: [], eatGrid: {} }; }
-const OB_ALG = [["nuts","Nuts","Орехи"],["dairy","Dairy","Молочка"],["gluten","Gluten","Глютен"],["eggs","Eggs","Яйца"],["shellfish","Shellfish","Морепродукты"],["none","None","Нет"]];
+// Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
+// declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
+const OB_ALG = [
+  ["gluten","Gluten","Глютен"],
+  ["crustaceans","Crustaceans","Ракообразные"],
+  ["eggs","Eggs","Яйца"],
+  ["fish","Fish","Рыба"],
+  ["peanuts","Peanuts","Арахис"],
+  ["soybeans","Soy","Соя"],
+  ["milk","Milk","Молоко"],
+  ["tree_nuts","Tree nuts","Орехи"],
+  ["celery","Celery","Сельдерей"],
+  ["mustard","Mustard","Горчица"],
+  ["sesame","Sesame","Кунжут"],
+  ["sulphites","Sulphites","Сульфиты"],
+  ["lupin","Lupin","Люпин"],
+  ["molluscs","Molluscs","Моллюски"],
+  ["none","None","Нет"],
+];
 function obCookSlotsOn() { return MEALS.filter(m => ob.avail.includes(m.k)); }
 function obCookCellOn(dayIdx, mealKey) { return ob.cookGrid[dayIdx + "-" + mealKey] !== false; }
 function obSetCookCell(dayIdx, mealKey, on) {
@@ -1493,7 +1510,27 @@ let deckFilter = "all";
 let deckSearch = "";
 let deckAdv = newAdvFilters();
 let deckPanel = { open: false };
-const FILTERS = [["all","All","Все"],["meat","🥩 Meat","🥩 Мясо"],["fish","🐟 Fish","🐟 Рыба"],["veg","🥗 Veg","🥗 Овощи"],["russian","Russian","Русская"],["italian","Italian","Итальянская"],["asian","Asian","Азиатская"]];
+// protein_type is the DB's closed vocab (food.recipes.protein_type check constraint:
+// meat/fish/eggs/plant/none). Cuisine is free text. Both are derived from whatever the
+// family's cookbook actually contains, so the filter row never drifts from the ontology.
+const PROTEIN_META = {
+  meat:  { ic: "🥩", en: "Meat",  ru: "Мясо" },
+  fish:  { ic: "🐟", en: "Fish",  ru: "Рыба" },
+  eggs:  { ic: "🥚", en: "Eggs",  ru: "Яйца" },
+  plant: { ic: "🥗", en: "Plant", ru: "Растительное" },
+  none:  { ic: "🍰", en: "Other", ru: "Другое" },
+};
+function cuisineLabel(c) { return c.replace(/\b\w/g, ch => ch.toUpperCase()); }
+function availableCuisines() {
+  return [...new Set(DISHES.map(d => d.c).filter(c => c && c !== "family"))].sort();
+}
+function currentFilters() {
+  const proteins = Object.keys(PROTEIN_META)
+    .filter(k => DISHES.some(d => d.p === k))
+    .map(k => [k, `${PROTEIN_META[k].ic} ${PROTEIN_META[k].en}`, `${PROTEIN_META[k].ic} ${PROTEIN_META[k].ru}`]);
+  const cuisines = availableCuisines().map(c => [c, cuisineLabel(c), cuisineLabel(c)]);
+  return [["all", "All", "Все"], ...proteins, ...cuisines];
+}
 let deckOrder = DISHES.map(d => d.id);
 function deck() {
   const q = deckSearch.trim().toLowerCase();
@@ -1518,7 +1555,7 @@ function stackHtml(dk) {
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
     <input id="deckSearch" style="width:calc(100% - 40px);margin:0 20px 8px;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
-    <div class="filter-row">${FILTERS.map(([k,l,lru]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${T(l, lru)}</div>`).join("")}</div>
+    <div class="filter-row">${currentFilters().map(([k,l,lru]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${T(l, lru)}</div>`).join("")}</div>
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div class="stack" id="stack">${stackHtml(deck())}</div>
     <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
@@ -1772,14 +1809,13 @@ function wishStep2(kind, presetDay) {
   let dishFilter="all", dishSearch="";
   const dishAdv = newAdvFilters();
   const dishPanel = { open: false };
-  const cuisines = ["russian","italian","asian","greek","uzbek"];
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
       <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
-      <div class="filter-row" id="dishFilterRow">${FILTERS.map(([k,l,lru]) => `<div class="chip ${k==="all"?"on":""}" data-df="${k}">${T(l, lru)}</div>`).join("")}</div>
+      <div class="filter-row" id="dishFilterRow">${currentFilters().map(([k,l,lru]) => `<div class="chip ${k==="all"?"on":""}" data-df="${k}">${T(l, lru)}</div>`).join("")}</div>
       <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
       <div class="chips-wrap" id="WD"></div>` : ""}
-    ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${cuisines.map(c=>`<div class="chip" data-c="${c}">${c}</div>`).join("")}</div>`:""}
+    ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div>
     <div class="chips-wrap" id="WK"><div class="chip on" data-c="any">🎲 ${T("Anyone", "Кто угодно")}</div>${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
     <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
