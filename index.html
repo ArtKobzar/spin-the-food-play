@@ -1,7 +1,5 @@
 <!DOCTYPE html>
-<!-- THROWAWAY multiplayer test harness for Spin the Food. Served by the spin-play edge function.
-     Shared game state lives in public.spin_play_state, synced via Supabase Realtime.
-     Not production - fake data, last-write-wins, open RLS. Drop the table before any real launch. -->
+<!-- Spin the Food play harness. Game state: food.* (event-sourced). Family Cookbook from DB. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -211,10 +209,9 @@ const AVATAR_TO_LEGACY = {
 // When a real membership arrives, override the hardcoded FAMILY slot's display
 // name (and is_cook flag if we have it) so the topbar/pill/menu show real names
 // instead of "Mom" / "Dad" / "Granny".
-function applyMembershipToFamily() {
+function applyMembershipToFamily(memberRow) {
   if (!membership) return;
-  const slotId = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
-  const slot = FAMILY.find(m => m.id === slotId);
+  const slot = memberRow || FAMILY.find(m => m.id === membership.member_id);
   if (slot && membership.display_name) {
     slot.en = membership.display_name;
     slot.ru = membership.display_name;
@@ -237,26 +234,145 @@ const inviteTokenInUrl = new URLSearchParams(location.search).get("invite");
 let lang = localStorage.getItem("stf_lang") || null;
 const T = (en, ru) => (lang === "ru" ? ru : en);
 
-// ── static data ──
-const FAMILY = [
-  { id: "mom",  em: "👩", en: "Mom",    ru: "Мама",    cook: true  },
-  { id: "dad",  em: "👨", en: "Dad",    ru: "Папа",    cook: true  },
-  { id: "gran", em: "👵", en: "Granny", ru: "Бабушка", cook: true  },
-  { id: "kid",  em: "👧", en: "Sofiia", ru: "София",   cook: false },
-];
-const DISHES = [
-  { id: "borscht", em: "🍲", en: "Borscht",      ru: "Борщ",              g: "linear-gradient(135deg,#f87171,#b91c1c)", t: 90, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: ["gran"], allergens: ["dairy"] },
-  { id: "ramen",   em: "🍜", en: "Ramen",        ru: "Рамен",             g: "linear-gradient(135deg,#fbbf24,#d97706)", t: 60, d: "●●●", p: "meat", c: "asian",   meals: ["lunch","dinner"], soup: true, special: ["dad"], allergens: ["gluten","eggs"] },
-  { id: "solyanka",em: "🥣", en: "Solyanka",     ru: "Солянка",           g: "linear-gradient(135deg,#fdba74,#c2410c)", t: 75, d: "●●○", p: "meat", c: "russian", meals: ["lunch"], soup: true, special: [], allergens: ["dairy"] },
-  { id: "pelmeni", em: "🥟", en: "Pelmeni",      ru: "Пельмени",          g: "linear-gradient(135deg,#e5e7eb,#9ca3af)", t: 45, d: "●○○", p: "meat", c: "russian", meals: ["dinner"], special: ["gran"], allergens: ["gluten","eggs"] },
-  { id: "pizza",   em: "🍕", en: "Pizza",        ru: "Пицца",             g: "linear-gradient(135deg,#fb923c,#c2410c)", t: 40, d: "●○○", p: "meat", c: "italian", meals: ["dinner"], special: [], allergens: ["gluten","dairy"] },
-  { id: "plov",    em: "🍛", en: "Plov",         ru: "Плов",              g: "linear-gradient(135deg,#fde047,#ca8a04)", t: 80, d: "●●○", p: "meat", c: "uzbek",   meals: ["dinner"], special: ["mom"], allergens: [] },
-  { id: "salad",   em: "🥗", en: "Greek salad",  ru: "Греческий салат",   g: "linear-gradient(135deg,#4ade80,#15803d)", t: 15, d: "●○○", p: "veg",  c: "greek",   meals: ["lunch","dinner"], special: [], allergens: ["dairy"] },
-  { id: "salmon",  em: "🐟", en: "Baked salmon", ru: "Запечённый лосось", g: "linear-gradient(135deg,#f9a8d4,#be185d)", t: 35, d: "●●○", p: "fish", c: "nordic",  meals: ["dinner"], special: ["mom"], allergens: [] },
-  { id: "syrniki", em: "🥞", en: "Syrniki",      ru: "Сырники",           g: "linear-gradient(135deg,#fcd34d,#f59e0b)", t: 25, d: "●○○", p: "veg",  c: "russian", meals: ["breakfast"], special: ["gran"], allergens: ["dairy","eggs","gluten"] },
-  { id: "omelette",em: "🍳", en: "Omelette",     ru: "Омлет",             g: "linear-gradient(135deg,#fef08a,#eab308)", t: 12, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: ["dad"], allergens: ["eggs","dairy"] },
-  { id: "porridge",em: "🥣", en: "Oat porridge", ru: "Овсяная каша",      g: "linear-gradient(135deg,#d6d3d1,#78716c)", t: 15, d: "●○○", p: "veg",  c: "family",  meals: ["breakfast"], special: [], allergens: ["dairy"] },
-];
+// ── static data (Family Cookbook loaded from DB; FAMILY roster from members RPC) ──
+let FAMILY = [];
+let DISHES = [];
+let activePlanId = null;
+let lastEventSeq = 0;
+
+const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", other: "🧑" };
+
+function avatarEmoji(role) { return AVATAR_EMOJI[role] || "🧑"; }
+
+function recipeToDish(r) {
+  const diff = r.difficulty || 2;
+  const dots = "●".repeat(Math.min(3, Math.max(1, diff))).padEnd(3, "○");
+  const meals = (r.meal_types && r.meal_types.length) ? r.meal_types : ["dinner"];
+  return {
+    id: r.id,
+    em: r.photo_url ? "🖼" : "🍽",
+    en: r.title,
+    ru: r.title,
+    g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
+    t: r.cook_time_minutes || r.prep_time_minutes || 45,
+    d: dots,
+    p: r.protein_type || "meat",
+    c: r.cuisine || "family",
+    meals,
+    soup: meals.includes("lunch") && /soup|борщ|суп|sol/i.test(r.title || ""),
+    special: [],
+    allergens: r.allergen_flags || [],
+    photo_url: r.photo_url,
+  };
+}
+
+async function loadCatalog() {
+  const { data: recipes, error: re } = await sb.rpc("spin_food_list_family_cookbook", { p_limit: 500, p_offset: 0 });
+  if (re) console.error("[stf-data] cookbook:", re);
+  DISHES = (recipes || []).map(recipeToDish);
+  deckOrder = DISHES.map(d => d.id);
+  const { data: members, error: me } = await sb.rpc("spin_food_list_family_members");
+  if (me) console.error("[stf-data] members:", me);
+  FAMILY = (members || []).map(m => ({
+    id: m.member_id,
+    em: avatarEmoji(m.avatar_role),
+    en: m.name,
+    ru: m.name,
+    cook: !!m.is_cook,
+    avatar_role: m.avatar_role,
+  }));
+  if (membership) {
+    const mine = FAMILY.find(m => m.id === membership.member_id);
+    if (mine) applyMembershipToFamily(mine);
+  }
+}
+
+function snapshotToGame(snap) {
+  const week = emptyWeek();
+  for (const s of (snap.slots || [])) {
+    if (!s.recipe_id && !s.proposal) continue;
+    const slot = {
+      dish: s.recipe_id,
+      cook: s.cook_member_id,
+      by: s.assigned_by_member_id,
+      accepted: !!s.accepted_at,
+      leftover: !!s.is_leftover,
+    };
+    if (s.proposal) {
+      slot.proposal = {
+        dish: s.proposal.recipe_id,
+        cook: s.proposal.cook_member_id,
+        by: s.proposal.assigned_by_member_id,
+      };
+    }
+    week[s.day_of_week][s.meal_type] = slot;
+  }
+  const wishes = (snap.wishes || []).map(w => ({
+    id: w.id,
+    kind: "dish",
+    dish: w.recipe_id,
+    by: w.wished_by_member_id,
+    votes: w.votes || [],
+    day: w.target_day,
+    committed: w.status === "granted" ? "granted" : null,
+  }));
+  const duel = snap.duel ? {
+    open: snap.duel.status === "open",
+    proposals: (snap.duel.proposals || []).map(p => ({
+      id: p.id,
+      dish: p.recipe_id,
+      chef: p.chef_member_id,
+      pitch: p.pitch || "",
+      votes: p.votes || [],
+    })),
+  } : { open: false, proposals: [] };
+  const activity = (snap.events || []).map(e => ({
+    id: String(e.seq),
+    who: me,
+    text: e.event_type.replace(/_/g, " "),
+    ts: new Date(e.created_at).getTime(),
+  }));
+  if (snap.events && snap.events.length) lastEventSeq = snap.events[0].seq;
+  return {
+    week,
+    locked: snap.plan?.status === "confirmed",
+    wishes,
+    duel,
+    activity,
+    profiles: game?.profiles || {},
+  };
+}
+
+function nextMondayIso() {
+  const d = new Date();
+  const day = d.getDay();
+  const add = day === 0 ? 1 : day === 1 ? 7 : 8 - day;
+  d.setDate(d.getDate() + add);
+  return d.toISOString().slice(0, 10);
+}
+
+async function ensureActivePlan() {
+  let { data: snap, error } = await sb.rpc("spin_food_snapshot");
+  if (error) throw error;
+  if (!snap?.active_plan_id) {
+    const weekStart = nextMondayIso();
+    const { data: created, error: ce } = await sb.rpc("spin_food_create_plan", {
+      p_week_start_date: weekStart,
+      p_set_active: true,
+    });
+    if (ce) throw ce;
+    activePlanId = created.plan_id;
+    ({ data: snap } = await sb.rpc("spin_food_snapshot"));
+  } else {
+    activePlanId = snap.active_plan_id;
+  }
+  return snap;
+}
+
+function slotPayload(day, mealKey, extra = {}) {
+  return { plan_id: activePlanId, day, meal_type: mealKey, ...extra };
+}
+
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const dayN = i => (lang === "ru" ? DAYS_RU[i] : DAYS[i]);
@@ -401,11 +517,18 @@ function rid() { return Math.random().toString(36).slice(2, 9); }
 let lastSeenTs = 0;
 
 async function load() {
-  const { data } = await sb.from("spin_play_state").select("state, updated_at").eq("family_key", FAMILY_KEY).maybeSingle();
-  if (data && data.state && data.state.week) {
-    game = data.state; if (!game.profiles) game.profiles = {};
-    lastSeenTs = new Date(data.updated_at).getTime();
-  } else { game = seedGame(); await persist(false); }
+  await loadCatalog();
+  try {
+    const snap = await ensureActivePlan();
+    game = snapshotToGame(snap);
+    if (!game.profiles) game.profiles = {};
+    if (!game.activity.length) {
+      game.activity = [{ id: rid(), who: me, text: T("Family kitchen opened — plan next week", "Семейная кухня открыта — планируем следующую неделю"), ts: Date.now() }];
+    }
+  } catch (e) {
+    console.error("[stf-data] load failed:", e);
+    game = seedGame();
+  }
 }
 
 // Apply a fresher remote state. Deferred while a modal is open or mid-registration
@@ -427,50 +550,60 @@ function applyRemote(state, ts) {
 // Belt-and-braces sync: realtime is the fast path, but mobile browsers silently
 // kill the websocket when backgrounded. A refetch on focus + a light poll while
 // visible guarantee everyone converges even if the socket dropped.
-async function pullLatest() {
-  const { data } = await sb.from("spin_play_state").select("state, updated_at").eq("family_key", FAMILY_KEY).maybeSingle();
-  if (data && data.state) applyRemote(data.state, new Date(data.updated_at).getTime());
+function applyRemoteFromSnapshot(snap) {
+  if (!snap) return;
+  game = snapshotToGame(snap);
+  if (!game.profiles) game.profiles = {};
+  if (shouldDefer()) { pendingRemote = true; return; }
+  render();
 }
 
-function unionById(remoteArr, localArr) {
-  const m = new Map();
-  for (const x of (remoteArr || [])) m.set(x.id, x);
-  for (const x of (localArr || [])) m.set(x.id, x);
-  return [...m.values()];
+async function pullLatest() {
+  const { data: snap, error } = await sb.rpc("spin_food_snapshot");
+  if (!error && snap) applyRemoteFromSnapshot(snap);
+}
+
+async function applyEvent(eventType, payload) {
+  const { error } = await sb.rpc("spin_food_apply_event", {
+    p_event_type: eventType,
+    p_payload: payload,
+  });
+  if (error) {
+    toast("Sync error: " + error.message);
+    document.body.insertAdjacentHTML("afterbegin", '<div class="offline">offline - changes may not sync</div>');
+    return false;
+  }
+  return true;
 }
 
 let saving = false;
-async function persist() {
+async function persist() { /* legacy no-op; game state lives in food.* */ }
+
+async function commitAndSync(text, eventType, payload) {
+  if (text) act(text);
+  render();
+  if (!eventType || !activePlanId) return;
   saving = true;
-  // Merge on write so a stale client cannot clobber another member's profile/wish/activity.
-  // Re-read the freshest row, overlay this device's additive changes, then write.
-  const { data: fresh } = await sb.from("spin_play_state").select("state").eq("family_key", FAMILY_KEY).maybeSingle();
-  const r = fresh && fresh.state;
-  if (r && r.week) {
-    game.profiles = { ...r.profiles, ...game.profiles };
-    game.wishes   = unionById(r.wishes, game.wishes);
-    game.activity = unionById(r.activity, game.activity).sort((a, b) => b.ts - a.ts).slice(0, 30);
-  }
-  const ts = new Date().toISOString();
-  lastSeenTs = new Date(ts).getTime();
-  const { error } = await sb.from("spin_play_state").upsert(
-    { family_key: FAMILY_KEY, state: game, updated_at: ts }, { onConflict: "family_key" });
+  const ok = await applyEvent(eventType, payload);
   saving = false;
-  if (error) { toast("Sync error: " + error.message); document.body.insertAdjacentHTML("afterbegin", '<div class="offline">offline - changes may not sync</div>'); }
+  if (ok) await pullLatest();
 }
 function act(text) { game.activity.unshift({ id: rid(), who: me, text, ts: Date.now() }); game.activity = game.activity.slice(0, 30); }
 
 let rtChan;
 function subscribe() {
+  if (!membership?.family_id) return;
   if (rtChan) sb.removeChannel(rtChan);
-  rtChan = sb.channel("spin-" + FAMILY_KEY)
-    .on("postgres_changes", { event: "*", schema: "public", table: "spin_play_state", filter: "family_key=eq." + FAMILY_KEY },
-      payload => {
-        if (!payload.new || !payload.new.state) return;
-        applyRemote(payload.new.state, new Date(payload.new.updated_at).getTime());
-      })
+  rtChan = sb.channel("food-events-" + membership.family_id)
+    .on("postgres_changes", {
+      event: "INSERT",
+      schema: "food",
+      table: "events",
+      filter: "family_id=eq." + membership.family_id,
+    }, () => { pullLatest(); })
     .subscribe();
 }
+
 function startSyncWatchers() {
   const wake = () => { if (!document.hidden) { pullLatest(); if (rtChan && rtChan.state !== "joined") subscribe(); } };
   document.addEventListener("visibilitychange", wake);
@@ -487,51 +620,62 @@ function joinPresence() {
   }).subscribe(async s => { if (s === "SUBSCRIBED") await presenceChan.track({ who: me }); });
 }
 
-// ── mutations (all persist) ──
-async function commitAndSync(text) { if (text) act(text); render(); await persist(); }
+// ── mutations (event-sourced via spin_food_apply_event) ──
 
 function assignToSlot(day, mealKey, dishId, cook) {
   const cur = game.week[day][mealKey];
   const d = dish(dishId);
   if (cur && cur.dish) {
-    cur.proposal = { dish: dishId, cook, by: me };
-    commitAndSync(`${mem(me).en} proposed ${d.em} ${d.en} for ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`);
+    game.week[day][mealKey].proposal = { dish: dishId, cook, by: me };
+    commitAndSync(
+      `${mem(me).en} proposed ${d.em} ${d.en} for ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`,
+      "slot_proposal_created",
+      slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me } })
+    );
     toast(T("Sent to the menu - family votes 🔔", "Отправлено в меню - семья решает 🔔"));
   } else {
     game.week[day][mealKey] = { dish: dishId, cook, by: me, accepted: cook === me };
     const who = cook === me ? "" : ` - ${mem(cook).en} must accept`;
-    commitAndSync(`${mem(me).en} added ${d.em} ${d.en} to ${DAYS[day]}${who}`);
+    commitAndSync(
+      `${mem(me).en} added ${d.em} ${d.en} to ${DAYS[day]}${who}`,
+      "slot_filled",
+      slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me })
+    );
     toast(cook === me ? T("Added and you're cooking it ✅", "Добавлено - и готовишь ты ✅") : T("Added - ", "Добавлено - ") + mName(mem(cook)) + T(" pinged to accept 🔔", " получил(а) пинг 🔔"));
   }
 }
 function acceptCook(day, mealKey) {
-  const s = game.week[day][mealKey]; s.accepted = true;
-  commitAndSync(`${mem(me).en} accepted cooking ${dish(s.dish).em} on ${DAYS[day]}`);
+  game.week[day][mealKey].accepted = true;
+  commitAndSync(`${mem(me).en} accepted cooking ${dish(game.week[day][mealKey].dish).em} on ${DAYS[day]}`, "slot_accepted", slotPayload(day, mealKey));
 }
 function declineCook(day, mealKey) {
-  const s = game.week[day][mealKey]; const d = dish(s.dish);
+  const d = dish(game.week[day][mealKey].dish);
   game.week[day][mealKey] = null;
-  commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`);
+  commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`, "slot_declined", slotPayload(day, mealKey));
   toast(T("Declined - the meal was removed", "Отклонено - блюдо убрано из меню"));
 }
 function reassignCook(day, mealKey, newCook) {
   const s = game.week[day][mealKey];
   s.cook = newCook; s.accepted = false; s.by = me;
-  commitAndSync(`${mem(me).en} reassigned ${dish(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`);
+  commitAndSync(
+    `${mem(me).en} reassigned ${dish(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`,
+    "slot_reassigned",
+    slotPayload(day, mealKey, { cook_member_id: newCook, assigned_by_member_id: me })
+  );
   toast(T("Sent - ", "Отправлено - ") + mName(mem(newCook)) + T(" must accept, decline, or reassign", " должен принять, отклонить или передать дальше"));
 }
 function acceptProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal;
   game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, accepted: p.cook === p.by };
-  commitAndSync(`${mem(me).en} accepted the swap to ${dish(p.dish).em} on ${DAYS[day]}`);
+  commitAndSync(`${mem(me).en} accepted the swap to ${dish(p.dish).em} on ${DAYS[day]}`, "slot_proposal_accepted", slotPayload(day, mealKey));
 }
 function rejectProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal; delete s.proposal;
-  commitAndSync(`${mem(me).en} rejected the ${dish(p.dish).em} swap for ${DAYS[day]}`);
+  commitAndSync(`${mem(me).en} rejected the ${dish(p.dish).em} swap for ${DAYS[day]}`, "slot_proposal_rejected", slotPayload(day, mealKey));
 }
 function clearSlot(day, mealKey) {
   game.week[day][mealKey] = null;
-  commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`);
+  commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`, "slot_cleared", slotPayload(day, mealKey));
 }
 
 // ── render ──
@@ -550,7 +694,7 @@ function render() {
   if (!lang) return renderLangGate();
   // Derive game identity from the real membership. Kept in `me` to avoid
   // rewriting every downstream reference (mem(me), profiles[me], etc.).
-  if (!me) me = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
+  if (!me && membership) me = membership.member_id;
   if (!game) { app.innerHTML = `<div class="gate"><h1>🍲</h1><p>${T("Loading the family kitchen...", "Загружаем семейную кухню...")}</p></div>`; return; }
   if (!game.profiles[me]) return renderOnboard();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
@@ -735,7 +879,7 @@ function renderInvitationOnboarding() {
     history.replaceState({}, "", url.toString());
     await refreshMembership();
     // Load game state + start realtime now that we know the family.
-    if (me === null) me = AVATAR_TO_LEGACY[membership?.avatar_role] || "dad";
+    if (me === null) me = membership.member_id;
     joinPresence();
     await load();
     subscribe();
@@ -1177,8 +1321,15 @@ function wire() {
   if (settings) settings.onclick = openSettings;
 
   // menu
-  document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => { game.locked = true; game.week.forEach(d=>MEALS.forEach(m=>{ if(d[m.k]) delete d[m.k].proposal; })); commitAndSync(`${mem(me).en} confirmed the week`); });
-  document.getElementById("unlock") && (document.getElementById("unlock").onclick = () => { game.locked = false; commitAndSync(`${mem(me).en} reopened the menu`); });
+  document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => {
+    game.locked = true;
+    game.week.forEach(d => MEALS.forEach(m => { if (d[m.k]) delete d[m.k].proposal; }));
+    commitAndSync(`${mem(me).en} confirmed the week`, "week_confirmed", { plan_id: activePlanId });
+  });
+  document.getElementById("unlock") && (document.getElementById("unlock").onclick = () => {
+    game.locked = false;
+    commitAndSync(`${mem(me).en} reopened the menu`, "week_unlocked", { plan_id: activePlanId });
+  });
   const aiBtn = document.getElementById("aiFill");
   if (aiBtn) aiBtn.onclick = openAiFill;
   document.querySelectorAll("[data-cookacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookacc.split("-"); acceptCook(+d,k); });
@@ -1203,21 +1354,31 @@ function wire() {
 
   // wish
   document.getElementById("newWish") && (document.getElementById("newWish").onclick = () => openWish(null));
-  document.querySelectorAll("[data-wvote]").forEach(b => b.onclick = () => { game.wishes[+b.dataset.wvote].votes.push(me); commitAndSync(`${mem(me).en} voted for a wish`); });
-  document.querySelectorAll("[data-wcommit]").forEach(b => b.onclick = () => {
-    const w = game.wishes[+b.dataset.wcommit]; w.committed = me;
-    const d = w.kind==="dish" ? w.dish : DISHES.filter(x=>w.kind!=="cuisine"||x.c===w.cuisine)[0]?.id || "plov";
-    if (!game.week[w.day].dinner) game.week[w.day].dinner = { dish: d, cook: me, by: me, accepted: true };
-    else game.week[w.day].dinner.proposal = { dish: d, cook: me, by: me };
-    commitAndSync(`${mem(me).en} granted ${mem(w.by).en}'s wish`);
+  document.querySelectorAll("[data-wvote]").forEach(b => b.onclick = () => {
+    const w = game.wishes[+b.dataset.wvote];
+    w.votes.push(me);
+    commitAndSync(`${mem(me).en} voted for a wish`, "wish_voted", { wish_id: w.id });
+  });
+  document.querySelectorAll("[data-wcommit]").forEach(b => b.onclick = async () => {
+    const w = game.wishes[+b.dataset.wcommit];
+    const d = w.kind === "dish" ? w.dish : (DISHES.find(x => w.kind !== "cuisine" || x.c === w.cuisine)?.id || DISHES[0]?.id);
+    if (!d) return;
+    w.committed = me;
+    act(`${mem(me).en} granted ${mem(w.by).en}'s wish`);
+    render();
+    saving = true;
+    const ok = await applyEvent("wish_granted", { wish_id: w.id });
+    saving = false;
+    if (ok) assignToSlot(w.day, "dinner", d, me);
     toast(T("Wish granted - added to the menu 🎉", "Желание исполнено - добавлено в меню 🎉"));
   });
 
   // duel
   document.querySelectorAll("[data-duel]").forEach(c => c.onclick = () => {
-    const p = game.duel.proposals[+c.dataset.duel]; p.votes.push(me);
-    if (game.duel.proposals.reduce((n,x)=>n+x.votes.length,0) >= 3) game.duel.open = false;
-    commitAndSync(`${mem(me).en} voted in the duel`);
+    const p = game.duel.proposals[+c.dataset.duel];
+    p.votes.push(me);
+    if (game.duel.proposals.reduce((n, x) => n + x.votes.length, 0) >= 3) game.duel.open = false;
+    commitAndSync(`${mem(me).en} voted in the duel`, "duel_voted", { proposal_id: p.id });
   });
 }
 
@@ -1237,7 +1398,7 @@ function closeModal() {
   if (modalOpen) { modalOpen = false; if (pendingRemote) { pendingRemote = false; render(); } }
 }
 function openAssign(dishId) {
-  let selDay = spinTarget ? spinTarget.day : null, selMeal = spinTarget ? spinTarget.meal : "dinner", selCook = mem(me).cook ? me : "gran";
+  let selDay = spinTarget ? spinTarget.day : null, selMeal = spinTarget ? spinTarget.meal : "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
   spinTarget = null;
   const v = modal(`<h3>${dish(dishId).em} ${dName(dish(dishId))} → ${T("the menu", "в меню")}</h3>
     <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
@@ -1259,7 +1420,7 @@ function openEdit(day, mealKey) {
     <div class="sect">${T("Suggest a different dish", "Предложи другое блюдо")}</div>
     <div class="chips-wrap">${DISHES.map(d=>`<div class="chip" data-s="${d.id}">${d.em} ${dName(d)}</div>`).join("")}</div>
     <button class="btn btn-ghost" id="clear" style="width:100%;margin-top:14px">🗑 ${T("Clear this slot", "Очистить слот")}</button>`);
-  v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:"gran"); });
+  v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:(FAMILY.find(m=>m.cook)?.id||me)); });
   v.querySelector("#clear").onclick = () => { closeModal(); clearSlot(day,mealKey); };
 }
 function openReassignCook(day, mealKey) {
@@ -1351,8 +1512,17 @@ function wishStep2(kind, presetDay) {
   v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
   v.querySelectorAll("#WY .chip").forEach(c=>c.onclick=()=>{selDay=+c.dataset.d;upd();});
   v.querySelector("#wgo").onclick = () => { if(!ok())return; closeModal();
-    game.wishes.unshift({ id: rid(), kind, dish: selDish, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay });
-    commitAndSync(`${mem(me).en} made a wish`); tab="wish"; render(); toast(T("Wish sent to the family ✨", "Желание отправлено семье ✨")); };
+    const wishId = crypto.randomUUID();
+    let recipeId = selDish;
+    if (kind === "cuisine") recipeId = DISHES.find(d => d.c === selCui)?.id;
+    else if (kind === "choice") recipeId = DISHES[Math.floor(Math.random() * DISHES.length)]?.id;
+    if (!recipeId) { toast(T("Pick a recipe first", "Сначала выбери рецепт")); return; }
+    game.wishes.unshift({ id: wishId, kind, dish: recipeId, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay });
+    commitAndSync(`${mem(me).en} made a wish`, "wish_created", {
+      wish_id: wishId, plan_id: activePlanId, target_day: selDay, recipe_id: recipeId,
+      wished_by_member_id: me,
+    });
+    tab="wish"; render(); toast(T("Wish sent to the family ✨", "Желание отправлено семье ✨")); };
 }
 function openAdd() {
   const emojis = ["🍝","🥘","🍤","🥧","🍱","🌮"]; let em = "🍝";
@@ -1363,10 +1533,17 @@ function openAdd() {
     <button class="btn btn-ghost" id="book" style="width:100%">📖 ${T("Save to recipe book", "Сохранить в книгу рецептов")}</button>
     <button class="btn btn-primary" id="day" style="width:100%;margin-top:8px">📅 ${T("Assign to a day", "Назначить на день")}</button>`);
   v.querySelectorAll("#EM .chip").forEach(c=>c.onclick=()=>{em=c.dataset.e; v.querySelectorAll("#EM .chip").forEach(x=>x.classList.toggle("on",x.dataset.e===em));});
-  const mk = () => { const name = v.querySelector("#nm").value || T("New dish", "Новое блюдо");
-    const id = "custom-"+rid(); DISHES.push({ id, em, en: name, ru: name, g:"linear-gradient(135deg,#a5b4fc,#4f46e5)", t:45, d:"●●○", p:"meat", c:"family", meals:["dinner"], special:[] }); deckOrder.push(id); return id; };
-  v.querySelector("#book").onclick = () => { mk(); closeModal(); toast(T("Saved to the recipe book 📖", "Сохранено в книгу рецептов 📖")); render(); };
-  v.querySelector("#day").onclick = () => { const id = mk(); closeModal(); openAssign(id); };
+  const mk = async () => {
+    const name = v.querySelector("#nm").value || T("New dish", "Новое блюдо");
+    const { data: recipeId, error } = await sb.rpc("spin_food_cookbook_add_recipe", {
+      p_payload: { title: name, card_state: "thin", meal_types: ["dinner"], confidence: "verified", source_type: "manual" },
+    });
+    if (error) { toast(error.message); return null; }
+    await loadCatalog();
+    return recipeId;
+  };
+  v.querySelector("#book").onclick = async () => { const id = await mk(); if (!id) return; closeModal(); toast(T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖")); render(); };
+  v.querySelector("#day").onclick = async () => { const id = await mk(); if (!id) return; closeModal(); openAssign(id); };
 }
 
 function toast(msg) {
@@ -1416,7 +1593,7 @@ function toast(msg) {
 
   // If we already have auth + membership on cold boot, start the game plumbing.
   if (authSession && membership) {
-    if (!me) me = AVATAR_TO_LEGACY[membership.avatar_role] || "dad";
+    if (!me && membership) me = membership.member_id;
     joinPresence();
     await load();
     subscribe();
