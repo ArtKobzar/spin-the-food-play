@@ -106,6 +106,7 @@
   .slot-dish.empty { color: #bbb; font-weight: 400; }
   .slot-cook { font-size: 11px; color: #999; margin-top: 1px; }
   .slot-edit { background: none; border: none; font-size: 15px; cursor: pointer; color: #cbd5e1; }
+  .ai-note-badge { background: none; border: none; font-size: 15px; cursor: pointer; padding: 0 2px; }
   .mini-row { display: flex; gap: 6px; margin-top: 4px; }
   .mini-btn { border: 1.5px solid #e5e7eb; background: #fff; border-radius: 10px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: #555; }
   .mini-btn.accept { border-color: var(--green); color: #059669; }
@@ -119,6 +120,7 @@
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; right: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
+  .scard .thin-badge { position: absolute; top: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
   .scard .bd { padding: 16px; }
   .scard .ti { font-weight: 800; font-size: 22px; }
   .scard .mt { font-size: 13px; color: #888; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
@@ -385,6 +387,10 @@ function recipeToDish(r) {
     special: [],
     allergens: r.allergen_flags || [],
     photo_url: r.photo_url,
+    // thin/thick eligibility (SPEC_AI_PREFILL.md #3/#4): thin cards stay fully usable
+    // everywhere, they just aren't picked by the automatic AI pre-fill and get a
+    // nudge badge here to encourage adding ingredients.
+    card_state: r.card_state || "thin",
     // recipe detail view / taxonomy edit (ONTOLOGY.md section 9, issue #16)
     dish_role: r.dish_role || null,
     course_category: r.course_category || null,
@@ -423,13 +429,23 @@ async function loadCatalog() {
 function snapshotToGame(snap) {
   const week = emptyWeek();
   for (const s of (snap.slots || [])) {
-    if (!s.recipe_id && !s.proposal) continue;
+    // A blank slot can still carry an ai_note (§19: "no safe recipe" / "no
+    // qualified cook") - keep it as a note-only stub so renderMenu can badge it,
+    // instead of skipping it entirely like a slot nobody has ever looked at.
+    if (!s.recipe_id && !s.proposal) {
+      if (s.ai_note) week[s.day_of_week][s.meal_type] = { dish: null, aiNote: s.ai_note };
+      continue;
+    }
     const slot = {
       dish: s.recipe_id,
       cook: s.cook_member_id,
       by: s.assigned_by_member_id,
       accepted: !!s.accepted_at,
       leftover: !!s.is_leftover,
+      // SPEC_AI_PREFILL.md #19: set only when the scheduled AI pre-fill had to
+      // override a Day Rule or leave the slot's original pick short - cleared by
+      // the server the moment a human touches the slot (food.apply_event).
+      aiNote: s.ai_note || null,
     };
     if (s.proposal) {
       slot.proposal = {
@@ -490,6 +506,8 @@ function snapshotToGame(snap) {
     duel,
     activity,
     profiles,
+    // SPEC_AI_PREFILL.md #7/#14: [{day_of_week, rule_kind, rule_value}], owner-editable.
+    dayRules: snap.day_rules || [],
   };
 }
 
@@ -636,7 +654,7 @@ let online = new Set();
 function emptyWeek() { return DAYS.map(() => ({ breakfast: null, lunch: null, dinner: null })); }
 function seedGame() {
   return {
-    week: emptyWeek(), locked: false, wishes: [], profiles: {},
+    week: emptyWeek(), locked: false, wishes: [], profiles: {}, dayRules: [],
     duel: { open: true, proposals: [
       { dish: "borscht", chef: "gran", pitch: "Real borscht takes love. And I have beets.", votes: ["mom"] },
       { dish: "ramen",   chef: "dad",  pitch: "Friday deserves broth that took 6 hours.", votes: [] },
@@ -1129,6 +1147,7 @@ function openSettings() {
     <div style="font-size:13px;color:#666;margin-bottom:10px">${membership?.family_name ? `<b>${membership.family_name}</b> · ` : ""}${T("shared code", "общий код")}: <b>${FAMILY_KEY}</b></div>
     ${isOwner ? `
       <button class="btn btn-primary" id="inviteBtn" style="width:100%">👥 ${T("Invite family member", "Пригласить члена семьи")}</button>
+      <button class="btn btn-ghost" id="dayRulesBtn" style="width:100%;margin-top:8px">🗓 ${T("Day Rules", "Правила дня")}</button>
     ` : ""}
     <div class="sect" style="margin-top:16px">${T("Session", "Сессия")}</div>
     <button class="btn btn-ghost" id="signoutBtn3" style="width:100%">${T("Sign out", "Выйти")}</button>`);
@@ -1139,6 +1158,8 @@ function openSettings() {
   });
   const inviteBtn = v.querySelector("#inviteBtn");
   if (inviteBtn) inviteBtn.onclick = () => { closeModal(); openInviteFlow(); };
+  const dayRulesBtn = v.querySelector("#dayRulesBtn");
+  if (dayRulesBtn) dayRulesBtn.onclick = () => { closeModal(); openDayRules(); };
   v.querySelector("#signoutBtn3").onclick = async () => {
     closeModal();
     await sb.auth.signOut();
@@ -1207,6 +1228,91 @@ function openInviteFlow() {
   };
   go.onclick = submit;
   input.onkeydown = e => { if (e.key === "Enter") submit(); };
+}
+
+// Owner-only (SPEC_AI_PREFILL.md #14, matching food.day_rules' existing owner-only
+// RLS - no new permission model, just a client surface for it). One rule per
+// weekday, consumed by the Thursday scheduled AI pre-fill (§5.3/§9/§10) - never
+// affects manual assignment, Spin, Wish, or Duel.
+const DAY_RULE_KINDS = [
+  ["none", "No rule", "Без правила"],
+  ["protein_type", "Protein day", "День белка"],
+  ["diet_suitability", "Diet day", "День диеты"],
+  ["cuisine", "Cuisine day", "День кухни"],
+  ["dish_style", "Style day", "День стиля"],
+];
+const DAY_RULE_PROTEIN_VALUES = ["meat", "fish", "seafood", "egg", "dairy"];
+const DAY_RULE_DIET_VALUES = ["vegan", "vegetarian", "pescatarian", "gluten-free", "dairy-free"];
+function openDayRules() {
+  const rulesByDay = {};
+  (game.dayRules || []).forEach(r => { rulesByDay[r.day_of_week] = r; });
+  const rowHtml = di => {
+    const r = rulesByDay[di] || { rule_kind: "none", rule_value: null };
+    const needsFreeText = r.rule_kind === "cuisine" || r.rule_kind === "dish_style";
+    const fixedValues = r.rule_kind === "protein_type" ? DAY_RULE_PROTEIN_VALUES
+      : r.rule_kind === "diet_suitability" ? DAY_RULE_DIET_VALUES : null;
+    return `<div class="day-block" style="margin-bottom:10px" data-drday="${di}">
+      <div class="day-hd">${dayN(di)}</div>
+      <div style="padding:10px 12px">
+        <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(([k, l, lru]) =>
+          `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>
+        ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(v =>
+          `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${v}</div>`).join("")}</div>` : ""}
+        ${needsFreeText ? `<input data-drtext="${di}" value="${r.rule_value || ""}" placeholder="${T("e.g. italian", "например, italian")}"
+          style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">` : ""}
+      </div>
+    </div>`;
+  };
+  const v = modal(`<h3>🗓 ${T("Day Rules", "Правила дня")}</h3>
+    <div style="font-size:13px;color:#666;margin-bottom:10px">${T("Owner-only. The Thursday AI pre-fill tries to follow these, but never at the cost of anyone's allergy safety.", "Только для владельца. ИИ старается следовать этим правилам, но безопасность важнее.")}</div>
+    <div id="drRows">${DAYS.map((_, di) => rowHtml(di)).join("")}</div>
+    <div id="drNote" style="font-size:12px;color:#999;margin-top:4px;min-height:16px"></div>`);
+  const note = v.querySelector("#drNote");
+  const save = async (di, kind, value) => {
+    note.textContent = T("Saving...", "Сохранение...");
+    const { error } = await sb.rpc("spin_food_day_rules_set", { p_day_of_week: di, p_rule_kind: kind, p_rule_value: value || "" });
+    if (error) { note.textContent = T("Failed: ", "Ошибка: ") + error.message; note.style.color = "#ef4444"; return; }
+    rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value || null };
+    game.dayRules = Object.values(rulesByDay);
+    note.textContent = "✓ " + T("Saved", "Сохранено");
+    note.style.color = "#059669";
+  };
+  const rerenderRow = di => {
+    const row = v.querySelector(`[data-drday="${di}"]`);
+    row.outerHTML = rowHtml(di);
+    wireRow(di);
+  };
+  const wireRow = di => {
+    v.querySelectorAll(`[data-drkind="${di}"] .chip`).forEach(c => c.onclick = () => {
+      const kind = c.dataset.k;
+      const r = rulesByDay[di] || {};
+      // Switching kind clears the old value - a leftover 'meat' value under a
+      // freshly-picked 'cuisine' kind would violate the value_contract check.
+      const value = kind === "none" ? null : (kind === r.rule_kind ? r.rule_value : null);
+      rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value };
+      rerenderRow(di);
+      save(di, kind, value);
+    });
+    v.querySelectorAll(`[data-drval="${di}"] .chip`).forEach(c => c.onclick = () => {
+      const kind = rulesByDay[di]?.rule_kind || "none";
+      const value = c.dataset.v;
+      rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value };
+      rerenderRow(di);
+      save(di, kind, value);
+    });
+    const text = v.querySelector(`[data-drtext="${di}"]`);
+    if (text) {
+      const commit = () => {
+        const kind = rulesByDay[di]?.rule_kind || "none";
+        const value = text.value.trim().toLowerCase();
+        rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value || null };
+        save(di, kind, value);
+      };
+      text.addEventListener("blur", commit);
+      text.addEventListener("keydown", e => { if (e.key === "Enter") { text.blur(); } });
+    }
+  };
+  DAYS.forEach((_, di) => wireRow(di));
 }
 
 // ── onboarding (registration gate - every member passes it once) ──
@@ -1526,10 +1632,17 @@ function renderMenu() {
     h += `<div class="day-block ${g.locked ? "locked" : ""}"><div class="day-hd">${dayN(di)}</div>`;
     MEALS.forEach(m => {
       const s = dayW[m.k];
-      const crown = s && specials(dish(s.dish)).has(s.cook) ? ' <span class="crown-em">👑</span>' : "";
-      const awaiting = s && !s.accepted && !s.leftover;
+      const hasDish = !!(s && s.dish);
+      const crown = hasDish && specials(dish(s.dish)).has(s.cook) ? ' <span class="crown-em">👑</span>' : "";
+      const awaiting = hasDish && !s.accepted && !s.leftover;
+      // SPEC_AI_PREFILL.md #19: the scheduled AI pre-fill leaves a machine-readable
+      // reason whenever it had to override a Day Rule or couldn't fill a slot at
+      // all - surface it as a tappable badge rather than silently hiding the gap.
+      const noteBadge = s && s.aiNote
+        ? `<button class="ai-note-badge" data-ainote="${di}-${m.k}" title="${T("Why?", "Почему?")}">ℹ️</button>`
+        : "";
       h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main">`;
-      if (s) {
+      if (hasDish) {
         h += `<div class="slot-dish">${dish(s.dish).em} ${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
             : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${s.by === "ai" ? "🤖 " + T("suggested by AI", "предложено ИИ") : T("suggested by", "предложил(а)") + " " + mName(mem(s.by))}`}</div>`;
@@ -1555,7 +1668,7 @@ function renderMenu() {
           <div class="mini-row"><button class="mini-btn" data-spin="${di}-${m.k}">🎰 ${T("Spin", "Крутить")}</button>
           <button class="mini-btn" data-wish="${di}-${m.k}">✨ ${T("Wish", "Загадать")}</button></div>`;
       }
-      h += `</div>${!g.locked && s ? `<button class="slot-edit" data-edit="${di}-${m.k}">✏️</button>` : ""}</div>`;
+      h += `</div>${noteBadge}${!g.locked && hasDish ? `<button class="slot-edit" data-edit="${di}-${m.k}">✏️</button>` : ""}</div>`;
     });
     h += `</div>`;
   });
@@ -1605,8 +1718,13 @@ function stackHtml(dk) {
   let s = "";
   dk.slice(0, 3).reverse().forEach((d, i, arr) => {
     const top = i === arr.length - 1, dep = arr.length - 1 - i;
+    // SPEC_AI_PREFILL.md #3/#4: thin cards remain fully usable everywhere (Spin,
+    // Wish, Duel, manual assignment) - they just aren't eligible for the automatic
+    // AI pre-fill, so nudge the family to add ingredients rather than block anything.
+    const thinBadge = d.card_state === "thin"
+      ? `<div class="thin-badge">📝 ${T("Add ingredients", "Добавить ингредиенты")}</div>` : "";
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="background:${d.g}">${d.photo_url ? "" : d.em + `<small>${T("photo placeholder", "фото-заглушка")}</small>`}</div>
+      <div class="ph" style="background:${d.g}">${thinBadge}${d.photo_url ? "" : d.em + `<small>${T("photo placeholder", "фото-заглушка")}</small>`}</div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
   });
@@ -1769,6 +1887,7 @@ function detailView(d) {
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
         <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
+        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way).", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна).")}</div>` : ""}
         ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
         ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
           <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
@@ -2035,6 +2154,7 @@ function wire() {
   document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(T("Swipe right to fill ", "Свайпни вправо, чтобы заполнить ") + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic); });
   document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); tab="wish"; render(); openWish(+d); });
   document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
+  document.querySelectorAll("[data-ainote]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.ainote.split("-"); openAiNote(+d,k); });
 
   // spin
   const deckSearchEl = document.getElementById("deckSearch");
@@ -2092,6 +2212,47 @@ function closeModal() {
   document.querySelectorAll(".veil").forEach(v => v.remove());
   if (modalOpen) { modalOpen = false; if (pendingRemote) { pendingRemote = false; render(); } }
 }
+// SPEC_AI_PREFILL.md #19: translates food.meal_slots.ai_note's machine-readable
+// reason codes into the tap-to-expand explanation shown on a slot's badge.
+const DAY_RULE_KIND_LABEL = {
+  protein_type: ["protein day", "день белка"],
+  cuisine: ["cuisine day", "день кухни"],
+  diet_suitability: ["diet day", "день диеты"],
+  dish_style: ["style day", "день стиля"],
+};
+function aiNoteText(note) {
+  if (!note) return "";
+  if (note.reason === "day_rule_skipped") {
+    const kindPair = DAY_RULE_KIND_LABEL[note.rule_kind];
+    const kindLabel = kindPair ? T(kindPair[0], kindPair[1]) : note.rule_kind;
+    return T(
+      `AI skipped this day's ${kindLabel} rule ("${note.rule_value}") to keep the meal safe for everyone attending.`,
+      `ИИ пропустил правило "${kindLabel}" ("${note.rule_value}") на этот день, чтобы блюдо оставалось безопасным для всех.`
+    );
+  }
+  if (note.reason === "no_safe_recipe") {
+    return T(
+      "AI couldn't find a recipe that's safe for everyone attending this meal (or that hasn't already been used this week) — left it empty rather than guess wrong.",
+      "ИИ не нашёл рецепт, безопасный для всех участников этого приёма пищи (или ещё не использованный на этой неделе) — оставил слот пустым."
+    );
+  }
+  if (note.reason === "no_qualified_cook") {
+    return T(
+      "AI found a safe recipe but no available cook whose skill level and Cook Grid match it — left it empty rather than assign the wrong person.",
+      "ИИ нашёл безопасный рецепт, но не нашёл доступного повара подходящего уровня — оставил слот пустым."
+    );
+  }
+  return T("AI made a note about this slot.", "ИИ оставил заметку об этом слоте.");
+}
+function openAiNote(day, mealKey) {
+  const note = game.week[day][mealKey]?.aiNote;
+  modal(`<h3>🤖 ${T("AI pre-fill note", "Заметка ИИ")}</h3>
+    <div style="font-size:13px;color:#666;margin-bottom:4px">${dayN(day)} · ${mealN(MEALS.find(m => m.k === mealKey))}</div>
+    <div style="font-size:14px;line-height:1.6;margin-top:8px">${aiNoteText(note)}</div>
+    <button class="btn btn-ghost" id="ainoteOk" style="width:100%;margin-top:16px">${T("Got it", "Понятно")}</button>`);
+  document.getElementById("ainoteOk").onclick = closeModal;
+}
+
 function openAssign(dishId) {
   let selDay = spinTarget ? spinTarget.day : null, selMeal = spinTarget ? spinTarget.meal : "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
   spinTarget = null;
