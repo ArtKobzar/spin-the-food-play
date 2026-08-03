@@ -169,6 +169,24 @@
 
   .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 60; max-width: 88%; text-align: center; }
   .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 70; }
+
+  /* recipe detail view - full-screen literal flip, everywhere the Spin card appears (issue #16) */
+  .detail-overlay { position: fixed; inset: 0; z-index: 90; background: #fafaf7; overflow-y: auto;
+    transform: scale(.35) rotateY(-75deg); transform-origin: center; opacity: 0; transition: transform .32s cubic-bezier(.34,1.4,.64,1), opacity .22s; }
+  .detail-overlay.open { transform: scale(1) rotateY(0deg); opacity: 1; }
+  .detail-overlay.closing { transform: scale(.35) rotateY(75deg); opacity: 0; }
+  .dtl-hd { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: rgba(250,250,247,.94); backdrop-filter: blur(6px); border-bottom: 1px solid #eee; }
+  .dtl-back { background: #fff; border: 1.5px solid #eee; border-radius: 50%; width: 38px; height: 38px; font-size: 17px; cursor: pointer; flex-shrink: 0; }
+  .dtl-hero { width: 100%; height: 240px; background-size: cover; background-position: center; position: relative; }
+  .dtl-hero .em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 88px; }
+  .dtl-banner { margin: 10px 16px; padding: 10px 13px; border-radius: 14px; font-size: 12.5px; font-weight: 600; }
+  .dtl-banner.edit { background: #fef3c7; border: 1px dashed var(--amber); color: #92400e; }
+  .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
+  .dtl-tabs { display: flex; gap: 6px; padding: 8px 14px; overflow-x: auto; position: sticky; top: 62px; background: #fafaf7; z-index: 4; border-bottom: 1px solid #f0f0ee; }
+  .dtl-tab { flex-shrink: 0; padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: #888; cursor: pointer; background: #fff; border: 1.5px solid #eee; }
+  .dtl-tab.on { background: var(--amber); color: #fff; border-color: var(--amber-d); }
+  .dtl-editbar { position: sticky; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(0deg,#fafaf7 60%,rgba(250,250,247,0)); display: flex; gap: 8px; }
+  .dtl-editbar .btn { flex: 1; }
 </style>
 </head>
 <body>
@@ -363,10 +381,21 @@ function recipeToDish(r) {
     p: r.protein_type || "meat",
     c: r.cuisine || "family",
     meals,
-    soup: meals.includes("lunch") && /soup|борщ|суп|sol/i.test(r.title || ""),
+    soup: r.course_category ? r.course_category === "soup" : (meals.includes("lunch") && /soup|борщ|суп|sol/i.test(r.title || "")),
     special: [],
     allergens: r.allergen_flags || [],
     photo_url: r.photo_url,
+    // recipe detail view / taxonomy edit (ONTOLOGY.md section 9, issue #16)
+    dish_role: r.dish_role || null,
+    course_category: r.course_category || null,
+    techniques: r.techniques || [],
+    diet_suitability: r.diet_suitability || [],
+    ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
+    ingredients_raw: r.ingredients_raw || "",
+    instructions: Array.isArray(r.instructions) ? r.instructions : [],
+    added_by_member_id: r.added_by_member_id || null,
+    pending_edit: r.pending_edit || null,
+    forked_from_id: r.forked_from_id || null,
   };
 }
 
@@ -1563,6 +1592,9 @@ let deckOrder = DISHES.map(d => d.id);
 function deck() {
   const q = deckSearch.trim().toLowerCase();
   return deckOrder.map(dish).filter(d => {
+    // Components (sauces, batters, marinades) aren't standalone meals - excluded
+    // from the Spin deck per issue #12. They still live in the family cookbook.
+    if (d.dish_role === "component") return false;
     if (deckFilter !== "all" && d.p !== deckFilter && d.c !== deckFilter) return false;
     if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
     return matchesAdvFilters(d, deckAdv);
@@ -1615,9 +1647,228 @@ function wireStack() {
     topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
     topCard.addEventListener("pointermove", e => { if(!drag)return; dx=e.clientX-sx; topCard.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`;
       topCard.querySelector(".stamp.yes").style.opacity = dx>40?Math.min(1,dx/120):0; topCard.querySelector(".stamp.no").style.opacity = dx<-40?Math.min(1,-dx/120):0; });
-    topCard.addEventListener("pointerup", () => { drag=false; if(dx>90)fly(1); else if(dx<-90)fly(-1);
-      else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0; });
+    topCard.addEventListener("pointerup", () => { const tapDx = dx; drag=false; if(dx>90)fly(1); else if(dx<-90)fly(-1);
+      else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0;
+      if (Math.abs(tapDx) < 6) openDetail(topCard.dataset.dish); });
   }
+}
+
+// ── recipe detail view - full-screen literal flip, tap any Spin card
+// (ONTOLOGY.md section 9, wayfinder map issue #9, prototyped on issue #16).
+// About tab carries the full taxonomy as editable chips; edits go through
+// food.apply_event's recipe_edit_proposed / _accepted / _declined so an
+// owned recipe's edits queue for the owning cook instead of landing live.
+// Ingredients/instructions are read-only for now (out of scope for this
+// pass - see the migration header for the full deferred list).
+let detailOpen = null;      // dish id currently shown full-screen, or null
+let detailTab = "about";    // "about" | "cook"
+let detailEditMode = false; // About tab taxonomy edit toggle
+let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
+let detailSaving = false;
+
+const DISH_ROLES = ["main", "side", "component"];
+const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "salad", "dessert"];
+// Must match food.techniques (20260801120000_food_ontology_v1.sql) exactly - this is a
+// vocabulary-validation trigger on the server, not a client-side convenience list.
+const TECHNIQUES = [
+  "baked_roasted", "broiled_grilled", "griddled", "air_fried", "toasted", "cooked_by_microwave",
+  "boiled", "simmered", "steamed", "braised_stewed", "sauteed", "pan_fried", "deep_fried",
+  "sous_vide_cooked", "raw",
+];
+
+function dishRoleLabel(v) {
+  return ({ main: T("Main dish", "Основное блюдо"), side: T("Side dish", "Гарнир"), component: T("Component", "Компонент") })[v] || v;
+}
+function courseLabel(v) {
+  return ({
+    appetizer: T("Appetizer", "Закуска"), cold_starter: T("Cold starter", "Холодная закуска"),
+    soup: T("Soup", "Первое"), main_course: T("Main course", "Основное блюдо"),
+    side_dish: T("Side dish", "Гарнир"), salad: T("Salad", "Салат"), dessert: T("Dessert", "Десерт"),
+  })[v] || v;
+}
+function techLabel(v) {
+  return ({
+    baked_roasted: T("Baked / roasted", "Запечённое"), broiled_grilled: T("Broiled / grilled", "Жареное на гриле"),
+    griddled: T("Griddled", "Обжаренное на плите"), air_fried: T("Air fried", "Аэрогриль"),
+    toasted: T("Toasted", "Тостированное"), cooked_by_microwave: T("Microwaved", "Готовка в микроволновке"),
+    boiled: T("Boiled", "Варёное"), simmered: T("Simmered", "Тушённое на слабом огне"),
+    steamed: T("Steamed", "На пару"), braised_stewed: T("Braised / stewed", "Тушёное"),
+    sauteed: T("Sauteed", "Обжаренное с помешиванием"), pan_fried: T("Pan-fried", "Жареное на сковороде"),
+    deep_fried: T("Deep-fried", "Во фритюре"), sous_vide_cooked: T("Sous vide", "Су-вид"),
+    raw: T("Raw / no cook", "Сырое"),
+  })[v] || v;
+}
+function ingredientLine(ing) {
+  if (typeof ing === "string") return ing;
+  if (!ing || typeof ing !== "object") return "";
+  const name = (lang === "ru" && ing.name_ru) ? ing.name_ru : (ing.name_en || ing.raw || "");
+  const qty = ing.qty ? String(ing.qty).replace(/\.0+$/, "") : "";
+  const unit = ing.unit || "";
+  const note = ing.note ? ` (${ing.note})` : "";
+  const line = [qty, unit, name].filter(Boolean).join(" ");
+  return (line || ing.raw || "") + note;
+}
+function instructionsText(d) {
+  if (!d.instructions.length) return "";
+  return d.instructions.map(s => (typeof s === "string" ? s : (s && s.text) || "")).filter(Boolean).join("\n\n");
+}
+
+function openDetail(id) {
+  if (!dish(id)) return;
+  detailOpen = id; detailTab = "about"; detailEditMode = false; detailDraft = null; detailSaving = false;
+  renderDetailOverlay();
+}
+function closeDetail() {
+  const el = document.getElementById("detailOverlay");
+  detailEditMode = false; detailDraft = null;
+  if (!el) { detailOpen = null; return; }
+  el.classList.remove("open"); el.classList.add("closing");
+  setTimeout(() => { el.remove(); detailOpen = null; }, 260);
+}
+function renderDetailOverlay() {
+  document.getElementById("detailOverlay")?.remove();
+  const d = dish(detailOpen);
+  if (!d) { detailOpen = null; return; }
+  const wrap = document.createElement("div");
+  wrap.id = "detailOverlay";
+  wrap.className = "detail-overlay";
+  wrap.innerHTML = detailView(d);
+  document.body.appendChild(wrap);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
+  wireDetailOverlay(wrap, d);
+}
+
+function detailView(d) {
+  const tabs = [["about", T("About", "О рецепте")], ["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")]];
+  const isOwner = !!(d.added_by_member_id && d.added_by_member_id === me);
+  const canApprove = !!(d.pending_edit && isOwner);
+  const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
+  const courseVal = detailEditMode ? detailDraft.course_category : d.course_category;
+  const mealsVal = detailEditMode ? detailDraft.meal_types : new Set(d.meals);
+  const techVal = detailEditMode ? detailDraft.techniques : new Set(d.techniques);
+
+  const chipRow = (label, opts, isOn, key) => `<div class="sect">${label}</div><div class="chips-wrap">${
+    detailEditMode
+      ? opts.map(([v, l]) => `<div class="chip ${isOn(v) ? "on" : ""}" data-editchip="${key}" data-val="${v}">${l}</div>`).join("")
+      : (opts.filter(([v]) => isOn(v)).map(([, l]) => `<div class="chip on">${l}</div>`).join("") || `<span style="font-size:12px;color:#bbb">${T("not set", "не задано")}</span>`)
+  }</div>`;
+
+  let pane;
+  if (detailTab === "about") {
+    pane = `<div class="dtl-hero" style="background:${d.g}">${d.photo_url ? "" : `<div class="em">${d.em}</div>`}</div>
+      <div style="padding:14px 16px">
+        <div style="font-weight:800;font-size:24px">${dName(d)}</div>
+        <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
+        ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
+        ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
+          <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
+          <button class="mini-btn reject" id="dtlDecline">🍴 ${T("Decline (fork instead)", "Отклонить (создать копию)")}</button></div></div>` : ""}
+        ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("This recipe is a fork of another one.", "Этот рецепт - копия другого рецепта.")}</div>` : ""}
+      </div>
+      <div style="padding:0 16px 16px">
+        ${chipRow(T("Meal type", "Тип приёма"), MEALS.map(m => [m.k, m.ic + " " + mealN(m)]), v => mealsVal.has(v), "meal_types")}
+        ${chipRow(T("Dish role", "Роль блюда"), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
+        ${chipRow(T("Course category", "Категория подачи"), COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => courseVal === v, "course_category")}
+        ${chipRow(T("Techniques", "Техники"), TECHNIQUES.map(t => [t, techLabel(t)]), v => techVal.has(v), "techniques")}
+        ${d.diet_suitability.length ? `<div class="sect">${T("Diet compatible", "Подходит для диеты")}</div><div class="chips-wrap">${d.diet_suitability.map(v => `<div class="chip on">${v}</div>`).join("")}</div>` : ""}
+        ${d.allergens.length ? `<div class="sect">${T("Allergens", "Аллергены")}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
+      </div>`;
+  } else {
+    const ingHtml = d.ingredients.length
+      ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i)}</li>`).join("")}</ul>`
+      : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
+    const instrText = instructionsText(d);
+    pane = `<div style="padding:6px 16px 20px">
+      <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
+      ${ingHtml}
+      <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
+      ${instrText ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${instrText}</div>` : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`}
+      <div style="margin-top:18px;font-size:11px;color:#bbb">${T("Editing ingredients and instructions is coming soon.", "Редактирование ингредиентов и приготовления скоро появится.")}</div>
+    </div>`;
+  }
+  return `
+  <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
+    <div style="flex:1;font-weight:800;font-size:15px">${dName(d)}</div>
+    ${detailTab === "about" ? `<button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button>` : ""}</div>
+  <div class="dtl-tabs">${tabs.map(([k, l]) => `<div class="dtl-tab ${detailTab === k ? "on" : ""}" data-dtltab="${k}">${l}</div>`).join("")}</div>
+  ${pane}
+  ${detailTab === "about" && detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${T("Cancel", "Отмена")}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? T("Saving...", "Сохранение...") : T("Save changes", "Сохранить")}</button></div>` : ""}`;
+}
+
+function wireDetailOverlay(wrap, d) {
+  wrap.querySelector("#dtlBack")?.addEventListener("click", closeDetail);
+  wrap.querySelectorAll("[data-dtltab]").forEach(t => t.addEventListener("click", () => { detailTab = t.dataset.dtltab; renderDetailOverlay(); }));
+  wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
+    if (detailEditMode) { detailEditMode = false; detailDraft = null; }
+    else {
+      detailEditMode = true;
+      detailDraft = { dish_role: d.dish_role, course_category: d.course_category, meal_types: new Set(d.meals), techniques: new Set(d.techniques) };
+    }
+    renderDetailOverlay();
+  });
+  wrap.querySelector("#dtlCancel")?.addEventListener("click", () => { detailEditMode = false; detailDraft = null; renderDetailOverlay(); });
+  wrap.querySelectorAll("[data-editchip]").forEach(c => c.addEventListener("click", () => {
+    if (!detailDraft) return;
+    const key = c.dataset.editchip, v = c.dataset.val;
+    if (key === "dish_role") {
+      detailDraft.dish_role = detailDraft.dish_role === v ? null : v;
+      // dish_role='component' <=> meal_types=['component'] is a DB invariant -
+      // the two fields must always change together.
+      if (detailDraft.dish_role === "component") detailDraft.meal_types = new Set(["component"]);
+      else if (detailDraft.meal_types.has("component")) detailDraft.meal_types = new Set(["dinner"]);
+    } else if (key === "course_category") {
+      detailDraft.course_category = detailDraft.course_category === v ? null : v;
+    } else if (key === "meal_types") {
+      if (detailDraft.dish_role === "component") return; // locked while dish_role is component
+      if (detailDraft.meal_types.has(v)) detailDraft.meal_types.delete(v); else detailDraft.meal_types.add(v);
+    } else if (key === "techniques") {
+      if (detailDraft.techniques.has(v)) detailDraft.techniques.delete(v); else detailDraft.techniques.add(v);
+    }
+    renderDetailOverlay();
+  }));
+  wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
+  wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
+  wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
+}
+
+async function saveDetailEdit(d) {
+  if (!detailDraft || detailSaving) return;
+  const draftMeals = [...detailDraft.meal_types];
+  if (!draftMeals.length) { toast(T("Pick at least one meal type.", "Выберите хотя бы один тип приёма пищи.")); return; }
+
+  const proposed = {};
+  if (detailDraft.dish_role !== d.dish_role) proposed.dish_role = detailDraft.dish_role;
+  if (detailDraft.course_category !== d.course_category) proposed.course_category = detailDraft.course_category;
+  if (draftMeals.slice().sort().join(",") !== d.meals.slice().sort().join(",")) proposed.meal_types = draftMeals;
+  const draftTech = [...detailDraft.techniques].sort();
+  if (draftTech.join(",") !== d.techniques.slice().sort().join(",")) proposed.techniques = draftTech;
+  // dish_role changes must always carry meal_types alongside (server-enforced pairing).
+  if ("dish_role" in proposed && !("meal_types" in proposed)) proposed.meal_types = draftMeals;
+
+  if (!Object.keys(proposed).length) { detailEditMode = false; detailDraft = null; renderDetailOverlay(); return; }
+
+  detailSaving = true; renderDetailOverlay();
+  const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed });
+  detailSaving = false;
+  if (!ok) { renderDetailOverlay(); return; }
+  await loadCatalog();
+  const fresh = dish(d.id);
+  const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
+  detailEditMode = false; detailDraft = null;
+  toast(wentPending
+    ? T("Edit sent - waiting for the owning cook to approve.", "Изменение отправлено - ждём подтверждения от повара.")
+    : T("Recipe updated.", "Рецепт обновлён."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+
+async function resolvePendingEdit(d, approve) {
+  const ok = await applyEvent(approve ? "recipe_edit_accepted" : "recipe_edit_declined", { recipe_id: d.id });
+  if (!ok) return;
+  await loadCatalog();
+  toast(approve ? T("Edit approved.", "Изменение принято.") : T("Edit declined - a new recipe was created.", "Изменение отклонено - создан новый рецепт."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
 }
 
 function renderWish() {
