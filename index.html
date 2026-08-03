@@ -1712,6 +1712,16 @@ function instructionsText(d) {
   if (!d.instructions.length) return "";
   return d.instructions.map(s => (typeof s === "string" ? s : (s && s.text) || "")).filter(Boolean).join("\n\n");
 }
+// Normalizes any instructions shape (old single-blob [{text}] or new
+// step-array [{step,text,photo_url}]) into ordered {text, photo_url} pairs
+// for editing. Renumbering happens at save time, not here.
+function instructionSteps(d) {
+  if (!Array.isArray(d.instructions) || !d.instructions.length) return [];
+  return d.instructions.map(s => typeof s === "string"
+    ? { text: s, photo_url: null }
+    : { text: (s && s.text) || "", photo_url: (s && s.photo_url) || null }
+  ).filter(s => s.text);
+}
 
 function openDetail(id) {
   if (!dish(id)) return;
@@ -1777,22 +1787,43 @@ function detailView(d) {
     const ingHtml = d.ingredients.length
       ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i)}</li>`).join("")}</ul>`
       : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
-    const instrText = instructionsText(d);
+
+    let instrHtml;
+    if (detailEditMode) {
+      const steps = detailDraft.instructions;
+      instrHtml = `<div id="stepList">${steps.map((s, i) => `
+        <div class="step-row" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px" data-stepidx="${i}">
+          <div style="flex:0 0 26px;font-weight:800;color:#bbb;padding-top:10px;text-align:right">${i + 1}.</div>
+          <textarea data-stepinput="${i}" rows="2" style="flex:1;font-size:14px;line-height:1.6;padding:8px 10px;border:1px solid #eee;border-radius:10px;font-family:inherit;resize:vertical">${s.text}</textarea>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <button class="dtl-back" data-stepup="${i}" ${i === 0 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↑</button>
+            <button class="dtl-back" data-stepdown="${i}" ${i === steps.length - 1 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↓</button>
+            <button class="dtl-back" data-stepdel="${i}" style="width:30px;height:26px;font-size:12px;color:#ef4444">✕</button>
+          </div>
+        </div>`).join("")}</div>
+        <button class="mini-btn" id="dtlStepAdd" style="margin-top:4px">+ ${T("Add step", "Добавить шаг")}</button>`;
+    } else {
+      const steps = instructionSteps(d);
+      instrHtml = steps.length
+        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:8px">${s.text}</li>`).join("")}</ol>`
+        : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
+    }
+
     pane = `<div style="padding:6px 16px 20px">
       <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
-      ${instrText ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${instrText}</div>` : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`}
-      <div style="margin-top:18px;font-size:11px;color:#bbb">${T("Editing ingredients and instructions is coming soon.", "Редактирование ингредиентов и приготовления скоро появится.")}</div>
+      ${instrHtml}
+      ${!detailEditMode ? `<div style="margin-top:18px;font-size:11px;color:#bbb">${T("Ingredient editing and per-step photos are coming soon.", "Редактирование ингредиентов и фото по шагам скоро появятся.")}</div>` : ""}
     </div>`;
   }
   return `
   <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
     <div style="flex:1;font-weight:800;font-size:15px">${dName(d)}</div>
-    ${detailTab === "about" ? `<button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button>` : ""}</div>
+    <button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button></div>
   <div class="dtl-tabs">${tabs.map(([k, l]) => `<div class="dtl-tab ${detailTab === k ? "on" : ""}" data-dtltab="${k}">${l}</div>`).join("")}</div>
   ${pane}
-  ${detailTab === "about" && detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${T("Cancel", "Отмена")}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? T("Saving...", "Сохранение...") : T("Save changes", "Сохранить")}</button></div>` : ""}`;
+  ${detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${T("Cancel", "Отмена")}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? T("Saving...", "Сохранение...") : T("Save changes", "Сохранить")}</button></div>` : ""}`;
 }
 
 function wireDetailOverlay(wrap, d) {
@@ -1802,7 +1833,11 @@ function wireDetailOverlay(wrap, d) {
     if (detailEditMode) { detailEditMode = false; detailDraft = null; }
     else {
       detailEditMode = true;
-      detailDraft = { dish_role: d.dish_role, course_category: d.course_category, meal_types: new Set(d.meals), techniques: new Set(d.techniques) };
+      detailDraft = {
+        dish_role: d.dish_role, course_category: d.course_category,
+        meal_types: new Set(d.meals), techniques: new Set(d.techniques),
+        instructions: instructionSteps(d).map(s => ({ ...s })),
+      };
     }
     renderDetailOverlay();
   });
@@ -1829,6 +1864,38 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
   wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
   wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
+
+  // Step text edits update the draft in place without a full re-render, so
+  // the textarea keeps focus/cursor position while typing.
+  wrap.querySelectorAll("[data-stepinput]").forEach(ta => ta.addEventListener("input", (e) => {
+    const idx = Number(ta.dataset.stepinput);
+    if (detailDraft?.instructions?.[idx]) detailDraft.instructions[idx].text = e.target.value;
+  }));
+  wrap.querySelector("#dtlStepAdd")?.addEventListener("click", () => {
+    if (!detailDraft) return;
+    detailDraft.instructions.push({ text: "", photo_url: null });
+    renderDetailOverlay();
+  });
+  wrap.querySelectorAll("[data-stepup]").forEach(b => b.addEventListener("click", () => {
+    const i = Number(b.dataset.stepup);
+    if (!detailDraft || i < 1) return;
+    const arr = detailDraft.instructions;
+    [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+    renderDetailOverlay();
+  }));
+  wrap.querySelectorAll("[data-stepdown]").forEach(b => b.addEventListener("click", () => {
+    const i = Number(b.dataset.stepdown);
+    const arr = detailDraft?.instructions;
+    if (!arr || i >= arr.length - 1) return;
+    [arr[i + 1], arr[i]] = [arr[i], arr[i + 1]];
+    renderDetailOverlay();
+  }));
+  wrap.querySelectorAll("[data-stepdel]").forEach(b => b.addEventListener("click", () => {
+    const i = Number(b.dataset.stepdel);
+    if (!detailDraft) return;
+    detailDraft.instructions.splice(i, 1);
+    renderDetailOverlay();
+  }));
 }
 
 async function saveDetailEdit(d) {
@@ -1844,6 +1911,13 @@ async function saveDetailEdit(d) {
   if (draftTech.join(",") !== d.techniques.slice().sort().join(",")) proposed.techniques = draftTech;
   // dish_role changes must always carry meal_types alongside (server-enforced pairing).
   if ("dish_role" in proposed && !("meal_types" in proposed)) proposed.meal_types = draftMeals;
+
+  const draftSteps = detailDraft.instructions
+    .map(s => ({ text: (s.text || "").trim(), photo_url: s.photo_url || null }))
+    .filter(s => s.text)
+    .map((s, i) => ({ step: i + 1, text: s.text, photo_url: s.photo_url }));
+  const currentSteps = instructionSteps(d).map((s, i) => ({ step: i + 1, text: s.text, photo_url: s.photo_url || null }));
+  if (JSON.stringify(draftSteps) !== JSON.stringify(currentSteps)) proposed.instructions = draftSteps;
 
   if (!Object.keys(proposed).length) { detailEditMode = false; detailDraft = null; renderDetailOverlay(); return; }
 
