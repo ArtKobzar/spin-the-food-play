@@ -116,17 +116,31 @@
   /* spin deck (A) */
   .filter-row { display: flex; gap: 6px; padding: 0 18px 8px; overflow-x: auto; }
   .filter-row .chip { font-size: 12px; padding: 6px 11px; white-space: nowrap; }
-  .filter-icon-btn { align-self: stretch; flex: 0 0 auto; width: 46px; border: 1.5px solid #e5e7eb; background: #fff; border-radius: 12px; font-size: 18px; cursor: pointer; color: #555; display: flex; align-items: center; justify-content: center; }
+  /* filter icon button - width matches the search bar's height via normal flex
+     cross-axis stretch (its row sibling, the search input, sets that height). */
+  .filter-icon-btn { flex: 0 0 auto; width: 46px; border: 1.5px solid #e5e7eb; background: #fff; border-radius: 12px; cursor: pointer; color: #555; display: flex; align-items: center; justify-content: center; }
   .filter-icon-btn.on { border-color: var(--amber); background: #fef3c7; }
+  /* CSS-drawn funnel: a triangle (funnel body) + a thin stem below its tip - no
+     funnel emoji renders reliably across platforms/fonts, so this is drawn, not typed. */
+  .funnel-icon { display: inline-block; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 9px solid currentColor; position: relative; }
+  .funnel-icon::after { content: ""; position: absolute; top: 9px; left: -1px; width: 2px; height: 6px; background: currentColor; }
+  .filter-icon-btn.on .funnel-icon { border-top-color: #92400e; }
+  .filter-icon-btn.on .funnel-icon::after { background: #92400e; }
   .filter-dropdown { position: relative; display: inline-block; }
+  .filter-dropdown-full { display: block; width: 100%; }
   .dropdown-btn { border: 1.5px solid #e5e7eb; background: #fff; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; color: #333; display: flex; align-items: center; gap: 6px; }
   .dropdown-btn.on { border-color: var(--amber); background: #fef3c7; font-weight: 600; }
-  .dropdown-btn .dd-arrow { font-size: 10px; color: #999; }
+  .dropdown-btn .dd-arrow { font-size: 10px; color: #999; flex: 0 0 auto; }
+  .dropdown-btn-full { width: 100%; box-sizing: border-box; justify-content: space-between; }
+  .dropdown-btn-full .dropdown-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
   .dropdown-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; min-width: 200px; max-height: 260px; overflow-y: auto; background: #fff; border: 1.5px solid #e5e7eb; border-radius: 14px; box-shadow: 0 12px 28px rgba(0,0,0,.14); padding: 6px; }
+  .dropdown-menu-full { width: 100%; box-sizing: border-box; min-width: 0; }
   .dropdown-item { padding: 9px 11px; font-size: 14px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .dropdown-item:hover { background: #f8fafc; }
   .dropdown-item.on { background: #fef3c7; font-weight: 600; }
   .dropdown-item .dd-check { color: var(--amber); opacity: 0; font-size: 13px; }
+  /* edge-to-edge single-toggle chips (hide-inactive, has-full-ingredient-list, safe-for-everyone) */
+  .chip-full { display: block; width: 100%; box-sizing: border-box; text-align: center; margin-bottom: 7px; }
   .dropdown-item.on .dd-check { opacity: 1; }
   .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
@@ -891,56 +905,50 @@ function matchesAdvFilters(d, f) {
   if (f.vegOnly && !dishIsVeg(d)) return false;
   return true;
 }
-// Filter icon button, rendered stretched to the full height of the search bar +
-// quick-filter row block beside it (not a plain inline button like the old ☰) -
-// opens/closes the same panel/state as before.
+// Filter icon button - a CSS-drawn funnel (no reliable universally-rendered funnel
+// emoji exists across platforms/fonts, so it's drawn from a triangle + a stem rather
+// than left to font support), sized to match the search bar's own height by ordinary
+// flex-row cross-axis stretch (no explicit height rule needed).
 function filterIconButtonHtml(idPrefix, open) {
-  return `<button class="filter-icon-btn${open?" on":""}" id="${idPrefix}Toggle" aria-label="${T("Filters", "Фильтры")}">🎛️</button>`;
+  return `<button class="filter-icon-btn${open?" on":""}" id="${idPrefix}Toggle" aria-label="${T("Filters", "Фильтры")}"><span class="funnel-icon"></span></button>`;
 }
-// A multi-select chip row with a short "Any" chip (not "Any meal"/"Any time" - just
-// "Any", per request) that clears the whole group in one tap. Every group here is
-// OR-within-group, so multiple non-"Any" chips can be active together.
-function multiChipsHtml(idPrefix, id, list, setKey, f) {
-  const any = `<div class="chip ${f[setKey].size?"":"on"}" data-k="__any__">${T("Any", "Любой")}</div>`;
-  const chips = list.map(([k,l,lru]) => `<div class="chip ${f[setKey].has(k)?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("");
-  return `<div class="chips-wrap" id="${idPrefix}${id}">${any}${chips}</div>`;
-}
-function wireMultiChips(root, idPrefix, id, setKey, f, onChange) {
-  root.querySelectorAll("#"+idPrefix+id+" .chip").forEach(c => c.onclick = () => {
-    const k = c.dataset.k;
-    if (k === "__any__") f[setKey].clear();
-    else { f[setKey].has(k) ? f[setKey].delete(k) : f[setKey].add(k); }
-    root.querySelectorAll("#"+idPrefix+id+" .chip").forEach(x =>
-      x.classList.toggle("on", x.dataset.k === "__any__" ? f[setKey].size === 0 : f[setKey].has(x.dataset.k)));
-    onChange();
-  });
-}
-// A nicer-looking multi-select dropdown for the two longest lists (cuisine, protein) -
-// a flat chip-wrap gets unwieldy past ~5 options. Collapsed by default, shows a count
-// once anything's selected; stays open across taps so multiple picks don't require
-// re-opening it each time.
-function dropdownHtml(idPrefix, id, labelEn, labelRu, items, setKey, f) {
-  const n = f[setKey].size;
-  const any = `<div class="dropdown-item ${n?"":"on"}" data-k="__any__"><span>${T("Any", "Любой")}</span><span class="dd-check">✓</span></div>`;
+// Every multi-select filter group (Meal, Protein, Cuisine, Time, Difficulty, Dietary
+// needs) renders through this single component: a section title, then a full-width
+// ("edge to edge", each starting its own line) dropdown button summarizing the
+// current pick, opening a floating checklist with a leading short "Any" item (not
+// "Any meal"/"Any time" - just "Any") that clears the whole group in one tap. Every
+// group here is OR-within-group, so multiple non-"Any" picks combine together.
+function dropdownGroupHtml(idPrefix, id, sectEn, sectRu, items, setKey, f) {
+  const sel = items.filter(([k]) => f[setKey].has(k));
+  const summary = sel.length ? sel.map(([,l]) => l).join(", ") : T("Any", "Любой");
+  const any = `<div class="dropdown-item ${f[setKey].size?"":"on"}" data-k="__any__"><span>${T("Any", "Любой")}</span><span class="dd-check">✓</span></div>`;
   const rows = items.map(([k,label]) =>
     `<div class="dropdown-item ${f[setKey].has(k)?"on":""}" data-k="${k}"><span>${label}</span><span class="dd-check">✓</span></div>`).join("");
   return `
-    <div class="filter-dropdown" id="${idPrefix}${id}">
-      <button type="button" class="dropdown-btn${n?" on":""}" id="${idPrefix}${id}Btn">${T(labelEn, labelRu)}${n ? ` (${n})` : ""} <span class="dd-arrow">▾</span></button>
-      <div class="dropdown-menu" id="${idPrefix}${id}Menu" style="display:none">${any}${rows}</div>
+    <div class="sect">${T(sectEn, sectRu)}</div>
+    <div class="filter-dropdown filter-dropdown-full" id="${idPrefix}${id}">
+      <button type="button" class="dropdown-btn dropdown-btn-full${f[setKey].size?" on":""}" id="${idPrefix}${id}Btn"><span class="dropdown-summary">${summary}</span><span class="dd-arrow">▾</span></button>
+      <div class="dropdown-menu dropdown-menu-full" id="${idPrefix}${id}Menu" style="display:none">${any}${rows}</div>
     </div>`;
 }
-function wireDropdown(root, idPrefix, id, labelEn, labelRu, setKey, f, onChange) {
+function wireDropdownGroup(root, idPrefix, id, setKey, f, items, onChange) {
   const wrap = root.querySelector("#"+idPrefix+id);
   const btn = wrap.querySelector("#"+idPrefix+id+"Btn");
+  const summaryEl = btn.querySelector(".dropdown-summary");
   const menu = wrap.querySelector("#"+idPrefix+id+"Menu");
-  btn.onclick = e => { e.stopPropagation(); menu.style.display = menu.style.display === "none" ? "block" : "none"; };
   const updateBtn = () => {
-    const n = f[setKey].size;
-    btn.classList.toggle("on", !!n);
-    btn.innerHTML = `${T(labelEn, labelRu)}${n ? ` (${n})` : ""} <span class="dd-arrow">▾</span>`;
+    const sel = items.filter(([k]) => f[setKey].has(k));
+    summaryEl.textContent = sel.length ? sel.map(([,l]) => l).join(", ") : T("Any", "Любой");
+    btn.classList.toggle("on", f[setKey].size > 0);
   };
-  menu.querySelectorAll(".dropdown-item").forEach(item => item.onclick = () => {
+  btn.onclick = e => {
+    e.stopPropagation();
+    const willOpen = menu.style.display === "none";
+    root.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
+    menu.style.display = willOpen ? "block" : "none";
+  };
+  menu.querySelectorAll(".dropdown-item").forEach(item => item.onclick = e => {
+    e.stopPropagation();
     const k = item.dataset.k;
     if (k === "__any__") f[setKey].clear();
     else { f[setKey].has(k) ? f[setKey].delete(k) : f[setKey].add(k); }
@@ -953,10 +961,11 @@ function wireDropdown(root, idPrefix, id, labelEn, labelRu, setKey, f, onChange)
   // open dropdown on the page closes when the user taps elsewhere.
   document.onclick = () => root.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
 }
-// Renders the collapsible filter panel. Library (hide-inactive) leads, since it's the
-// one toggle that silently changes what's even in the candidate pool; then meal type,
-// protein, cuisine, fit-my-week (time/difficulty/ingredient-list completeness), then
-// dietary needs (+ the "safe for everyone" toggle). idPrefix keeps ids unique per surface.
+// Renders the collapsible filter panel. Library (hide-inactive) leads, edge-to-edge,
+// since it's the one toggle that silently changes what's even in the candidate pool;
+// then meal type, protein, cuisine, fit-my-week (time/difficulty/ingredient-list
+// completeness), then dietary needs (+ the "safe for everyone" toggle). idPrefix
+// keeps ids unique per surface.
 function advFilterPanelHtml(idPrefix, f, open) {
   const cuisineKeys = availableCuisines();
   if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
@@ -965,21 +974,21 @@ function advFilterPanelHtml(idPrefix, f, open) {
     const m = PROTEIN_GROUP_META[k];
     return [k, `${m.ic} ${T(m.en, m.ru)}`];
   });
+  const mealItems = MEAL_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const timeItems = TIME_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const diffItems = DIFF_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const dietItems = Object.entries(DIET_META).map(([k,m]) => [k, T(m.en, m.ru)]);
   return `
     <div id="${idPrefix}Panel" style="display:${open ? "block" : "none"}">
-      <div class="chips-wrap"><div class="chip ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты") : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты")}</div></div>
-      <div class="sect">${T("Meal", "Приём пищи")}</div>${multiChipsHtml(idPrefix, "Meal", MEAL_FILTERS, "meal", f)}
-      <div class="chips-wrap" style="gap:10px;margin:2px 0 4px">
-        ${dropdownHtml(idPrefix, "Protein", "Protein / main ingredient", "Белок / основной ингредиент", proteinItems, "proteins", f)}
-        ${dropdownHtml(idPrefix, "Cuisine", "Cuisine", "Кухня", cuisineItems, "cuisines", f)}
-      </div>
-      <div class="sect">${T("Fits my week", "Подходит на этой неделе")}</div>
-      ${multiChipsHtml(idPrefix, "Time", TIME_FILTERS, "time", f)}
-      ${multiChipsHtml(idPrefix, "Diff", DIFF_FILTERS, "diff", f)}
-      <div class="chips-wrap" style="margin-top:7px"><div class="chip ${f.thickOnly?"on":""}" id="${idPrefix}Thick">🧾 ${T("Has full ingredient list", "Есть список ингредиентов")}</div></div>
-      <div class="sect">${T("Dietary needs", "Диетические потребности")}</div>
-      ${multiChipsHtml(idPrefix, "Diet", Object.entries(DIET_META).map(([k,m]) => [k, m.en, m.ru]), "diets", f)}
-      <div class="chips-wrap" style="margin-top:7px"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>
+      <div class="chip chip-full ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты") : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты")}</div>
+      ${dropdownGroupHtml(idPrefix, "Meal", "Meal", "Приём пищи", mealItems, "meal", f)}
+      ${dropdownGroupHtml(idPrefix, "Protein", "Protein / main ingredient", "Белок / основной ингредиент", proteinItems, "proteins", f)}
+      ${dropdownGroupHtml(idPrefix, "Cuisine", "Cuisine", "Кухня", cuisineItems, "cuisines", f)}
+      ${dropdownGroupHtml(idPrefix, "Time", "Time", "Время", timeItems, "time", f)}
+      ${dropdownGroupHtml(idPrefix, "Diff", "Difficulty", "Сложность", diffItems, "diff", f)}
+      <div class="chip chip-full ${f.thickOnly?"on":""}" style="margin-top:8px" id="${idPrefix}Thick">🧾 ${T("Has full ingredient list", "Есть список ингредиентов")}</div>
+      ${dropdownGroupHtml(idPrefix, "Diet", "Dietary needs", "Диетические потребности", dietItems, "diets", f)}
+      <div class="chip chip-full ${f.safeOnly?"on":""}" style="margin-top:8px" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div>
     </div>`;
 }
 // Wires the filter icon button built by filterIconButtonHtml. `panelState` is
@@ -1008,15 +1017,27 @@ function wireSearchOpensFilters(root, searchId, idPrefix, panelState) {
   });
 }
 // Wires every control inside the panel built by advFilterPanelHtml. onChange runs after any edit.
+// `items` passed to each dropdown must match what advFilterPanelHtml built its summary text from.
 function wireAdvFilterPanel(root, idPrefix, f, onChange) {
-  wireMultiChips(root, idPrefix, "Meal", "meal", f, onChange);
-  wireDropdown(root, idPrefix, "Protein", "Protein / main ingredient", "Белок / основной ингредиент", "proteins", f, onChange);
-  wireDropdown(root, idPrefix, "Cuisine", "Cuisine", "Кухня", "cuisines", f, onChange);
-  wireMultiChips(root, idPrefix, "Time", "time", f, onChange);
-  wireMultiChips(root, idPrefix, "Diff", "diff", f, onChange);
+  const cuisineKeys = availableCuisines();
+  if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
+  const cuisineItems = cuisineKeys.map(c => [c, c === "family" ? T("Not yet tagged", "Без кухни") : cuisineLabel(c)]);
+  const proteinItems = availableProteinGroups().map(k => {
+    const m = PROTEIN_GROUP_META[k];
+    return [k, `${m.ic} ${T(m.en, m.ru)}`];
+  });
+  const mealItems = MEAL_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const timeItems = TIME_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const diffItems = DIFF_FILTERS.map(([k,l,lru]) => [k, T(l, lru)]);
+  const dietItems = Object.entries(DIET_META).map(([k,m]) => [k, T(m.en, m.ru)]);
+  wireDropdownGroup(root, idPrefix, "Meal", "meal", f, mealItems, onChange);
+  wireDropdownGroup(root, idPrefix, "Protein", "proteins", f, proteinItems, onChange);
+  wireDropdownGroup(root, idPrefix, "Cuisine", "cuisines", f, cuisineItems, onChange);
+  wireDropdownGroup(root, idPrefix, "Time", "time", f, timeItems, onChange);
+  wireDropdownGroup(root, idPrefix, "Diff", "diff", f, diffItems, onChange);
+  wireDropdownGroup(root, idPrefix, "Diet", "diets", f, dietItems, onChange);
   const thick = root.querySelector("#"+idPrefix+"Thick");
   thick.onclick = () => { f.thickOnly = !f.thickOnly; thick.classList.toggle("on", f.thickOnly); onChange(); };
-  wireMultiChips(root, idPrefix, "Diet", "diets", f, onChange);
   const safe = root.querySelector("#"+idPrefix+"Safe");
   safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
   const activeOnly = root.querySelector("#"+idPrefix+"ActiveOnly");
@@ -2208,12 +2229,10 @@ function stackHtml(dk) {
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
     <div style="display:flex;gap:8px;margin:0 20px 8px">
-      <div style="flex:1 1 auto;min-width:0">
-        <input id="deckSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
-        ${quickFilterRowHtml("deckAdv", deckAdv)}
-      </div>
+      <input id="deckSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
       ${filterIconButtonHtml("deckAdv", deckPanel.open)}
     </div>
+    ${quickFilterRowHtml("deckAdv", deckAdv)}
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div class="stack" id="stack">${stackHtml(deck())}</div>
     <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
@@ -2978,12 +2997,10 @@ function wishStep2(kind, presetDay) {
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div style="flex:1 1 auto;min-width:0">
-          <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
-          ${quickFilterRowHtml("dishAdv", dishAdv)}
-        </div>
+        <input id="dishSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
         ${filterIconButtonHtml("dishAdv", dishPanel.open)}
       </div>
+      ${quickFilterRowHtml("dishAdv", dishAdv)}
       <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
       <div class="chips-wrap" id="WD"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
