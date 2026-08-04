@@ -738,11 +738,59 @@ function specials(d) {
 
 // ── recipe filters (spinner filtering UX redesign, 2026-08-04 - see ONTOLOGY.md /
 //    SPEC_INGREDIENT_CLASSIFICATION.md for the underlying vocab) ──
-// Top row 1: meal type (single-select - a breakfast dish can't fill a dinner slot,
-// the one hard structural filter). Top row 2: protein/main-ingredient group
-// (multi-select - the #1 weekly-variety lever, "we had chicken twice already").
-// Both promoted out of the sheet below because they're the two questions a home cook
-// actually starts from; everything else lives in the "Filters" sheet further down.
+// Quick row (always visible, right under the search bar): four one-tap category
+// toggles a home cook reaches for constantly - Soup / Meat / Fish / Grill. Everything
+// else (meal type, the full protein list, cuisine, time/difficulty, dietary needs,
+// safety, library visibility) lives behind the burger (☰) button next to the search
+// bar. Meat/Fish here are the exact same underlying state as the full protein list in
+// the burger panel (both are just entry points into `f.proteins`), so the two never
+// drift out of sync with each other.
+const QUICK_FILTERS = [
+  { key: "soup",  ic: "🍲", en: "Soup",  ru: "Суп" },
+  { key: "meat",  ic: "🥩", en: "Meat",  ru: "Мясо" },
+  { key: "fish",  ic: "🐟", en: "Fish",  ru: "Рыба" },
+  { key: "grill", ic: "🔥", en: "Grill", ru: "Гриль" },
+  { key: "veg",   ic: "🥦", en: "Veg",   ru: "Вег" },
+];
+function isQuickOn(f, key) {
+  if (key === "meat" || key === "fish") return f.proteins.has(key);
+  if (key === "soup") return f.soupOnly;
+  if (key === "grill") return f.grillOnly;
+  if (key === "veg") return f.vegOnly;
+  return false;
+}
+function toggleQuick(f, key) {
+  if (key === "meat" || key === "fish") { f.proteins.has(key) ? f.proteins.delete(key) : f.proteins.add(key); }
+  else if (key === "soup") f.soupOnly = !f.soupOnly;
+  else if (key === "grill") f.grillOnly = !f.grillOnly;
+  else if (key === "veg") f.vegOnly = !f.vegOnly;
+}
+// "Grill" reads both technique (LanguaL-grounded broiled_grilled) and required
+// appliance (grill_bbq) - a recipe classified either way counts as grilled.
+function dishIsGrilled(d) {
+  return (d.techniques || []).includes("broiled_grilled") || (d.required_appliances || []).includes("grill_bbq");
+}
+// "Veg" is the vegan-OR-vegetarian union (diet_compatible_with[]) - a quick, coarse
+// entry point into the same field the full "Dietary needs" section (burger panel)
+// exposes per-diet, AND-combined.
+function dishIsVeg(d) {
+  const diets = d.diet_compatible_with || [];
+  return diets.includes("vegan") || diets.includes("vegetarian");
+}
+function quickFilterRowHtml(idPrefix, f) {
+  const chips = QUICK_FILTERS.map(q =>
+    `<div class="chip ${isQuickOn(f, q.key)?"on":""}" data-k="${q.key}">${q.ic} ${T(q.en, q.ru)}</div>`).join("");
+  return `<div class="filter-row" id="${idPrefix}Quick">${chips}</div>`;
+}
+function wireQuickFilterRow(root, idPrefix, f, onChange) {
+  root.querySelectorAll("#"+idPrefix+"Quick .chip").forEach(c => c.onclick = () => {
+    toggleQuick(f, c.dataset.k);
+    c.classList.toggle("on", isQuickOn(f, c.dataset.k));
+    onChange();
+  });
+}
+// Meal type (single-select - a breakfast dish can't fill a dinner slot) and the full
+// protein/main-ingredient list (multi-select) both live in the burger panel below.
 const MEAL_FILTERS = [["all","Any meal","Любой приём"],["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🥪 Lunch","🥪 Обед"],["dinner","🍲 Dinner","🍲 Ужин"]];
 // protein_groups[] (food.family_cookbook_recipes, Tier 1 ingredient rollup) is the
 // real, ingredient-derived field - replaces the legacy protein_type scalar that
@@ -804,6 +852,7 @@ function newAdvFilters() {
   return {
     meal: "all", proteins: new Set(), cuisines: new Set(), diets: new Set(),
     time: "all", diff: "all", thickOnly: false, safeOnly: false, hideInactive: true,
+    soupOnly: false, grillOnly: false, vegOnly: false,
   };
 }
 function matchesAdvFilters(d, f) {
@@ -819,44 +868,30 @@ function matchesAdvFilters(d, f) {
   if (f.diets.size && ![...f.diets].every(k => d.diet_compatible_with.includes(k))) return false;
   if (f.safeOnly && !isSafeForEveryone(d)) return false;
   if (f.hideInactive && !d.is_active) return false;
+  if (f.soupOnly && !d.soup) return false;
+  if (f.grillOnly && !dishIsGrilled(d)) return false;
+  if (f.vegOnly && !dishIsVeg(d)) return false;
   return true;
 }
-// Persistent top row (meal + protein + safety toggle) shared by Spin and the Wish dish
-// picker. idPrefix keeps ids unique per surface, matching the sheet helpers below.
-function topFilterRowHtml(idPrefix, f) {
-  const meals = MEAL_FILTERS.map(([k,l,lru]) => `<div class="chip ${f.meal===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("");
-  const proteins = availableProteinGroups().map(k => {
-    const m = PROTEIN_GROUP_META[k];
-    return `<div class="chip ${f.proteins.has(k)?"on":""}" data-k="${k}">${m.ic} ${T(m.en, m.ru)}</div>`;
-  }).join("");
-  return `
-    <div class="filter-row" id="${idPrefix}Meal">${meals}</div>
-    <div class="filter-row" id="${idPrefix}Protein">${proteins}</div>
-    <div class="chips-wrap" style="margin:0 20px 8px" id="${idPrefix}SafeWrap"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>`;
+// Burger toggle button, rendered inline next to the search input (not above the
+// panel like the old gear button) - opens/closes the same panel/state as before.
+function filterToggleButtonHtml(idPrefix) {
+  return `<button class="mini-btn" id="${idPrefix}Toggle" aria-label="${T("Filters", "Фильтры")}" style="padding:0 16px;font-size:17px;line-height:1;flex:0 0 auto">☰</button>`;
 }
-// Wires the row built by topFilterRowHtml. onChange runs after any tap.
-function wireTopFilterRow(root, idPrefix, f, onChange) {
-  root.querySelectorAll("#"+idPrefix+"Meal .chip").forEach(c => c.onclick = () => {
-    f.meal = c.dataset.k;
-    root.querySelectorAll("#"+idPrefix+"Meal .chip").forEach(x => x.classList.toggle("on", x.dataset.k === f.meal));
-    onChange();
-  });
-  root.querySelectorAll("#"+idPrefix+"Protein .chip").forEach(c => c.onclick = () => {
-    const k = c.dataset.k;
-    if (f.proteins.has(k)) f.proteins.delete(k); else f.proteins.add(k);
-    c.classList.toggle("on", f.proteins.has(k));
-    onChange();
-  });
-  const safe = root.querySelector("#"+idPrefix+"Safe");
-  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
-}
-// Renders the collapsible "Filters" sheet: cuisine, then fit-my-week (time/difficulty/
-// ingredient-list completeness), then dietary needs, then library visibility - roughly
-// the order a home cook reaches for them once meal/protein/safety (top row) are set.
-// idPrefix keeps ids unique per surface.
+// Renders the collapsible burger panel: meal type, then the full protein list, then
+// cuisine, then fit-my-week (time/difficulty/ingredient-list completeness), then
+// dietary needs (+ the "safe for everyone" toggle), then library visibility - roughly
+// the order a home cook reaches for them once the quick row (Soup/Meat/Fish/Grill) is
+// set. idPrefix keeps ids unique per surface.
 function advFilterPanelHtml(idPrefix, f, open) {
   const singleRow = (list, key, id) => `<div class="chips-wrap" id="${id}">${list.map(([k,l,lru]) =>
     `<div class="chip ${f[key]===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>`;
+  const mealChips = MEAL_FILTERS.map(([k,l,lru]) =>
+    `<div class="chip ${f.meal===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("");
+  const proteinChips = availableProteinGroups().map(k => {
+    const m = PROTEIN_GROUP_META[k];
+    return `<div class="chip ${f.proteins.has(k)?"on":""}" data-k="${k}">${m.ic} ${T(m.en, m.ru)}</div>`;
+  }).join("");
   const cuisineKeys = availableCuisines();
   if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
   const cuisineChips = cuisineKeys.map(c => {
@@ -866,8 +901,9 @@ function advFilterPanelHtml(idPrefix, f, open) {
   const dietChips = Object.entries(DIET_META).map(([k,m]) =>
     `<div class="chip ${f.diets.has(k)?"on":""}" data-k="${k}">${T(m.en, m.ru)}</div>`).join("");
   return `
-    <button class="mini-btn" id="${idPrefix}Toggle">⚙️ ${T("Filters", "Фильтры")}</button>
     <div id="${idPrefix}Panel" style="display:${open ? "block" : "none"}">
+      <div class="sect">${T("Meal", "Приём пищи")}</div><div class="chips-wrap" id="${idPrefix}Meal">${mealChips}</div>
+      <div class="sect">${T("Protein / main ingredient", "Белок / основной ингредиент")}</div><div class="chips-wrap" id="${idPrefix}Protein">${proteinChips}</div>
       <div class="sect">${T("Cuisine", "Кухня")}</div><div class="chips-wrap" id="${idPrefix}Cuisine">${cuisineChips}</div>
       <div class="sect">${T("Fits my week", "Подходит на этой неделе")}</div>
       ${singleRow(TIME_FILTERS, "time", idPrefix+"Time")}
@@ -875,16 +911,20 @@ function advFilterPanelHtml(idPrefix, f, open) {
       <div class="chips-wrap"><div class="chip ${f.thickOnly?"on":""}" id="${idPrefix}Thick">🧾 ${T("Has full ingredient list", "Есть список ингредиентов")}</div></div>
       <div class="sect">${T("Dietary needs", "Диетические потребности")}</div>
       <div class="chips-wrap" id="${idPrefix}Diet">${dietChips}</div>
+      <div class="chips-wrap" style="margin-top:7px"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>
       <div class="sect">${T("Library", "Библиотека")}</div>
       <div class="chips-wrap"><div class="chip ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты") : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты")}</div></div>
     </div>`;
 }
-// Wires the panel built by advFilterPanelHtml. `panelState` is {open:bool}, mutated here so the
-// open/closed state survives a full re-render. onChange runs after any filter edit.
-function wireAdvFilterPanel(root, idPrefix, f, panelState, onChange) {
+// Wires the burger toggle button built by filterToggleButtonHtml. `panelState` is
+// {open:bool}, mutated here so the open/closed state survives a full re-render.
+function wireFilterToggle(root, idPrefix, panelState) {
   const toggle = root.querySelector("#"+idPrefix+"Toggle");
   const panel = root.querySelector("#"+idPrefix+"Panel");
   toggle.onclick = () => { panelState.open = !panelState.open; panel.style.display = panelState.open ? "block" : "none"; };
+}
+// Wires every chip inside the panel built by advFilterPanelHtml. onChange runs after any edit.
+function wireAdvFilterPanel(root, idPrefix, f, onChange) {
   const wireSingleRow = (id, key) => root.querySelectorAll("#"+id+" .chip").forEach(c => c.onclick = () => {
     f[key] = c.dataset.k;
     root.querySelectorAll("#"+id+" .chip").forEach(x => x.classList.toggle("on", x.dataset.k === f[key]));
@@ -896,12 +936,16 @@ function wireAdvFilterPanel(root, idPrefix, f, panelState, onChange) {
     c.classList.toggle("on", f[key].has(k));
     onChange();
   });
+  wireSingleRow(idPrefix+"Meal", "meal");
+  wireMultiRow(idPrefix+"Protein", "proteins");
   wireMultiRow(idPrefix+"Cuisine", "cuisines");
   wireSingleRow(idPrefix+"Time", "time");
   wireSingleRow(idPrefix+"Diff", "diff");
   const thick = root.querySelector("#"+idPrefix+"Thick");
   thick.onclick = () => { f.thickOnly = !f.thickOnly; thick.classList.toggle("on", f.thickOnly); onChange(); };
   wireMultiRow(idPrefix+"Diet", "diets");
+  const safe = root.querySelector("#"+idPrefix+"Safe");
+  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
   const activeOnly = root.querySelector("#"+idPrefix+"ActiveOnly");
   activeOnly.onclick = () => {
     f.hideInactive = !f.hideInactive;
@@ -2090,8 +2134,11 @@ function stackHtml(dk) {
 }
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
-    <input id="deckSearch" style="width:calc(100% - 40px);margin:0 20px 8px;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
-    ${topFilterRowHtml("deckAdv", deckAdv)}
+    <div style="display:flex;gap:8px;margin:0 20px 8px">
+      <input id="deckSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+      ${filterToggleButtonHtml("deckAdv")}
+    </div>
+    ${quickFilterRowHtml("deckAdv", deckAdv)}
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div class="stack" id="stack">${stackHtml(deck())}</div>
     <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
@@ -2682,8 +2729,9 @@ function wire() {
   // spin
   const deckSearchEl = document.getElementById("deckSearch");
   if (deckSearchEl) deckSearchEl.addEventListener("input", e => { deckSearch = e.target.value; refreshDeck(); });
-  if (document.getElementById("deckAdvMeal")) wireTopFilterRow(app, "deckAdv", deckAdv, refreshDeck);
-  if (document.getElementById("deckAdvToggle")) wireAdvFilterPanel(app, "deckAdv", deckAdv, deckPanel, refreshDeck);
+  if (document.getElementById("deckAdvQuick")) wireQuickFilterRow(app, "deckAdv", deckAdv, refreshDeck);
+  if (document.getElementById("deckAdvToggle")) wireFilterToggle(app, "deckAdv", deckPanel);
+  if (document.getElementById("deckAdvMeal")) wireAdvFilterPanel(app, "deckAdv", deckAdv, refreshDeck);
   wireStack();
 
   // wish
@@ -2853,8 +2901,11 @@ function wishStep2(kind, presetDay) {
   const dishPanel = { open: false };
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
-      <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
-      ${topFilterRowHtml("dishAdv", dishAdv)}
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="dishSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
+        ${filterToggleButtonHtml("dishAdv")}
+      </div>
+      ${quickFilterRowHtml("dishAdv", dishAdv)}
       <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
       <div class="chips-wrap" id="WD"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
@@ -2883,8 +2934,9 @@ function wishStep2(kind, presetDay) {
   if (kind === "dish") {
     renderDishList();
     v.querySelector("#dishSearch").addEventListener("input", e => { dishSearch = e.target.value; renderDishList(); });
-    wireTopFilterRow(v, "dishAdv", dishAdv, renderDishList);
-    wireAdvFilterPanel(v, "dishAdv", dishAdv, dishPanel, renderDishList);
+    wireQuickFilterRow(v, "dishAdv", dishAdv, renderDishList);
+    wireFilterToggle(v, "dishAdv", dishPanel);
+    wireAdvFilterPanel(v, "dishAdv", dishAdv, renderDishList);
   }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
   v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
