@@ -119,8 +119,23 @@
   .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
-  .scard .ph small { position: absolute; bottom: 8px; right: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
+  .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
   .scard .thin-badge { position: absolute; top: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
+  .scard .qhide { position: absolute; bottom: 12px; right: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; font-size: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+  .scard .qhide.off { background: rgba(5,150,105,.9); }
+  .scard .pnav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff; font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; }
+  .scard .pnav.prev { left: 10px; }
+  .scard .pnav.next { right: 10px; }
+  .scard .pdots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 5px; }
+  .scard .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
+  .scard .pdots span.on { background: #fff; }
+  .scard .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
+  .scard .photo-approve-row { position: absolute; bottom: 12px; left: 12px; z-index: 3; display: flex; gap: 8px; }
+  .scard .pbtn { border: none; border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+  .scard .pbtn.approve { background: rgba(5,150,105,.92); color: #fff; }
+  .scard .pbtn.decline { background: rgba(220,38,38,.92); color: #fff; }
+  .scard .add-photo-cta { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; background: rgba(0,0,0,.18); cursor: pointer; touch-action: manipulation; font-weight: 700; font-size: 14px; }
+  .scard .add-photo-cta .ic { font-size: 40px; }
   .scard .bd { padding: 16px; }
   .scard .ti { font-weight: 800; font-size: 22px; }
   .scard .mt { font-size: 13px; color: #888; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
@@ -181,6 +196,15 @@
   .dtl-back { background: #fff; border: 1.5px solid #eee; border-radius: 50%; width: 38px; height: 38px; font-size: 17px; cursor: pointer; flex-shrink: 0; }
   .dtl-hero { width: 100%; height: 240px; background-size: cover; background-position: center; position: relative; }
   .dtl-hero .em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 88px; }
+  .plan-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 16px 10px; padding: 12px 14px; border-radius: 14px; background: #f9fafb; border: 1px solid #eee; }
+  .plan-toggle .ptxt { flex: 1; }
+  .plan-toggle .ptitle { font-weight: 700; font-size: 14px; }
+  .plan-toggle .psub { font-size: 11.5px; color: #888; margin-top: 3px; line-height: 1.4; }
+  .sw { position: relative; width: 46px; height: 26px; border-radius: 14px; background: #d1d5db; border: none; cursor: pointer; flex: 0 0 auto; transition: background .2s; padding: 0; }
+  .sw.on { background: var(--green); }
+  .sw:disabled { opacity: .6; cursor: default; }
+  .sw i { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .2s; }
+  .sw.on i { left: 22px; }
   .dtl-banner { margin: 10px 16px; padding: 10px 13px; border-radius: 14px; font-size: 12.5px; font-weight: 600; }
   .dtl-banner.edit { background: #fef3c7; border: 1px dashed var(--amber); color: #92400e; }
   .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
@@ -402,14 +426,45 @@ function recipeToDish(r) {
     added_by_member_id: r.added_by_member_id || null,
     pending_edit: r.pending_edit || null,
     forked_from_id: r.forked_from_id || null,
+    // Manual active/inactive toggle (independent of card_state/dish_role
+    // AI-Fill Eligibility) - see the 20260804 migration. Active = shows in
+    // Spin, manual assignment, and automatic AI-fill. Inactive = stays in
+    // the cookbook but is hidden from all of those until switched back on.
+    is_active: r.is_active !== false,
+    // Photo gallery (20260804 migration) - photo_url above stays as the
+    // legacy single-photo fallback for recipes never re-photographed.
+    photo_urls: Array.isArray(r.photo_urls) ? r.photo_urls : [],
+    pending_photo: r.pending_photo || null,
   };
 }
 
+// Fisher-Yates - deckOrder is shuffled with this rather than left in the
+// SQL query's `order by title asc`, so Spin doesn't hand out the same
+// alphabetically-first recipe on every visit / after every background
+// refresh.
+function shuffled(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 async function loadCatalog() {
   const { data: recipes, error: re } = await sb.rpc("spin_food_list_family_cookbook", { p_limit: 500, p_offset: 0 });
   if (re) console.error("[stf-data] cookbook:", re);
   DISHES = (recipes || []).map(recipeToDish);
-  deckOrder = DISHES.map(d => d.id);
+  // Keep whatever relative order the user is already mid-swipe through
+  // (any of these ids already in deckOrder), and only shuffle in the ids
+  // that are new since the last load (freshly added recipes, or the very
+  // first load of the session) - so routine background refreshes (e.g.
+  // after uploading a photo) don't scramble a deck the user is partway
+  // through.
+  const known = new Set(deckOrder);
+  const stillPresent = new Set(DISHES.map(d => d.id));
+  const kept = deckOrder.filter(id => stillPresent.has(id));
+  const fresh = shuffled(DISHES.map(d => d.id).filter(id => !known.has(id)));
+  deckOrder = [...kept, ...fresh];
   const { data: members, error: me } = await sb.rpc("spin_food_list_family_members");
   if (me) console.error("[stf-data] members:", me);
   FAMILY = (members || []).map(m => ({
@@ -602,12 +657,18 @@ function isSafeForEveryone(d) {
   }
   return true;
 }
-function newAdvFilters() { return { meal: "all", time: "all", diff: "all", safeOnly: false }; }
+// hideInactive defaults true: a recipe switched to "inactive" (About tab, per-recipe
+// toggle) lives on in the cookbook but is opted out of weekly menu planning surfaces
+// until someone flips it back - this filter is the "Show active / Hide inactive"
+// escape hatch to peek at (and act on) inactive recipes without permanently changing
+// what Spin/Wish default to showing.
+function newAdvFilters() { return { meal: "all", time: "all", diff: "all", safeOnly: false, hideInactive: true }; }
 function matchesAdvFilters(d, f) {
   if (f.meal !== "all" && !d.meals.includes(f.meal)) return false;
   if (f.time !== "all" && timeBucket(d) !== f.time) return false;
   if (f.diff !== "all" && diffLevel(d) !== { easy: 1, medium: 2, hard: 3 }[f.diff]) return false;
   if (f.safeOnly && !isSafeForEveryone(d)) return false;
+  if (f.hideInactive && !d.is_active) return false;
   return true;
 }
 // Renders the collapsible "More filters" panel HTML. idPrefix keeps ids unique per surface.
@@ -622,6 +683,8 @@ function advFilterPanelHtml(idPrefix, f, open) {
       <div class="sect">${T("Difficulty", "Сложность")}</div>${row(DIFF_FILTERS, "diff", idPrefix+"Diff")}
       <div class="sect">${T("Dietary", "Диета")}</div>
       <div class="chips-wrap"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>
+      <div class="sect">${T("Availability", "Доступность")}</div>
+      <div class="chips-wrap"><div class="chip ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты") : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты")}</div></div>
     </div>`;
 }
 // Wires the panel built by advFilterPanelHtml. `panelState` is {open:bool}, mutated here so the
@@ -640,6 +703,18 @@ function wireAdvFilterPanel(root, idPrefix, f, panelState, onChange) {
   wireRow(idPrefix+"Diff", "diff");
   const safe = root.querySelector("#"+idPrefix+"Safe");
   safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
+  const activeOnly = root.querySelector("#"+idPrefix+"ActiveOnly");
+  activeOnly.onclick = () => {
+    f.hideInactive = !f.hideInactive;
+    activeOnly.classList.toggle("on", f.hideInactive);
+    // Unlike the other chips here, this one's label text (not just its "on" state)
+    // changes with the toggle, so update it explicitly rather than relying on onChange
+    // to re-render the panel.
+    activeOnly.innerHTML = f.hideInactive
+      ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты")
+      : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты");
+    onChange();
+  };
 }
 
 // ── shared state ──
@@ -965,6 +1040,12 @@ function renderSignInGate() {
     <input id="signinEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"
       style="width:100%;padding:14px;font-size:16px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
     <button class="btn btn-primary" id="signinGo" style="width:100%">Send magic link ✉️</button>
+    <div id="signinCodeBox" style="display:none">
+      <input id="signinCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="code from email"
+        style="width:100%;padding:14px;font-size:20px;letter-spacing:4px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
+      <button class="btn btn-primary" id="signinVerify" style="width:100%">Verify code</button>
+      <button class="btn btn-ghost" id="signinResend" style="width:100%">Resend</button>
+    </div>
     <div id="signinNote" style="color:#888;font-size:13px;line-height:1.5">
       We'll email you a one-tap link. No password.
     </div>
@@ -972,12 +1053,17 @@ function renderSignInGate() {
   const input = document.getElementById("signinEmail");
   const btn = document.getElementById("signinGo");
   const note = document.getElementById("signinNote");
-  const submit = async () => {
+  const codeBox = document.getElementById("signinCodeBox");
+  const codeInput = document.getElementById("signinCode");
+  const verifyBtn = document.getElementById("signinVerify");
+  const resendBtn = document.getElementById("signinResend");
+  let sentEmail = "";
+  const send = async () => {
     const email = (input.value || "").trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       note.textContent = "That doesn't look like a valid email.";
       note.style.color = "#ef4444";
-      return;
+      return false;
     }
     btn.disabled = true; btn.textContent = "Sending...";
     // The redirect URL preserves invite + family params so a fresh browser
@@ -993,15 +1079,49 @@ function renderSignInGate() {
       note.textContent = "Send failed: " + error.message;
       note.style.color = "#ef4444";
       btn.disabled = false; btn.textContent = "Send magic link ✉️";
-      return;
+      return false;
     }
-    note.innerHTML = `📬 Check <b>${email}</b><br>The link expires in 1 hour.`;
+    sentEmail = email;
+    // Some mail providers (Gmail, corporate link-scanners) prefetch links in
+    // emails to check them for phishing, which silently burns the one-time
+    // magic-link token before a human ever clicks it. The 6-digit code in the
+    // same email is a reliable fallback since there's no link for a scanner
+    // to consume.
+    note.innerHTML = `📬 Check <b>${email}</b><br>Tap the link, or type the code from the same email below.<br>Expires in 1 hour.`;
     note.style.color = "#059669";
     btn.style.display = "none";
     input.disabled = true;
+    codeBox.style.display = "block";
+    codeInput.focus();
+    return true;
   };
-  btn.onclick = submit;
-  input.onkeydown = e => { if (e.key === "Enter") submit(); };
+  const verify = async () => {
+    const code = (codeInput.value || "").trim();
+    if (!/^\d{6,10}$/.test(code)) {
+      note.textContent = "Enter the numeric code from the email.";
+      note.style.color = "#ef4444";
+      return;
+    }
+    verifyBtn.disabled = true; verifyBtn.textContent = "Verifying...";
+    const { error } = await sb.auth.verifyOtp({ email: sentEmail, token: code, type: "email" });
+    if (error) {
+      note.textContent = "Verify failed: " + error.message;
+      note.style.color = "#ef4444";
+      verifyBtn.disabled = false; verifyBtn.textContent = "Verify code";
+      return;
+    }
+    // onAuthStateChange picks up the new session and re-renders.
+  };
+  btn.onclick = send;
+  input.onkeydown = e => { if (e.key === "Enter") send(); };
+  verifyBtn.onclick = verify;
+  codeInput.onkeydown = e => { if (e.key === "Enter") verify(); };
+  resendBtn.onclick = async () => {
+    resendBtn.disabled = true;
+    const ok = await send();
+    resendBtn.disabled = false;
+    if (ok) { codeInput.value = ""; codeInput.focus(); }
+  };
   input.focus();
 }
 
@@ -1713,6 +1833,43 @@ function deck() {
     return matchesAdvFilters(d, deckAdv);
   });
 }
+// Per-card carousel position, keyed by dish id. Persists across re-renders
+// within the session (not reset on refreshDeck) so paging doesn't jump back
+// to slide 0 every time something else on the card changes.
+const photoIdx = {};
+// Builds the slide list for a card's photo area: approved photos first (or
+// the legacy single photo_url for recipes never re-photographed), then the
+// pending photo (if any, visible to everyone as a "pending" slide so the
+// family knows something is waiting), then one virtual "add a photo" slide
+// at the very end.
+function photoSlideHtml(d) {
+  const approved = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
+  const slides = approved.map(url => ({ url, pending: false }));
+  if (d.pending_photo && d.pending_photo.url) slides.push({ url: d.pending_photo.url, pending: true });
+  const total = slides.length + 1; // +1 for the trailing "add a photo" slide
+  let idx = photoIdx[d.id] || 0;
+  idx = Math.max(0, Math.min(idx, total - 1));
+  photoIdx[d.id] = idx;
+  const isAddSlide = idx === slides.length;
+  const slide = isAddSlide ? null : slides[idx];
+
+  const bgStyle = slide ? `background-image:url('${slide.url.replace(/'/g, "%27")}')` : `background:${d.g && d.g.startsWith("linear") ? d.g : "linear-gradient(135deg,#e5e7eb,#9ca3af)"}`;
+  const prevBtn = idx > 0 ? `<button class="pnav prev" data-pnav="prev" data-dish="${d.id}" aria-label="${T("Previous photo", "Предыдущее фото")}">‹</button>` : "";
+  const nextBtn = idx < total - 1 ? `<button class="pnav next" data-pnav="next" data-dish="${d.id}" aria-label="${T("Next photo", "Следующее фото")}">›</button>` : "";
+  const dots = total > 1 ? `<div class="pdots">${Array.from({ length: total }).map((_, i) => `<span class="${i === idx ? "on" : ""}"></span>`).join("")}</div>` : "";
+  const pendingBadge = slide?.pending
+    ? `<div class="photo-pending-badge">⏳ ${T("Pending approval", "Ждёт подтверждения")}</div>` : "";
+  const canModerate = slide?.pending && membership?.is_owner;
+  const adminActions = canModerate ? `<div class="photo-approve-row">
+      <button class="pbtn approve" data-papprove="${d.id}">✓ ${T("Approve", "Одобрить")}</button>
+      <button class="pbtn decline" data-pdecline="${d.id}">✗ ${T("Decline", "Отклонить")}</button>
+    </div>` : "";
+  const addSlideHtml = isAddSlide ? `<label class="add-photo-cta" data-addphoto="${d.id}">
+      <span class="ic">📷</span><span>${T("Add a photo", "Добавить фото")}</span>
+      <input type="file" accept="image/*" data-photofile="${d.id}" style="display:none">
+    </label>` : "";
+  return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${pendingBadge}${adminActions}${addSlideHtml}` };
+}
 function stackHtml(dk) {
   if (!dk.length) return `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
   let s = "";
@@ -1723,9 +1880,17 @@ function stackHtml(dk) {
     // AI pre-fill, so nudge the family to add ingredients rather than block anything.
     const thinBadge = d.card_state === "thin"
       ? `<div class="thin-badge">📝 ${T("Add ingredients", "Добавить ингредиенты")}</div>` : "";
+    // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
+    // without opening the detail view. Same is_active toggle as the About tab
+    // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
+    const quickHide = d.is_active
+      ? `<button class="qhide" data-qhide="${d.id}" title="${T("Hide from Spin", "Скрыть из подборки")}" aria-label="${T("Hide from Spin", "Скрыть из подборки")}">👁️</button>`
+      : `<button class="qhide off" data-qhide="${d.id}" title="${T("Bring back to Spin", "Вернуть в подборку")}" aria-label="${T("Bring back to Spin", "Вернуть в подборку")}">🙈</button>`;
+    const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="background:${d.g}">${thinBadge}${d.photo_url ? "" : d.em + `<small>${T("photo placeholder", "фото-заглушка")}</small>`}</div>
+      <div class="ph" style="${photo.bgStyle}">${thinBadge}${photo.inner}</div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+      ${quickHide}
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
   });
   return s;
@@ -1760,6 +1925,47 @@ function wireStack() {
   if (nope) nope.onclick = () => fly(-1);
   if (like) like.onclick = () => fly(1);
   if (add) add.onclick = openAdd;
+  const qhideBtn = topCard?.querySelector(".qhide");
+  if (qhideBtn) {
+    // Stop the tap/drag from reaching the swipe listeners below - this is a
+    // discrete action (hide/unhide), not a swipe or a "open detail" tap.
+    ["pointerdown", "pointerup", "pointermove", "click"].forEach(evt =>
+      qhideBtn.addEventListener(evt, e => e.stopPropagation()));
+    qhideBtn.addEventListener("click", async () => {
+      const id = qhideBtn.dataset.qhide;
+      const d = dish(id);
+      if (d) await toggleRecipeActive(d);
+    });
+  }
+  // Photo carousel nav, upload CTA, and admin approve/decline - all discrete
+  // taps on the top card's photo area, none of which should trigger the
+  // swipe/tap-to-open-detail gesture handlers below.
+  const stopBubble = el => ["pointerdown", "pointerup", "pointermove", "click"].forEach(evt =>
+    el.addEventListener(evt, e => e.stopPropagation()));
+  topCard?.querySelectorAll(".pnav").forEach(btn => {
+    stopBubble(btn);
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.dish;
+      photoIdx[id] = (photoIdx[id] || 0) + (btn.dataset.pnav === "next" ? 1 : -1);
+      refreshDeck();
+    });
+  });
+  const addPhotoLabel = topCard?.querySelector("[data-addphoto]");
+  if (addPhotoLabel) stopBubble(addPhotoLabel);
+  const photoFile = topCard?.querySelector("[data-photofile]");
+  if (photoFile) {
+    photoFile.addEventListener("click", e => e.stopPropagation());
+    photoFile.addEventListener("change", async () => {
+      const id = photoFile.dataset.photofile;
+      const file = photoFile.files && photoFile.files[0];
+      photoFile.value = "";
+      if (file) await uploadRecipePhoto(id, file);
+    });
+  }
+  const approveBtn = topCard?.querySelector("[data-papprove]");
+  if (approveBtn) { stopBubble(approveBtn); approveBtn.addEventListener("click", () => resolvePendingPhoto(approveBtn.dataset.papprove, true)); }
+  const declineBtn = topCard?.querySelector("[data-pdecline]");
+  if (declineBtn) { stopBubble(declineBtn); declineBtn.addEventListener("click", () => resolvePendingPhoto(declineBtn.dataset.pdecline, false)); }
   if (topCard) {
     let sx=0,dx=0,drag=false;
     topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
@@ -1887,6 +2093,17 @@ function detailView(d) {
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
         <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
+      </div>
+      <div class="plan-toggle">
+        <div class="ptxt">
+          <div class="ptitle">📅 ${T("Include in weekly menu planning", "Учитывать при планировании недели")}</div>
+          <div class="psub">${d.is_active
+            ? T("Can be picked by Spin, manual assignment, and the automatic AI weekly fill.", "Может быть выбрано Круткой, назначено вручную или автозаполнением ИИ.")
+            : T("Inactive - hidden from Spin, manual assignment, and AI weekly fill. Still here in your cookbook, and in Wish/Duel.", "Неактивно - скрыто из Крутки, ручного назначения и автозаполнения ИИ. Рецепт остаётся в кулинарной книге, а также в Желаниях и Дуэлях.")}</div>
+        </div>
+        <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
+      </div>
+      <div style="padding:0 16px">
         ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way).", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна).")}</div>` : ""}
         ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
         ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
@@ -1983,6 +2200,7 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
   wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
   wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
+  wrap.querySelector("#dtlActiveToggle")?.addEventListener("click", () => toggleRecipeActive(d));
 
   // Step text edits update the draft in place without a full re-render, so
   // the textarea keeps focus/cursor position while typing.
@@ -2060,6 +2278,65 @@ async function resolvePendingEdit(d, approve) {
   if (!ok) return;
   await loadCatalog();
   toast(approve ? T("Edit approved.", "Изменение принято.") : T("Edit declined - a new recipe was created.", "Изменение отклонено - создан новый рецепт."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+
+// Instant, no-approval toggle (unlike recipe_edit_*/pending_edit above) - this is a
+// household preference, not a fact about the recipe, so any family member can flip
+// it and see it take effect immediately. See 20260804_food_recipe_active_toggle.sql.
+async function toggleRecipeActive(d) {
+  if (detailSaving) return;
+  const goingActive = !d.is_active;
+  detailSaving = true; renderDetailOverlay();
+  const ok = await applyEvent("recipe_active_set", { recipe_id: d.id, is_active: goingActive });
+  detailSaving = false;
+  if (!ok) { renderDetailOverlay(); return; }
+  await loadCatalog();
+  toast(goingActive
+    ? T("Back in the mix - it can be picked for the weekly menu again.", "Снова участвует в планировании недели.")
+    : T("Marked inactive - hidden from weekly menu planning until switched back on.", "Помечено как неактивное - скрыто из планирования недели до включения обратно."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+
+// Uploads to the recipe-photos Storage bucket at <family_id>/<recipe_id>/<uuid>.<ext>
+// (RLS on storage.objects checks the first path segment against the caller's
+// family - 20260804020000 migration), then fires recipe_photo_added so
+// food.apply_event decides whether it lands live or waits for the family
+// admin (see the migration header for the exact rule).
+async function uploadRecipePhoto(dishId, file) {
+  const familyId = membership?.family_id;
+  if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return; }
+  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${familyId}/${dishId}/${crypto.randomUUID()}.${ext}`;
+  toast(T("Uploading photo...", "Загружаем фото..."));
+  const { error: upErr } = await sb.storage.from("recipe-photos").upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+  if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return; }
+  const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
+  const photoUrl = pub?.publicUrl;
+  if (!photoUrl) { toast(T("Upload failed - no URL returned.", "Ошибка загрузки - URL не получен.")); return; }
+  const ok = await applyEvent("recipe_photo_added", { recipe_id: dishId, photo_url: photoUrl });
+  if (!ok) return;
+  await loadCatalog();
+  const d = dish(dishId);
+  const wentLive = Boolean(d && d.photo_urls.includes(photoUrl));
+  photoIdx[dishId] = wentLive ? Math.max(0, d.photo_urls.length - 1) : 0;
+  toast(wentLive
+    ? T("Photo added!", "Фото добавлено!")
+    : T("Photo sent to the family admin for approval.", "Фото отправлено администратору на одобрение."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+async function resolvePendingPhoto(dishId, approve) {
+  const ok = await applyEvent(approve ? "recipe_photo_approved" : "recipe_photo_declined", { recipe_id: dishId });
+  if (!ok) return;
+  await loadCatalog();
+  photoIdx[dishId] = 0;
+  toast(approve ? T("Photo approved.", "Фото одобрено.") : T("Photo declined.", "Фото отклонено."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
@@ -2274,7 +2551,7 @@ function openAssign(dishId) {
 function openEdit(day, mealKey) {
   const v = modal(`<h3>✏️ ${dayN(day)} · ${mealN(MEALS.find(m=>m.k===mealKey))}</h3>
     <div class="sect">${T("Suggest a different dish", "Предложи другое блюдо")}</div>
-    <div class="chips-wrap">${DISHES.map(d=>`<div class="chip" data-s="${d.id}">${d.em} ${dName(d)}</div>`).join("")}</div>
+    <div class="chips-wrap">${DISHES.filter(d=>d.is_active).map(d=>`<div class="chip" data-s="${d.id}">${d.em} ${dName(d)}</div>`).join("")}</div>
     <button class="btn btn-ghost" id="clear" style="width:100%;margin-top:14px">🗑 ${T("Clear this slot", "Очистить слот")}</button>`);
   v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:(FAMILY.find(m=>m.cook)?.id||me)); });
   v.querySelector("#clear").onclick = () => { closeModal(); clearSlot(day,mealKey); };
