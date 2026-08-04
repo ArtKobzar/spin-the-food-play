@@ -335,6 +335,21 @@ function needsOnboardLangGate(memberId) {
   return memberId && !stfGet(onboardLangKey(memberId));
 }
 
+// ── unit system: separate preference from UI language (SPEC_RECIPE_I18N.md
+// decision #10) - defaults per-language (en -> imperial, ru -> metric) but
+// independently overridable via the Settings screen's "Units" section
+// (saveUnitsChoice). Client-local only, same storage pattern as stf_lang -
+// no server column, nothing to sync across devices for v1.
+function unitsSystem() {
+  const stored = stfGet("stf_units");
+  if (stored === "metric" || stored === "imperial") return stored;
+  return lang === "ru" ? "metric" : "imperial";
+}
+function saveUnitsChoice(sys) {
+  if (sys !== "metric" && sys !== "imperial") return;
+  stfSet("stf_units", sys);
+}
+
 // Safari iOS often drops addEventListener on buttons replaced by innerHTML.
 // Expose a global handler for inline onclick (most reliable), plus a module fn.
 // This is the one and only language gate: device-level, shown before sign-in.
@@ -392,6 +407,76 @@ const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵
 
 function avatarEmoji(role) { return AVATAR_EMOJI[role] || "🧑"; }
 
+// ── food.units: fixed vocabulary, loaded once (SPEC_RECIPE_I18N.md
+// decision #8/#14 - not user-extensible, so no reason to reload per
+// recipe). Populates UNITS_BY_SLUG for convertQty() below.
+let UNITS = [];
+let UNITS_BY_SLUG = {};
+let unitsLoaded = false;
+async function loadUnits() {
+  if (unitsLoaded) return;
+  const { data, error } = await sb.rpc("spin_food_units_list");
+  if (error) { console.error("[stf-data] units:", error); return; }
+  UNITS = data || [];
+  UNITS_BY_SLUG = {};
+  UNITS.forEach(u => { UNITS_BY_SLUG[u.slug] = u; });
+  unitsLoaded = true;
+}
+const METRIC_UNIT_SLUGS = new Set(["gram", "kilogram", "milliliter", "liter", "celsius"]);
+
+function roundToIncrement(val, inc) {
+  if (!inc) return val;
+  return Math.round(val / inc) * inc;
+}
+
+// Picks the most cook-friendly target unit for a base-unit value (grams or
+// milliliters) in the wanted system, per SPEC_RECIPE_I18N.md decision #13 -
+// e.g. 5ml reads better as "1 tsp" than "0.02 cups".
+function bestTargetSlug(kind, wantMetric, baseVal) {
+  if (kind === "mass") return wantMetric
+    ? (baseVal >= 1000 ? "kilogram" : "gram")
+    : (baseVal >= 453.592 ? "pound" : "ounce");
+  if (kind === "volume") {
+    if (wantMetric) return baseVal >= 1000 ? "liter" : "milliliter";
+    if (baseVal < 14.7868) return "teaspoon";
+    if (baseVal < 236.588) return "tablespoon";
+    return "cup";
+  }
+  return null;
+}
+
+// Converts ing.qty/ing.unit_slug into the viewer's preferred system
+// (SPEC_RECIPE_I18N.md decision #9/#11/#13). Same-dimension only - mass<->volume
+// is never attempted (no ingredient density data). Returns null (show the
+// original text unconverted) when the unit is unrecognized, already in the
+// wanted system, a count unit (no equivalent), or a conversion factor is
+// missing - "accept as-is" fallback, same convention as unmatched ingredients.
+function convertQty(qty, unitSlug) {
+  const num = Number(qty);
+  const u = unitSlug ? UNITS_BY_SLUG[unitSlug] : null;
+  if (!u || !Number.isFinite(num)) return null;
+  const wantMetric = unitsSystem() === "metric";
+  const isMetricUnit = METRIC_UNIT_SLUGS.has(u.slug);
+  if (wantMetric === isMetricUnit) return null; // already in the desired system
+  if (u.kind === "count") return null; // passthrough, no cross-system equivalent
+
+  if (u.kind === "temperature") {
+    const outSlug = wantMetric ? "celsius" : "fahrenheit";
+    const target = UNITS_BY_SLUG[outSlug];
+    if (!target) return null;
+    const outVal = wantMetric ? (num - 32) * 5 / 9 : num * 9 / 5 + 32;
+    return { qty: roundToIncrement(outVal, target.round_increment), unit: target };
+  }
+
+  if (u.to_base_factor == null) return null;
+  const baseVal = num * u.to_base_factor;
+  const targetSlug = bestTargetSlug(u.kind, wantMetric, baseVal);
+  const target = targetSlug ? UNITS_BY_SLUG[targetSlug] : null;
+  if (!target || target.to_base_factor == null) return null;
+  const outVal = baseVal / target.to_base_factor;
+  return { qty: roundToIncrement(outVal, target.round_increment), unit: target };
+}
+
 function recipeToDish(r) {
   const diff = r.difficulty || 2;
   const dots = "●".repeat(Math.min(3, Math.max(1, diff))).padEnd(3, "○");
@@ -399,8 +484,11 @@ function recipeToDish(r) {
   return {
     id: r.id,
     em: r.photo_url ? "🖼" : "🍽",
-    en: r.title,
-    ru: r.title,
+    // Translated title (SPEC_RECIPE_I18N.md) - falls back to the legacy
+    // single-language title while a recipe hasn't been through the
+    // translate pipeline yet (title_en/title_ru still null).
+    en: r.title_en || r.title,
+    ru: r.title_ru || r.title,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
     t: r.cook_time_minutes || r.prep_time_minutes || 45,
     d: dots,
@@ -788,7 +876,7 @@ async function load() {
   loadError = null;
   try {
     await withTimeout((async () => {
-      await loadCatalog();
+      await Promise.all([loadCatalog(), loadUnits()]);
       const snap = await ensureActivePlan();
       game = snapshotToGame(snap);
       if (!game.profiles) game.profiles = {};
@@ -1263,6 +1351,12 @@ function openSettings() {
       <div class="chip ${lang === "en" ? "on" : ""}" data-sl="en">🇬🇧 English</div>
       <div class="chip ${lang === "ru" ? "on" : ""}" data-sl="ru">🇷🇺 Русский</div>
     </div>
+    <div class="sect">${T("Units", "Единицы измерения")}</div>
+    <div style="font-size:12px;color:#999;margin-bottom:6px">${T("Independent of language - ingredient quantities show in this system wherever a conversion is available.", "Не зависит от языка - количество ингредиентов показывается в этой системе, если доступно преобразование.")}</div>
+    <div class="chips-wrap">
+      <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-su="metric">📏 ${T("Metric (g, ml, °C)", "Метрическая (г, мл, °C)")}</div>
+      <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-su="imperial">📐 ${T("Imperial (oz, cups, °F)", "Имперская (унции, чашки, °F)")}</div>
+    </div>
     <div class="sect">${T("Family", "Семья")}</div>
     <div style="font-size:13px;color:#666;margin-bottom:10px">${membership?.family_name ? `<b>${membership.family_name}</b> · ` : ""}${T("shared code", "общий код")}: <b>${FAMILY_KEY}</b></div>
     ${isOwner ? `
@@ -1274,6 +1368,10 @@ function openSettings() {
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
     saveLangChoice(c.dataset.sl, { forOnboard: true });
     if (me && game?.profiles?.[me]) game.profiles[me].lang = lang;
+    closeModal(); render();
+  });
+  v.querySelectorAll("[data-su]").forEach(c => c.onclick = () => {
+    saveUnitsChoice(c.dataset.su);
     closeModal(); render();
   });
   const inviteBtn = v.querySelector("#inviteBtn");
@@ -2022,28 +2120,56 @@ function techLabel(v) {
     raw: T("Raw / no cook", "Сырое"),
   })[v] || v;
 }
+// Formats a plain number for display, stripping trailing zeros (matches
+// the previous raw-qty formatting convention).
+function fmtQty(n) {
+  return String(Math.round(n * 100) / 100).replace(/\.0+$/, "");
+}
 function ingredientLine(ing) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
   const name = (lang === "ru" && ing.name_ru) ? ing.name_ru : (ing.name_en || ing.raw || "");
-  const qty = ing.qty ? String(ing.qty).replace(/\.0+$/, "") : "";
-  const unit = ing.unit || "";
   const note = ing.note ? ` (${ing.note})` : "";
+  // Recipe Unit Conversion (SPEC_RECIPE_I18N.md decision #9/#11/#13):
+  // show the viewer's preferred system when a conversion is available;
+  // otherwise fall back to the recipe's original qty/unit unconverted.
+  const converted = convertQty(ing.qty, ing.unit_slug);
+  const qty = converted ? fmtQty(converted.qty) : (ing.qty ? String(ing.qty).replace(/\.0+$/, "") : "");
+  const unit = converted ? (lang === "ru" ? converted.unit.name_ru : converted.unit.name_en) : (ing.unit || "");
   const line = [qty, unit, name].filter(Boolean).join(" ");
   return (line || ing.raw || "") + note;
 }
+// Language-matched instruction step text (SPEC_RECIPE_I18N.md) - reads
+// text_en/text_ru, falling back to the legacy single `text` key for any
+// recipe that predates the translation migration and hasn't been
+// re-translated yet.
+function stepLangText(s, l) {
+  if (typeof s === "string") return s;
+  if (!s) return "";
+  const key = l === "ru" ? "text_ru" : "text_en";
+  return s[key] || s.text || "";
+}
 function instructionsText(d) {
   if (!d.instructions.length) return "";
-  return d.instructions.map(s => (typeof s === "string" ? s : (s && s.text) || "")).filter(Boolean).join("\n\n");
+  return d.instructions.map(s => stepLangText(s, lang)).filter(Boolean).join("\n\n");
 }
-// Normalizes any instructions shape (old single-blob [{text}] or new
-// step-array [{step,text,photo_url}]) into ordered {text, photo_url} pairs
-// for editing. Renumbering happens at save time, not here.
+// Normalizes any instructions shape (old single-blob [{text}], legacy
+// step-array [{step,text,photo_url}], or the current bilingual
+// [{step,text_en,text_ru,photo_url}]) into ordered step objects for
+// display/editing. `text` is the current-UI-language display copy;
+// text_en/text_ru are both preserved so an edit to one language doesn't
+// clobber the other's translation (see saveDetailEdit). Renumbering
+// happens at save time, not here.
 function instructionSteps(d) {
   if (!Array.isArray(d.instructions) || !d.instructions.length) return [];
   return d.instructions.map(s => typeof s === "string"
-    ? { text: s, photo_url: null }
-    : { text: (s && s.text) || "", photo_url: (s && s.photo_url) || null }
+    ? { text: s, text_en: s, text_ru: null, photo_url: null }
+    : {
+        text: stepLangText(s, lang),
+        text_en: (s && s.text_en) ?? null,
+        text_ru: (s && s.text_ru) ?? null,
+        photo_url: (s && s.photo_url) || null,
+      }
   ).filter(s => s.text);
 }
 
@@ -2203,14 +2329,30 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlActiveToggle")?.addEventListener("click", () => toggleRecipeActive(d));
 
   // Step text edits update the draft in place without a full re-render, so
-  // the textarea keeps focus/cursor position while typing.
+  // the textarea keeps focus/cursor position while typing. Only the
+  // CURRENT UI language's side is edited here - text_en/text_ru for the
+  // other language (already translated) is left untouched, so editing a
+  // step in English doesn't wipe out its existing Russian translation
+  // (SPEC_RECIPE_I18N.md - the pre-existing bug this replaces would have
+  // silently dropped the other language on every edit).
   wrap.querySelectorAll("[data-stepinput]").forEach(ta => ta.addEventListener("input", (e) => {
     const idx = Number(ta.dataset.stepinput);
-    if (detailDraft?.instructions?.[idx]) detailDraft.instructions[idx].text = e.target.value;
+    const step = detailDraft?.instructions?.[idx];
+    if (!step) return;
+    step.text = e.target.value;
+    step[lang === "ru" ? "text_ru" : "text_en"] = e.target.value;
   }));
   wrap.querySelector("#dtlStepAdd")?.addEventListener("click", () => {
     if (!detailDraft) return;
-    detailDraft.instructions.push({ text: "", photo_url: null });
+    // A brand-new step is authored in the current UI language only - the
+    // other side stays null until the translate pipeline (or a manual
+    // edit after switching language) fills it in.
+    detailDraft.instructions.push({
+      text: "",
+      text_en: lang === "ru" ? null : "",
+      text_ru: lang === "ru" ? "" : null,
+      photo_url: null,
+    });
     renderDetailOverlay();
   });
   wrap.querySelectorAll("[data-stepup]").forEach(b => b.addEventListener("click", () => {
@@ -2249,11 +2391,20 @@ async function saveDetailEdit(d) {
   // dish_role changes must always carry meal_types alongside (server-enforced pairing).
   if ("dish_role" in proposed && !("meal_types" in proposed)) proposed.meal_types = draftMeals;
 
+  // Bilingual step diffing (SPEC_RECIPE_I18N.md): both text_en and text_ru
+  // travel together so an edit in one language never overwrites the
+  // other's already-translated text. Built from d.instructions directly
+  // (not the language-collapsed instructionSteps() view) so the diff -
+  // and what actually gets sent - reflects both languages accurately.
   const draftSteps = detailDraft.instructions
-    .map(s => ({ text: (s.text || "").trim(), photo_url: s.photo_url || null }))
-    .filter(s => s.text)
-    .map((s, i) => ({ step: i + 1, text: s.text, photo_url: s.photo_url }));
-  const currentSteps = instructionSteps(d).map((s, i) => ({ step: i + 1, text: s.text, photo_url: s.photo_url || null }));
+    .filter(s => (s.text || "").trim())
+    .map((s, i) => ({ step: i + 1, text_en: s.text_en ?? null, text_ru: s.text_ru ?? null, photo_url: s.photo_url || null }));
+  const currentSteps = (Array.isArray(d.instructions) ? d.instructions : []).map((s, i) => ({
+    step: i + 1,
+    text_en: (typeof s === "string" ? null : s?.text_en) ?? null,
+    text_ru: (typeof s === "string" ? null : s?.text_ru) ?? null,
+    photo_url: (typeof s === "string" ? null : s?.photo_url) || null,
+  }));
   if (JSON.stringify(draftSteps) !== JSON.stringify(currentSteps)) proposed.instructions = draftSteps;
 
   if (!Object.keys(proposed).length) { detailEditMode = false; detailDraft = null; renderDetailOverlay(); return; }
