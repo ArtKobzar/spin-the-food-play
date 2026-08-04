@@ -492,7 +492,10 @@ function recipeToDish(r) {
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
     t: r.cook_time_minutes || r.prep_time_minutes || 45,
     d: dots,
-    p: r.protein_type || "meat",
+    // p/protein_type (legacy scalar) intentionally NOT read here anymore - nothing in the
+    // ingest/classification pipeline has written it since the pre-pivot cutover, so it was
+    // silently defaulting every untagged recipe to "meat". protein_groups[] below is the real,
+    // ingredient-derived Tier 1 field (spinner filtering UX redesign, 2026-08-04).
     c: r.cuisine || "family",
     meals,
     soup: r.course_category ? r.course_category === "soup" : (meals.includes("lunch") && /soup|борщ|суп|sol/i.test(r.title || "")),
@@ -507,7 +510,13 @@ function recipeToDish(r) {
     dish_role: r.dish_role || null,
     course_category: r.course_category || null,
     techniques: r.techniques || [],
-    diet_suitability: r.diet_suitability || [],
+    // Real, ingredient-derived Tier 1 filter fields (SPEC_INGREDIENT_CLASSIFICATION.md) -
+    // only meaningful for thick cards; empty array on a thick card means "fully plant-based"
+    // (no protein ingredient matched), empty on a thin card means "not classified at all" -
+    // dishProteinGroups()/matchesAdvFilters() below tell the two apart via card_state.
+    protein_groups: r.protein_groups || [],
+    diet_compatible_with: r.diet_compatible_with || [],
+    required_appliances: r.required_appliances || [],
     ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
     ingredients_raw: r.ingredients_raw || "",
     instructions: Array.isArray(r.instructions) ? r.instructions : [],
@@ -727,13 +736,54 @@ function specials(d) {
   return s;
 }
 
-// ── recipe filters (essential set used by leading recipe apps: meal type,
-//    dietary/allergy match, time, difficulty — layered on top of protein/cuisine) ──
+// ── recipe filters (spinner filtering UX redesign, 2026-08-04 - see ONTOLOGY.md /
+//    SPEC_INGREDIENT_CLASSIFICATION.md for the underlying vocab) ──
+// Top row 1: meal type (single-select - a breakfast dish can't fill a dinner slot,
+// the one hard structural filter). Top row 2: protein/main-ingredient group
+// (multi-select - the #1 weekly-variety lever, "we had chicken twice already").
+// Both promoted out of the sheet below because they're the two questions a home cook
+// actually starts from; everything else lives in the "Filters" sheet further down.
 const MEAL_FILTERS = [["all","Any meal","Любой приём"],["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🥪 Lunch","🥪 Обед"],["dinner","🍲 Dinner","🍲 Ужин"]];
+// protein_groups[] (food.family_cookbook_recipes, Tier 1 ingredient rollup) is the
+// real, ingredient-derived field - replaces the legacy protein_type scalar that
+// nothing has written since the pre-pivot cutover. "untagged" is a UI-only bucket for
+// thin/unclassified cards, never a stored value - see dishProteinGroups() below.
+const PROTEIN_GROUP_META = {
+  meat:     { ic: "🥩", en: "Meat",          ru: "Мясо" },
+  fish:     { ic: "🐟", en: "Fish",          ru: "Рыба" },
+  seafood:  { ic: "🦐", en: "Seafood",       ru: "Морепродукты" },
+  egg:      { ic: "🥚", en: "Egg",           ru: "Яйца" },
+  dairy:    { ic: "🧀", en: "Dairy",         ru: "Молочное" },
+  plant:    { ic: "🥗", en: "Plant-based",   ru: "Растительное" },
+  untagged: { ic: "❔", en: "Not yet tagged", ru: "Без данных" },
+};
+// A thick card's empty protein_groups[] means "fully plant-based" (every ingredient
+// resolved, none carried a protein class) - a thin/unclassified card's empty array
+// means "we don't know," a different fact that must not be shown as "plant-based".
+function dishProteinGroups(d) {
+  if (d.card_state !== "thick") return ["untagged"];
+  return d.protein_groups.length ? d.protein_groups : ["plant"];
+}
+function availableProteinGroups() {
+  const present = new Set(DISHES.flatMap(dishProteinGroups));
+  return Object.keys(PROTEIN_GROUP_META).filter(k => present.has(k));
+}
 const TIME_FILTERS = [["all","Any time","Любое время"],["quick","⚡ <20 min","⚡ <20 мин"],["medium","⏱ 20-45 min","⏱ 20-45 мин"],["long","🕒 45+ min","🕒 45+ мин"]];
 const DIFF_FILTERS = [["all","Any difficulty","Любая сложность"],["easy","● Easy","● Легко"],["medium","●● Medium","●● Средне"],["hard","●●● Hard","●●● Сложно"]];
 function diffLevel(d) { return (d.d.match(/●/g) || []).length; }
 function timeBucket(d) { return d.t <= 20 ? "quick" : d.t <= 45 ? "medium" : "long"; }
+// diet_compatible_with[] (Tier 1, schema.org RestrictedDiet-grounded) - which diets a
+// recipe suits. Only the family-relevant subset below is surfaced as chips; the field
+// itself carries the full schema.org list (keto/paleo/omnivore included too).
+const DIET_META = {
+  vegetarian:  { en: "Vegetarian",  ru: "Вегетарианское" },
+  vegan:       { en: "Vegan",       ru: "Веганское" },
+  pescatarian: { en: "Pescatarian", ru: "Пескетарианское" },
+  gluten_free: { en: "Gluten-free", ru: "Без глютена" },
+  dairy_free:  { en: "Dairy-free",  ru: "Без молочного" },
+  halal:       { en: "Halal",       ru: "Халяль" },
+  kosher:      { en: "Kosher",      ru: "Кошер" },
+};
 // A dish is "safe for everyone" when no registered member's allergies overlap its allergen tags.
 // Both sides now speak the same vocabulary: food.allergen_classes (EU FIC 14, see ALLERGEN_META).
 function isSafeForEveryone(d) {
@@ -750,28 +800,82 @@ function isSafeForEveryone(d) {
 // until someone flips it back - this filter is the "Show active / Hide inactive"
 // escape hatch to peek at (and act on) inactive recipes without permanently changing
 // what Spin/Wish default to showing.
-function newAdvFilters() { return { meal: "all", time: "all", diff: "all", safeOnly: false, hideInactive: true }; }
+function newAdvFilters() {
+  return {
+    meal: "all", proteins: new Set(), cuisines: new Set(), diets: new Set(),
+    time: "all", diff: "all", thickOnly: false, safeOnly: false, hideInactive: true,
+  };
+}
 function matchesAdvFilters(d, f) {
   if (f.meal !== "all" && !d.meals.includes(f.meal)) return false;
+  if (f.proteins.size && !dishProteinGroups(d).some(g => f.proteins.has(g))) return false;
+  if (f.cuisines.size && !f.cuisines.has(d.c)) return false;
   if (f.time !== "all" && timeBucket(d) !== f.time) return false;
   if (f.diff !== "all" && diffLevel(d) !== { easy: 1, medium: 2, hard: 3 }[f.diff]) return false;
+  // "Has full ingredient list" - the grocery-list-readiness gate (card_state, ONTOLOGY.md #3).
+  if (f.thickOnly && d.card_state !== "thick") return false;
+  // AND semantics: a recipe must satisfy every diet selected, matching what diet_compatible_with
+  // actually means (a recipe is vegan-suitable AND gluten-free-suitable, not either/or).
+  if (f.diets.size && ![...f.diets].every(k => d.diet_compatible_with.includes(k))) return false;
   if (f.safeOnly && !isSafeForEveryone(d)) return false;
   if (f.hideInactive && !d.is_active) return false;
   return true;
 }
-// Renders the collapsible "More filters" panel HTML. idPrefix keeps ids unique per surface.
-function advFilterPanelHtml(idPrefix, f, open) {
-  const row = (list, key, id) => `<div class="chips-wrap" id="${id}">${list.map(([k,l,lru]) =>
-    `<div class="chip ${f[key]===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>`;
+// Persistent top row (meal + protein + safety toggle) shared by Spin and the Wish dish
+// picker. idPrefix keeps ids unique per surface, matching the sheet helpers below.
+function topFilterRowHtml(idPrefix, f) {
+  const meals = MEAL_FILTERS.map(([k,l,lru]) => `<div class="chip ${f.meal===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("");
+  const proteins = availableProteinGroups().map(k => {
+    const m = PROTEIN_GROUP_META[k];
+    return `<div class="chip ${f.proteins.has(k)?"on":""}" data-k="${k}">${m.ic} ${T(m.en, m.ru)}</div>`;
+  }).join("");
   return `
-    <button class="mini-btn" id="${idPrefix}Toggle">⚙️ ${T("More filters", "Больше фильтров")}</button>
+    <div class="filter-row" id="${idPrefix}Meal">${meals}</div>
+    <div class="filter-row" id="${idPrefix}Protein">${proteins}</div>
+    <div class="chips-wrap" style="margin:0 20px 8px" id="${idPrefix}SafeWrap"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>`;
+}
+// Wires the row built by topFilterRowHtml. onChange runs after any tap.
+function wireTopFilterRow(root, idPrefix, f, onChange) {
+  root.querySelectorAll("#"+idPrefix+"Meal .chip").forEach(c => c.onclick = () => {
+    f.meal = c.dataset.k;
+    root.querySelectorAll("#"+idPrefix+"Meal .chip").forEach(x => x.classList.toggle("on", x.dataset.k === f.meal));
+    onChange();
+  });
+  root.querySelectorAll("#"+idPrefix+"Protein .chip").forEach(c => c.onclick = () => {
+    const k = c.dataset.k;
+    if (f.proteins.has(k)) f.proteins.delete(k); else f.proteins.add(k);
+    c.classList.toggle("on", f.proteins.has(k));
+    onChange();
+  });
+  const safe = root.querySelector("#"+idPrefix+"Safe");
+  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
+}
+// Renders the collapsible "Filters" sheet: cuisine, then fit-my-week (time/difficulty/
+// ingredient-list completeness), then dietary needs, then library visibility - roughly
+// the order a home cook reaches for them once meal/protein/safety (top row) are set.
+// idPrefix keeps ids unique per surface.
+function advFilterPanelHtml(idPrefix, f, open) {
+  const singleRow = (list, key, id) => `<div class="chips-wrap" id="${id}">${list.map(([k,l,lru]) =>
+    `<div class="chip ${f[key]===k?"on":""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>`;
+  const cuisineKeys = availableCuisines();
+  if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
+  const cuisineChips = cuisineKeys.map(c => {
+    const label = c === "family" ? T("Not yet tagged", "Без кухни") : cuisineLabel(c);
+    return `<div class="chip ${f.cuisines.has(c)?"on":""}" data-k="${c}">${label}</div>`;
+  }).join("");
+  const dietChips = Object.entries(DIET_META).map(([k,m]) =>
+    `<div class="chip ${f.diets.has(k)?"on":""}" data-k="${k}">${T(m.en, m.ru)}</div>`).join("");
+  return `
+    <button class="mini-btn" id="${idPrefix}Toggle">⚙️ ${T("Filters", "Фильтры")}</button>
     <div id="${idPrefix}Panel" style="display:${open ? "block" : "none"}">
-      <div class="sect">${T("Meal", "Приём пищи")}</div>${row(MEAL_FILTERS, "meal", idPrefix+"Meal")}
-      <div class="sect">${T("Time", "Время")}</div>${row(TIME_FILTERS, "time", idPrefix+"Time")}
-      <div class="sect">${T("Difficulty", "Сложность")}</div>${row(DIFF_FILTERS, "diff", idPrefix+"Diff")}
-      <div class="sect">${T("Dietary", "Диета")}</div>
-      <div class="chips-wrap"><div class="chip ${f.safeOnly?"on":""}" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div></div>
-      <div class="sect">${T("Availability", "Доступность")}</div>
+      <div class="sect">${T("Cuisine", "Кухня")}</div><div class="chips-wrap" id="${idPrefix}Cuisine">${cuisineChips}</div>
+      <div class="sect">${T("Fits my week", "Подходит на этой неделе")}</div>
+      ${singleRow(TIME_FILTERS, "time", idPrefix+"Time")}
+      ${singleRow(DIFF_FILTERS, "diff", idPrefix+"Diff")}
+      <div class="chips-wrap"><div class="chip ${f.thickOnly?"on":""}" id="${idPrefix}Thick">🧾 ${T("Has full ingredient list", "Есть список ингредиентов")}</div></div>
+      <div class="sect">${T("Dietary needs", "Диетические потребности")}</div>
+      <div class="chips-wrap" id="${idPrefix}Diet">${dietChips}</div>
+      <div class="sect">${T("Library", "Библиотека")}</div>
       <div class="chips-wrap"><div class="chip ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + T("Hide inactive recipes", "Скрыть неактивные рецепты") : "👁 " + T("Showing inactive recipes too", "Показаны и неактивные рецепты")}</div></div>
     </div>`;
 }
@@ -781,16 +885,23 @@ function wireAdvFilterPanel(root, idPrefix, f, panelState, onChange) {
   const toggle = root.querySelector("#"+idPrefix+"Toggle");
   const panel = root.querySelector("#"+idPrefix+"Panel");
   toggle.onclick = () => { panelState.open = !panelState.open; panel.style.display = panelState.open ? "block" : "none"; };
-  const wireRow = (id, key) => root.querySelectorAll("#"+id+" .chip").forEach(c => c.onclick = () => {
+  const wireSingleRow = (id, key) => root.querySelectorAll("#"+id+" .chip").forEach(c => c.onclick = () => {
     f[key] = c.dataset.k;
     root.querySelectorAll("#"+id+" .chip").forEach(x => x.classList.toggle("on", x.dataset.k === f[key]));
     onChange();
   });
-  wireRow(idPrefix+"Meal", "meal");
-  wireRow(idPrefix+"Time", "time");
-  wireRow(idPrefix+"Diff", "diff");
-  const safe = root.querySelector("#"+idPrefix+"Safe");
-  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
+  const wireMultiRow = (id, key) => root.querySelectorAll("#"+id+" .chip").forEach(c => c.onclick = () => {
+    const k = c.dataset.k;
+    if (f[key].has(k)) f[key].delete(k); else f[key].add(k);
+    c.classList.toggle("on", f[key].has(k));
+    onChange();
+  });
+  wireMultiRow(idPrefix+"Cuisine", "cuisines");
+  wireSingleRow(idPrefix+"Time", "time");
+  wireSingleRow(idPrefix+"Diff", "diff");
+  const thick = root.querySelector("#"+idPrefix+"Thick");
+  thick.onclick = () => { f.thickOnly = !f.thickOnly; thick.classList.toggle("on", f.thickOnly); onChange(); };
+  wireMultiRow(idPrefix+"Diet", "diets");
   const activeOnly = root.querySelector("#"+idPrefix+"ActiveOnly");
   activeOnly.onclick = () => {
     f.hideInactive = !f.hideInactive;
@@ -1894,30 +2005,15 @@ function renderMenu() {
   return h;
 }
 
-let deckFilter = "all";
 let deckSearch = "";
 let deckAdv = newAdvFilters();
 let deckPanel = { open: false };
-// protein_type is the DB's closed vocab (food.recipes.protein_type check constraint:
-// meat/fish/eggs/plant/none). Cuisine is free text. Both are derived from whatever the
-// family's cookbook actually contains, so the filter row never drifts from the ontology.
-const PROTEIN_META = {
-  meat:  { ic: "🥩", en: "Meat",  ru: "Мясо" },
-  fish:  { ic: "🐟", en: "Fish",  ru: "Рыба" },
-  eggs:  { ic: "🥚", en: "Eggs",  ru: "Яйца" },
-  plant: { ic: "🥗", en: "Plant", ru: "Растительное" },
-  none:  { ic: "🍰", en: "Other", ru: "Другое" },
-};
+// Cuisine is free text (an LLM-classified slug from the dynamic food.cuisines list, thin/
+// unclassified cards fall back to the "family" sentinel) - derived from whatever the
+// family's cookbook actually contains, so the filter chip list never drifts from the ontology.
 function cuisineLabel(c) { return c.replace(/\b\w/g, ch => ch.toUpperCase()); }
 function availableCuisines() {
   return [...new Set(DISHES.map(d => d.c).filter(c => c && c !== "family"))].sort();
-}
-function currentFilters() {
-  const proteins = Object.keys(PROTEIN_META)
-    .filter(k => DISHES.some(d => d.p === k))
-    .map(k => [k, `${PROTEIN_META[k].ic} ${PROTEIN_META[k].en}`, `${PROTEIN_META[k].ic} ${PROTEIN_META[k].ru}`]);
-  const cuisines = availableCuisines().map(c => [c, cuisineLabel(c), cuisineLabel(c)]);
-  return [["all", "All", "Все"], ...proteins, ...cuisines];
 }
 let deckOrder = DISHES.map(d => d.id);
 function deck() {
@@ -1926,7 +2022,6 @@ function deck() {
     // Components (sauces, batters, marinades) aren't standalone meals - excluded
     // from the Spin deck per issue #12. They still live in the family cookbook.
     if (d.dish_role === "component") return false;
-    if (deckFilter !== "all" && d.p !== deckFilter && d.c !== deckFilter) return false;
     if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
     return matchesAdvFilters(d, deckAdv);
   });
@@ -1996,7 +2091,7 @@ function stackHtml(dk) {
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
     <input id="deckSearch" style="width:calc(100% - 40px);margin:0 20px 8px;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
-    <div class="filter-row">${currentFilters().map(([k,l,lru]) => `<div class="chip ${deckFilter===k?"on":""}" data-f="${k}">${T(l, lru)}</div>`).join("")}</div>
+    ${topFilterRowHtml("deckAdv", deckAdv)}
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div class="stack" id="stack">${stackHtml(deck())}</div>
     <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
@@ -2242,7 +2337,7 @@ function detailView(d) {
         ${chipRow(T("Dish role", "Роль блюда"), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
         ${chipRow(T("Course category", "Категория подачи"), COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => courseVal === v, "course_category")}
         ${chipRow(T("Techniques", "Техники"), TECHNIQUES.map(t => [t, techLabel(t)]), v => techVal.has(v), "techniques")}
-        ${d.diet_suitability.length ? `<div class="sect">${T("Diet compatible", "Подходит для диеты")}</div><div class="chips-wrap">${d.diet_suitability.map(v => `<div class="chip on">${v}</div>`).join("")}</div>` : ""}
+        ${d.diet_compatible_with.length ? `<div class="sect">${T("Diet compatible", "Подходит для диеты")}</div><div class="chips-wrap">${d.diet_compatible_with.map(v => `<div class="chip on">${DIET_META[v] ? T(DIET_META[v].en, DIET_META[v].ru) : v}</div>`).join("")}</div>` : ""}
         ${d.allergens.length ? `<div class="sect">${T("Allergens", "Аллергены")}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
       </div>`;
   } else {
@@ -2587,11 +2682,7 @@ function wire() {
   // spin
   const deckSearchEl = document.getElementById("deckSearch");
   if (deckSearchEl) deckSearchEl.addEventListener("input", e => { deckSearch = e.target.value; refreshDeck(); });
-  document.querySelectorAll("[data-f]").forEach(c => c.onclick = () => {
-    deckFilter = c.dataset.f;
-    document.querySelectorAll("[data-f]").forEach(x => x.classList.toggle("on", x.dataset.f === deckFilter));
-    refreshDeck();
-  });
+  if (document.getElementById("deckAdvMeal")) wireTopFilterRow(app, "deckAdv", deckAdv, refreshDeck);
   if (document.getElementById("deckAdvToggle")) wireAdvFilterPanel(app, "deckAdv", deckAdv, deckPanel, refreshDeck);
   wireStack();
 
@@ -2757,13 +2848,13 @@ function openWish(presetDay) {
 }
 function wishStep2(kind, presetDay) {
   let selDish=null, selCui=null, selCook="any", selDay=presetDay??null;
-  let dishFilter="all", dishSearch="";
+  let dishSearch="";
   const dishAdv = newAdvFilters();
   const dishPanel = { open: false };
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
       <input id="dishSearch" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px;margin-bottom:8px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
-      <div class="filter-row" id="dishFilterRow">${currentFilters().map(([k,l,lru]) => `<div class="chip ${k==="all"?"on":""}" data-df="${k}">${T(l, lru)}</div>`).join("")}</div>
+      ${topFilterRowHtml("dishAdv", dishAdv)}
       <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
       <div class="chips-wrap" id="WD"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
@@ -2775,7 +2866,6 @@ function wishStep2(kind, presetDay) {
   function renderDishList() {
     const q = dishSearch.trim().toLowerCase();
     const list = DISHES.filter(d => {
-      if (dishFilter !== "all" && d.p !== dishFilter && d.c !== dishFilter) return false;
       if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
       return matchesAdvFilters(d, dishAdv);
     });
@@ -2793,11 +2883,7 @@ function wishStep2(kind, presetDay) {
   if (kind === "dish") {
     renderDishList();
     v.querySelector("#dishSearch").addEventListener("input", e => { dishSearch = e.target.value; renderDishList(); });
-    v.querySelectorAll("#dishFilterRow .chip").forEach(c => c.onclick = () => {
-      dishFilter = c.dataset.df;
-      v.querySelectorAll("#dishFilterRow .chip").forEach(x => x.classList.toggle("on", x.dataset.df === dishFilter));
-      renderDishList();
-    });
+    wireTopFilterRow(v, "dishAdv", dishAdv, renderDishList);
     wireAdvFilterPanel(v, "dishAdv", dishAdv, dishPanel, renderDishList);
   }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
