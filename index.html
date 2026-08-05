@@ -119,13 +119,13 @@
   /* filter icon button - width matches the search bar's height via normal flex
      cross-axis stretch (its row sibling, the search input, sets that height). */
   .filter-icon-btn { flex: 0 0 auto; width: 46px; border: 1.5px solid #e5e7eb; background: #fff; border-radius: 12px; cursor: pointer; color: #555; display: flex; align-items: center; justify-content: center; }
-  .filter-icon-btn.on { border-color: var(--amber); background: #fef3c7; }
-  /* CSS-drawn funnel: a triangle (funnel body) + a thin stem below its tip - no
-     funnel emoji renders reliably across platforms/fonts, so this is drawn, not typed. */
-  .funnel-icon { display: inline-block; width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 9px solid currentColor; position: relative; }
-  .funnel-icon::after { content: ""; position: absolute; top: 9px; left: -1px; width: 2px; height: 6px; background: currentColor; }
-  .filter-icon-btn.on .funnel-icon { border-top-color: #92400e; }
-  .filter-icon-btn.on .funnel-icon::after { background: #92400e; }
+  .filter-icon-btn.on { border-color: var(--amber); background: #fef3c7; color: #92400e; }
+  /* inline SVG "sliders" icon (three lines with a knob on each, staggered) - the
+     standard "Filters" glyph used by Airbnb/LinkedIn/Amazon etc. SVG renders
+     identically everywhere, unlike an emoji (font-dependent) or a CSS border-triangle
+     hack (inconsistent across browsers). Both stroke and fill use currentColor, so
+     recoloring the icon on "on" state is just the button's `color` change above. */
+  .filter-icon-btn svg { width: 18px; height: 18px; }
   .filter-dropdown { position: relative; display: inline-block; }
   .filter-dropdown-full { display: block; width: 100%; }
   .dropdown-btn { border: 1.5px solid #e5e7eb; background: #fff; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; color: #333; display: flex; align-items: center; gap: 6px; }
@@ -862,17 +862,6 @@ const DIET_META = {
   halal:       { en: "Halal",       ru: "Халяль" },
   kosher:      { en: "Kosher",      ru: "Кошер" },
 };
-// A dish is "safe for everyone" when no registered member's allergies overlap its allergen tags.
-// Both sides now speak the same vocabulary: food.allergen_classes (EU FIC 14, see ALLERGEN_META).
-function isSafeForEveryone(d) {
-  const allergens = d.allergens || [];
-  if (!allergens.length) return true;
-  for (const p of Object.values(game?.profiles ?? {})) {
-    const al = (p.allergies || []).filter(a => a !== "none");
-    if (al.some(a => allergens.includes(a))) return false;
-  }
-  return true;
-}
 // hideInactive defaults true: a recipe switched to "inactive" (About tab, per-recipe
 // toggle) lives on in the cookbook but is opted out of weekly menu planning surfaces
 // until someone flips it back - this filter is the "Show active / Hide inactive"
@@ -881,7 +870,7 @@ function isSafeForEveryone(d) {
 function newAdvFilters() {
   return {
     meal: new Set(), proteins: new Set(), cuisines: new Set(), diets: new Set(),
-    time: new Set(), diff: new Set(), thickOnly: false, safeOnly: false, hideInactive: true,
+    time: new Set(), diff: new Set(), hideInactive: true,
     soupOnly: false, grillOnly: false, vegOnly: false,
   };
 }
@@ -895,10 +884,7 @@ function matchesAdvFilters(d, f) {
   if (f.cuisines.size && !f.cuisines.has(d.c)) return false;
   if (f.time.size && !f.time.has(timeBucket(d))) return false;
   if (f.diff.size && !f.diff.has(diffKey(d))) return false;
-  // "Has full ingredient list" - the grocery-list-readiness gate (card_state, ONTOLOGY.md #3).
-  if (f.thickOnly && d.card_state !== "thick") return false;
   if (f.diets.size && ![...f.diets].every(k => d.diet_compatible_with.includes(k))) return false;
-  if (f.safeOnly && !isSafeForEveryone(d)) return false;
   if (f.hideInactive && !d.is_active) return false;
   if (f.soupOnly && !d.soup) return false;
   if (f.grillOnly && !dishIsGrilled(d)) return false;
@@ -910,7 +896,12 @@ function matchesAdvFilters(d, f) {
 // than left to font support), sized to match the search bar's own height by ordinary
 // flex-row cross-axis stretch (no explicit height rule needed).
 function filterIconButtonHtml(idPrefix, open) {
-  return `<button class="filter-icon-btn${open?" on":""}" id="${idPrefix}Toggle" aria-label="${T("Filters", "Фильтры")}"><span class="funnel-icon"></span></button>`;
+  const svg = `<svg viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <line x1="3" y1="5" x2="17" y2="5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12.5" cy="5" r="2.2" fill="currentColor"/>
+    <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7" cy="10" r="2.2" fill="currentColor"/>
+    <line x1="3" y1="15" x2="17" y2="15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="13.5" cy="15" r="2.2" fill="currentColor"/>
+  </svg>`;
+  return `<button class="filter-icon-btn${open?" on":""}" id="${idPrefix}Toggle" aria-label="${T("Filters", "Фильтры")}">${svg}</button>`;
 }
 // Every multi-select filter group (Meal, Protein, Cuisine, Time, Difficulty, Dietary
 // needs) renders through this single component: a section title, then a full-width
@@ -963,8 +954,7 @@ function wireDropdownGroup(root, idPrefix, id, setKey, f, items, onChange) {
 }
 // Renders the collapsible filter panel. Library (hide-inactive) leads, edge-to-edge,
 // since it's the one toggle that silently changes what's even in the candidate pool;
-// then meal type, protein, cuisine, fit-my-week (time/difficulty/ingredient-list
-// completeness), then dietary needs (+ the "safe for everyone" toggle). idPrefix
+// then meal type, protein, cuisine, time, difficulty, then dietary needs. idPrefix
 // keeps ids unique per surface.
 function advFilterPanelHtml(idPrefix, f, open) {
   const cuisineKeys = availableCuisines();
@@ -986,9 +976,7 @@ function advFilterPanelHtml(idPrefix, f, open) {
       ${dropdownGroupHtml(idPrefix, "Cuisine", "Cuisine", "Кухня", cuisineItems, "cuisines", f)}
       ${dropdownGroupHtml(idPrefix, "Time", "Time", "Время", timeItems, "time", f)}
       ${dropdownGroupHtml(idPrefix, "Diff", "Difficulty", "Сложность", diffItems, "diff", f)}
-      <div class="chip chip-full ${f.thickOnly?"on":""}" style="margin-top:8px" id="${idPrefix}Thick">🧾 ${T("Has full ingredient list", "Есть список ингредиентов")}</div>
       ${dropdownGroupHtml(idPrefix, "Diet", "Dietary needs", "Диетические потребности", dietItems, "diets", f)}
-      <div class="chip chip-full ${f.safeOnly?"on":""}" style="margin-top:8px" id="${idPrefix}Safe">✅ ${T("Safe for everyone's allergies", "Безопасно для всех аллергий")}</div>
     </div>`;
 }
 // Wires the filter icon button built by filterIconButtonHtml. `panelState` is
@@ -1036,10 +1024,6 @@ function wireAdvFilterPanel(root, idPrefix, f, onChange) {
   wireDropdownGroup(root, idPrefix, "Time", "time", f, timeItems, onChange);
   wireDropdownGroup(root, idPrefix, "Diff", "diff", f, diffItems, onChange);
   wireDropdownGroup(root, idPrefix, "Diet", "diets", f, dietItems, onChange);
-  const thick = root.querySelector("#"+idPrefix+"Thick");
-  thick.onclick = () => { f.thickOnly = !f.thickOnly; thick.classList.toggle("on", f.thickOnly); onChange(); };
-  const safe = root.querySelector("#"+idPrefix+"Safe");
-  safe.onclick = () => { f.safeOnly = !f.safeOnly; safe.classList.toggle("on", f.safeOnly); onChange(); };
   const activeOnly = root.querySelector("#"+idPrefix+"ActiveOnly");
   activeOnly.onclick = () => {
     f.hideInactive = !f.hideInactive;
