@@ -139,9 +139,14 @@
   .dropdown-item:hover { background: #f8fafc; }
   .dropdown-item.on { background: #fef3c7; font-weight: 600; }
   .dropdown-item .dd-check { color: var(--amber); opacity: 0; font-size: 13px; }
-  /* edge-to-edge single-toggle chips (hide-inactive, has-full-ingredient-list, safe-for-everyone) */
+  /* edge-to-edge single-toggle chip (currently just hide-inactive) */
   .chip-full { display: block; width: 100%; box-sizing: border-box; text-align: center; margin-bottom: 7px; }
   .dropdown-item.on .dd-check { opacity: 1; }
+  /* search-bar typeahead suggestions - a floating list of matching recipe names under
+     the input, so search isn't "type and hope the swipe deck updated somewhere below". */
+  .search-suggest { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; max-height: 240px; overflow-y: auto; background: #fff; border: 1.5px solid #e5e7eb; border-radius: 14px; box-shadow: 0 12px 28px rgba(0,0,0,.14); padding: 6px; }
+  .search-suggest-item { padding: 9px 11px; font-size: 14px; border-radius: 9px; cursor: pointer; }
+  .search-suggest-item:hover { background: #f8fafc; }
   .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
@@ -949,8 +954,14 @@ function wireDropdownGroup(root, idPrefix, id, setKey, f, items, onChange) {
     onChange();
   });
   // Single document-level slot (overwritten, not accumulated, each re-render) so any
-  // open dropdown on the page closes when the user taps elsewhere.
-  document.onclick = () => root.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
+  // open dropdown or search-suggestions box on the page closes when the user taps
+  // elsewhere. Shared with wireSearchSuggest() below - whichever wires last wins, but
+  // both close the exact same two selectors, so it doesn't matter which one "wins".
+  document.onclick = () => closeFloatingPanels(root);
+}
+function closeFloatingPanels(root) {
+  root.querySelectorAll(".dropdown-menu").forEach(m => m.style.display = "none");
+  root.querySelectorAll(".search-suggest").forEach(m => { m.style.display = "none"; m.innerHTML = ""; });
 }
 // Renders the collapsible filter panel. Library (hide-inactive) leads, edge-to-edge,
 // since it's the one toggle that silently changes what's even in the candidate pool;
@@ -1003,6 +1014,36 @@ function wireSearchOpensFilters(root, searchId, idPrefix, panelState) {
     if (panel) panel.style.display = "block";
     if (toggle) toggle.classList.add("on");
   });
+}
+// A floating box under a search input, "id"Suggest, listing recipe-name matches as the
+// user types - typing alone previously only silently re-filtered whatever's rendered
+// below (the Spin swipe deck), giving no feedback that search was doing anything until
+// you swiped. `getMatches(query)` returns dishes to list (already filter-scoped by the
+// caller); `onPick(dish)` runs when a suggestion is tapped, then the box closes itself.
+function searchSuggestHtml(idPrefix) {
+  return `<div class="search-suggest" id="${idPrefix}Suggest" style="display:none"></div>`;
+}
+function wireSearchSuggest(root, searchId, idPrefix, getMatches, onPick) {
+  const input = root.querySelector("#"+searchId);
+  const box = root.querySelector("#"+idPrefix+"Suggest");
+  if (!input || !box) return;
+  const update = () => {
+    const q = input.value.trim();
+    const matches = q ? getMatches(q).slice(0, 6) : [];
+    if (!matches.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+    box.innerHTML = matches.map(d =>
+      `<div class="search-suggest-item" data-i="${d.id}">${d.em ? d.em + " " : ""}${dName(d)}</div>`).join("");
+    box.style.display = "block";
+    box.querySelectorAll(".search-suggest-item").forEach(item => item.onclick = e => {
+      e.stopPropagation();
+      onPick(item.dataset.i);
+      box.style.display = "none";
+      box.innerHTML = "";
+    });
+  };
+  input.addEventListener("input", update);
+  input.addEventListener("focus", update);
+  document.onclick = () => closeFloatingPanels(root);
 }
 // Wires every control inside the panel built by advFilterPanelHtml. onChange runs after any edit.
 // `items` passed to each dropdown must match what advFilterPanelHtml built its summary text from.
@@ -2138,8 +2179,10 @@ function availableCuisines() {
   return [...new Set(DISHES.map(d => d.c).filter(c => c && c !== "family"))].sort();
 }
 let deckOrder = DISHES.map(d => d.id);
-function deck() {
-  const q = deckSearch.trim().toLowerCase();
+// `queryOverride` lets the search-suggestions box compute matches for a query that
+// hasn't been committed to `deckSearch` yet, without duplicating this filter logic.
+function deck(queryOverride) {
+  const q = (queryOverride ?? deckSearch).trim().toLowerCase();
   return deckOrder.map(dish).filter(d => {
     // Components (sauces, batters, marinades) aren't standalone meals - excluded
     // from the Spin deck per issue #12. They still live in the family cookbook.
@@ -2213,7 +2256,10 @@ function stackHtml(dk) {
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
     <div style="display:flex;gap:8px;margin:0 20px 8px">
-      <input id="deckSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+      <div style="position:relative;flex:1 1 auto;min-width:0">
+        <input id="deckSearch" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+        ${searchSuggestHtml("deckAdv")}
+      </div>
       ${filterIconButtonHtml("deckAdv", deckPanel.open)}
     </div>
     ${quickFilterRowHtml("deckAdv", deckAdv)}
@@ -2811,6 +2857,13 @@ function wire() {
   if (document.getElementById("deckAdvToggle")) wireFilterToggle(app, "deckAdv", deckPanel);
   if (document.getElementById("deckAdvMeal")) wireAdvFilterPanel(app, "deckAdv", deckAdv, refreshDeck);
   wireSearchOpensFilters(app, "deckSearch", "deckAdv", deckPanel);
+  wireSearchSuggest(app, "deckSearch", "deckAdv", q => deck(q), id => {
+    const idx = deckOrder.indexOf(id);
+    if (idx > 0) { deckOrder.splice(idx, 1); deckOrder.unshift(id); }
+    deckSearch = "";
+    if (deckSearchEl) deckSearchEl.value = "";
+    refreshDeck();
+  });
   wireStack();
 
   // wish
