@@ -4,17 +4,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f59e0b">
+<meta name="theme-color" content="#FFD700">
 <title>Spin the Food</title>
 <link rel="manifest" href="data:application/json,%7B%22name%22%3A%22Spin%20the%20Food%22%2C%22short_name%22%3A%22SpinFood%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23fafaf7%22%2C%22theme_color%22%3A%22%23f59e0b%22%2C%22start_url%22%3A%22.%22%2C%22icons%22%3A%5B%5D%7D">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  :root { --amber:#f59e0b; --amber-d:#b45309; --green:#10b981; }
+  :root { --amber:#FFE34D; --amber-d:#B8923C; --amber-tint:#fff8e0; --amber-text:#6b5400; --green:#10b981; --teal:#0032FF; --teal-d:#0026bf; }
   body {
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     background: #fafaf7; color: #1f2937; overscroll-behavior: none;
   }
-  #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 74px; }
+  #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 88px; }
 
   /* identity gate */
   .gate { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 28px; gap: 14px; text-align: center; }
@@ -25,7 +25,7 @@
     border-radius: 18px; padding: 16px 20px; font-size: 18px; font-weight: 700; cursor: pointer; text-align: left;
     touch-action: manipulation; -webkit-tap-highlight-color: transparent; width: 100%;
   }
-  .who-btn:active { background: #fef3c7; border-color: var(--amber); }
+  .who-btn:active { background: var(--amber-tint); border-color: var(--amber); }
   .who-btn .em { font-size: 30px; }
   .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
 
@@ -42,7 +42,7 @@
   .ob-note { color: #999; font-size: 13px; padding-top: 12px; }
   .rate-row { display: flex; flex-wrap: wrap; gap: 7px; }
   .rate-btn { width: 44px; height: 44px; border-radius: 12px; border: 1.5px solid #e5e7eb; background: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
-  .rate-btn.on { background: var(--amber); color: #fff; border-color: var(--amber-d); }
+  .rate-btn.on { background: var(--amber); color: var(--amber-text); border-color: var(--amber-d); }
   .rate-btn.seven { color: #ccc; text-decoration: line-through; }
   .ob-text { width: 100%; min-height: 110px; border: 2px solid #e5e7eb; border-radius: 16px; padding: 12px; font-size: 15px; font-family: inherit; resize: none; background: #fff; }
   .ob-next { margin-top: auto; }
@@ -72,24 +72,24 @@
   .screen-title .sub { color: #888; font-size: 13px; }
 
   .btn { border: none; border-radius: 15px; padding: 13px 20px; font-size: 15px; font-weight: 700; cursor: pointer; }
-  .btn-primary { background: var(--amber); color: #fff; box-shadow: 0 4px 0 var(--amber-d); }
+  .btn-primary { background: var(--amber); color: var(--amber-text); box-shadow: 0 4px 0 var(--amber-d); }
   .btn-primary:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--amber-d); }
   .btn-ghost { background: #fff; color: #444; border: 2px solid #e5e7eb; }
   .chip { background: #fff; border: 1.5px solid #e5e7eb; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; user-select: none; }
-  .chip.on { border-color: var(--amber); background: #fef3c7; font-weight: 600; }
+  .chip.on { border-color: var(--amber); background: var(--amber-tint); font-weight: 600; }
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
   .banner { margin: 12px 18px; padding: 13px 15px; border-radius: 16px; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 700; font-size: 14px; text-align: center; }
 
   /* AI fill CTA - the big glaring button at the top of an empty menu */
   .ai-fill {
     margin: 4px 16px 12px; padding: 14px 18px; border: none; border-radius: 18px;
-    background: linear-gradient(135deg, #f59e0b, #b45309);
-    color: #fff; font-weight: 800; font-size: 16px; cursor: pointer;
-    width: calc(100% - 32px); box-shadow: 0 6px 0 #92400e; text-align: left;
+    background: var(--amber);
+    color: var(--amber-text); font-weight: 800; font-size: 16px; cursor: pointer;
+    width: calc(100% - 32px); box-shadow: 0 6px 0 var(--amber-d); text-align: left;
     display: flex; flex-direction: column; gap: 3px;
   }
   .ai-fill small { display: block; font-weight: 400; font-size: 12px; opacity: .9; }
-  .ai-fill:active { transform: translateY(3px); box-shadow: 0 3px 0 #92400e; }
+  .ai-fill:active { transform: translateY(3px); box-shadow: 0 3px 0 var(--amber-d); }
 
   /* menu (D) */
   .deadline { margin: 0 16px 8px; padding: 8px 14px; background: #1f2937; color: #fff; border-radius: 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
@@ -119,7 +119,7 @@
   /* filter icon button - width matches the search bar's height via normal flex
      cross-axis stretch (its row sibling, the search input, sets that height). */
   .filter-icon-btn { flex: 0 0 auto; width: 46px; border: 1.5px solid #e5e7eb; background: #fff; border-radius: 12px; cursor: pointer; color: #555; display: flex; align-items: center; justify-content: center; }
-  .filter-icon-btn.on { border-color: var(--amber); background: #fef3c7; color: #92400e; }
+  .filter-icon-btn.on { border-color: var(--amber); background: var(--amber-tint); color: var(--amber-text); }
   /* inline SVG "sliders" icon (three lines with a knob on each, staggered) - the
      standard "Filters" glyph used by Airbnb/LinkedIn/Amazon etc. SVG renders
      identically everywhere, unlike an emoji (font-dependent) or a CSS border-triangle
@@ -129,7 +129,7 @@
   .filter-dropdown { position: relative; display: inline-block; }
   .filter-dropdown-full { display: block; width: 100%; }
   .dropdown-btn { border: 1.5px solid #e5e7eb; background: #fff; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; color: #333; display: flex; align-items: center; gap: 6px; }
-  .dropdown-btn.on { border-color: var(--amber); background: #fef3c7; font-weight: 600; }
+  .dropdown-btn.on { border-color: var(--amber); background: var(--amber-tint); font-weight: 600; }
   .dropdown-btn .dd-arrow { font-size: 10px; color: #999; flex: 0 0 auto; }
   .dropdown-btn-full { width: 100%; box-sizing: border-box; justify-content: space-between; }
   .dropdown-btn-full .dropdown-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
@@ -137,7 +137,7 @@
   .dropdown-menu-full { width: 100%; box-sizing: border-box; min-width: 0; }
   .dropdown-item { padding: 9px 11px; font-size: 14px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .dropdown-item:hover { background: #f8fafc; }
-  .dropdown-item.on { background: #fef3c7; font-weight: 600; }
+  .dropdown-item.on { background: var(--amber-tint); font-weight: 600; }
   .dropdown-item .dd-check { color: var(--amber); opacity: 0; font-size: 13px; }
   /* edge-to-edge single-toggle chip (currently just hide-inactive) */
   .chip-full { display: block; width: 100%; box-sizing: border-box; text-align: center; margin-bottom: 7px; }
@@ -151,29 +151,38 @@
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
-  .scard .thin-badge { position: absolute; top: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
-  .scard .qhide { position: absolute; bottom: 12px; right: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; font-size: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
-  .scard .qhide.off { background: rgba(5,150,105,.9); }
-  .scard .pnav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff; font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; }
-  .scard .pnav.prev { left: 10px; }
-  .scard .pnav.next { right: 10px; }
-  .scard .pdots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 5px; }
-  .scard .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
-  .scard .pdots span.on { background: #fff; }
-  .scard .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
-  .scard .photo-approve-row { position: absolute; bottom: 12px; left: 12px; z-index: 3; display: flex; gap: 8px; }
-  .scard .pbtn { border: none; border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; touch-action: manipulation; }
-  .scard .pbtn.approve { background: rgba(5,150,105,.92); color: #fff; }
-  .scard .pbtn.decline { background: rgba(220,38,38,.92); color: #fff; }
-  .scard .add-photo-cta { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; background: rgba(0,0,0,.18); cursor: pointer; touch-action: manipulation; font-weight: 700; font-size: 14px; }
-  .scard .add-photo-cta .ic { font-size: 40px; }
+  .scard .thin-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
+  .scard .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #fff; color: #444; font-size: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
+  .scard .qhide.off { box-shadow: 0 2px 8px rgba(0,0,0,.22), inset 0 0 0 2px rgba(5,150,105,.85); }
+  /* Same photo-carousel chrome (nav arrows, dots, pending/approve UI, "add a
+     photo" CTA) is reused verbatim on the recipe detail view's hero, via
+     photoSlideHtml() - `.dtl-hero` just needs `position:relative` (it already
+     has it) for these absolutely-positioned pieces to anchor correctly. */
+  .scard .pnav, .dtl-hero .pnav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff; font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; }
+  .scard .pnav.prev, .dtl-hero .pnav.prev { left: 10px; }
+  .scard .pnav.next, .dtl-hero .pnav.next { right: 10px; }
+  .scard .pdots, .dtl-hero .pdots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 5px; }
+  .scard .pdots span, .dtl-hero .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
+  .scard .pdots span.on, .dtl-hero .pdots span.on { background: #fff; }
+  .scard .photo-pending-badge, .dtl-hero .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
+  .scard .photo-approve-row, .dtl-hero .photo-approve-row { position: absolute; bottom: 12px; left: 12px; z-index: 3; display: flex; gap: 8px; }
+  .scard .pbtn, .dtl-hero .pbtn { border: none; border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+  .scard .pbtn.approve, .dtl-hero .pbtn.approve { background: rgba(5,150,105,.92); color: #fff; }
+  .scard .pbtn.decline, .dtl-hero .pbtn.decline { background: rgba(220,38,38,.92); color: #fff; }
+  .scard .add-photo-cta, .dtl-hero .add-photo-cta { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; background: rgba(0,0,0,.18); cursor: pointer; touch-action: manipulation; font-weight: 700; font-size: 14px; }
+  .scard .add-photo-cta .ic, .dtl-hero .add-photo-cta .ic { font-size: 40px; }
   .scard .bd { padding: 16px; }
   .scard .ti { font-weight: 800; font-size: 22px; }
   .scard .mt { font-size: 13px; color: #888; margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
   .stamp { position: absolute; top: 20px; font-size: 24px; font-weight: 900; padding: 4px 14px; border-radius: 10px; border: 4px solid; opacity: 0; }
   .stamp.yes { left: 16px; color: var(--green); border-color: var(--green); transform: rotate(-14deg); }
   .stamp.no { right: 16px; color: #ef4444; border-color: #ef4444; transform: rotate(14deg); }
-  .deck-cta { display: flex; justify-content: center; gap: 20px; padding: 14px 0 4px; }
+  /* the like/nope round buttons were dropped - the card stack already has full
+     swipe-gesture support (drag left/right), so they were pure duplication. The
+     Add-new-recipe button (no gesture equivalent) tried floating over the card
+     stack's corner first, but it got visually buried behind the card there -
+     now sits to the left of the search bar instead, styled like its filter-icon
+     sibling for a tidy matched pair either side of the search input. */
   .round-btn { width: 58px; height: 58px; border-radius: 50%; border: 2px solid #eee; background: #fff; font-size: 25px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.08); }
   .hint { margin: 8px 20px; font-size: 11px; color: #aaa; text-align: center; }
 
@@ -210,10 +219,84 @@
   .sect { font-size: 12px; color: #888; font-weight: 700; margin: 12px 0 6px; text-transform: uppercase; }
 
   /* bottom nav */
-  .nav { position: fixed; bottom: 0; left: 0; right: 0; max-width: 480px; margin: 0 auto; background: #fff; border-top: 1px solid #eee; display: flex; padding: 6px 0 calc(6px + env(safe-area-inset-bottom)); }
-  .nav button { flex: 1; background: none; border: none; font-size: 11px; color: #9ca3af; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
-  .nav button .ic { font-size: 26px; }
-  .nav button.on { color: var(--amber); }
+  /* Floating frosted-glass bar (Apple "liquid glass" take): detached from the screen
+     edges with rounded corners, a blurred translucent fill so whatever's scrolled
+     underneath still tints through it, and a soft outer glow instead of a hard
+     border/shadow. */
+  .nav {
+    position: fixed; bottom: calc(10px + env(safe-area-inset-bottom)); left: 12px; right: 12px;
+    max-width: 456px; margin: 0 auto; display: flex; padding: 8px 4px; overflow: visible;
+    border-radius: 26px; border: 1px solid rgba(255,255,255,.6);
+    background: rgba(255,255,255,.62);
+    -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+    box-shadow: 0 10px 30px rgba(0,0,0,.10), inset 0 1px 0 rgba(255,255,255,.6);
+  }
+  .nav button { flex: 1; background: none; border: none; font-size: 11px; color: #8b8f99; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
+  /* fixed line-height (not just font-size) on every tab's icon, so every icon
+     occupies exactly the same box height in the flex column regardless of how
+     big its glyph actually renders - that's what keeps every label the same
+     distance below its icon, Menu included. */
+  .nav button .ic { font-size: 26px; line-height: 30px; }
+  .nav button.on { color: var(--amber-d); }
+  /* the Menu bubble - poking up above the bar like a FAB, so the weekly-plan tab
+     reads as "the important one" at a glance rather than just another equal-weight
+     label. Just a faint frosted glass disc now (no colored glow behind it - that
+     amber-tint version read as "yellow background" rather than a subtle accent, so
+     it's gone). Text stays blue (`--teal-d`) - that's the only thing that marks it
+     as "on"/selected now.
+     Sized and raised entirely via `transform` (bigger font-size + translateY), not
+     an explicit width/height/margin - transform is purely visual and never changes
+     an element's contribution to the flex layout, so no matter how big or how far
+     up this renders, "Menu"'s label stays locked to the exact same line-height box
+     (and therefore the exact same distance below its icon) as every other tab.
+     No disc/glow behind the glyph at all - a visible circle here was bleeding
+     down far enough to cover the top of the "Menu" label itself, so this is
+     just the bigger icon floating with nothing behind it. */
+  .nav button.big .ic {
+    position: relative; display: inline-block; font-size: 34px;
+    transform: translateY(-14px);
+  }
+  .nav button.big { color: var(--teal-d); font-weight: 700; }
+  /* swipe-discovery "tip bubbles" over the card - tappable, and each does exactly
+     what swiping that direction does (left = skip, right = onto the menu), so
+     they teach the gesture rather than compete with it. No disc/background of
+     their own at all now - just the icon floating directly on a blurred,
+     hard-edge-free glow (the same `::before` trick as the Menu nav bubble), so
+     there's no crisp circular boundary anywhere, only a soft translucent cloud.
+     Every card gets an explicit inline z-index (10 minus its stack depth, see
+     stackHtml()) so the top card can layer over the ones behind it - these need
+     to clear that top value (z-index:10) to actually show. Sits near the bottom
+     of the card - `.qhide` moved to the top-left corner, so the bottom corners
+     are clear for these now. Inset 16px on all three sides (left/right/bottom) -
+     the same 16px as `.scard .bd`'s own padding, so the left bubble lines up with
+     where the recipe title's text starts, and the right/bottom sides mirror it
+     for a symmetric margin all around.
+     `align-items` is flex-start/flex-end (not center) per side - the button box
+     is wider than its glyph, so centering the glyph inside a 16px-inset box left
+     its visible left edge floating well past the title's actual text edge. Left-
+     (resp. right-)aligning the glyph inside the box puts the glyph itself, not
+     just its box, flush with that inset.
+     These buttons are siblings of `.stack` (not inside it), and `.stack` itself
+     carries `margin: 0 22px` - so the card's real left/right edge sits 22px in
+     from this wrapper's edge, and `.bd`'s own 16px padding is on top of that.
+     38px (22 + 16) is what actually lines the glyph up with the title text. */
+  .swipe-tip {
+    position: absolute; bottom: 16px; z-index: 20;
+    border: none; cursor: pointer; background: none;
+    width: 43px; height: 43px; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    font-size: 17px; font-weight: 800; color: #f59e0b;
+  }
+  .swipe-tip.left { left: 38px; align-items: flex-start; }
+  .swipe-tip.right { right: 38px; align-items: flex-end; }
+  .swipe-tip.right .tip-ic { font-size: 19px; }
+  /* directional arrow under each icon - a second, quieter hint of which way to
+     swipe, distinct from the icon itself so it doesn't compete for attention.
+     Bold/higher-opacity so it stays legible over a busy photo background. No
+     glow behind these anymore - just the orange icon/arrow themselves (the ✕
+     picks up the color directly; the 🗓 emoji is full-color and won't recolor,
+     same limitation as before). */
+  .swipe-tip .tip-arrow { font-size: 9px; font-weight: 800; line-height: 1; opacity: .8; }
 
   .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 60; max-width: 88%; text-align: center; }
   .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 70; }
@@ -225,8 +308,17 @@
   .detail-overlay.closing { transform: scale(.35) rotateY(75deg); opacity: 0; }
   .dtl-hd { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: rgba(250,250,247,.94); backdrop-filter: blur(6px); border-bottom: 1px solid #eee; }
   .dtl-back { background: #fff; border: 1.5px solid #eee; border-radius: 50%; width: 38px; height: 38px; font-size: 17px; cursor: pointer; flex-shrink: 0; }
-  .dtl-hero { width: 100%; height: 240px; background-size: cover; background-position: center; position: relative; }
+  /* `contain` (not `cover`) - a photo taken in whatever aspect ratio the
+     family's phone shot it in shouldn't get cropped/stretched to fill a fixed
+     240px strip, unlike the Spin card's small preview where cropping is the
+     right trade-off. The dark fill letterboxes any photo that isn't exactly
+     that ratio. Tapping the photo itself (not the nav arrows/dots/etc, see
+     openPhotoLightbox() wiring) opens it full-screen, uncropped either way. */
+  .dtl-hero { width: 100%; height: 240px; background-size: contain; background-position: center; background-repeat: no-repeat; background-color: #1a1a1a; position: relative; cursor: zoom-in; }
   .dtl-hero .em { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 88px; }
+  .photo-lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.92); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+  .photo-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: default; }
+  .photo-lightbox .lb-close { position: absolute; top: 14px; right: 14px; z-index: 1; width: 38px; height: 38px; border-radius: 50%; border: none; background: rgba(255,255,255,.15); color: #fff; font-size: 18px; cursor: pointer; }
   .plan-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 16px 10px; padding: 12px 14px; border-radius: 14px; background: #f9fafb; border: 1px solid #eee; }
   .plan-toggle .ptxt { flex: 1; }
   .plan-toggle .ptitle { font-weight: 700; font-size: 14px; }
@@ -237,11 +329,11 @@
   .sw i { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .2s; }
   .sw.on i { left: 22px; }
   .dtl-banner { margin: 10px 16px; padding: 10px 13px; border-radius: 14px; font-size: 12.5px; font-weight: 600; }
-  .dtl-banner.edit { background: #fef3c7; border: 1px dashed var(--amber); color: #92400e; }
+  .dtl-banner.edit { background: var(--amber-tint); border: 1px dashed var(--amber); color: var(--amber-text); }
   .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
   .dtl-tabs { display: flex; gap: 6px; padding: 8px 14px; overflow-x: auto; position: sticky; top: 62px; background: #fafaf7; z-index: 4; border-bottom: 1px solid #f0f0ee; }
   .dtl-tab { flex-shrink: 0; padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: #888; cursor: pointer; background: #fff; border: 1.5px solid #eee; }
-  .dtl-tab.on { background: var(--amber); color: #fff; border-color: var(--amber-d); }
+  .dtl-tab.on { background: var(--amber); color: var(--amber-text); border-color: var(--amber-d); }
   .dtl-editbar { position: sticky; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(0deg,#fafaf7 60%,rgba(250,250,247,0)); display: flex; gap: 8px; }
   .dtl-editbar .btn { flex: 1; }
 </style>
@@ -249,7 +341,13 @@
 <body>
 <div id="app"></div>
 <script type="module">
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// Pinned to an exact version (not the floating "@2" tag) - esm.sh's "latest 2.x"
+// resolution briefly pointed at a build (2.112.1) whose own sub-module paths
+// (auth-js/postgrest-js/realtime-js) 404'd straight from their CDN. An unpinned
+// import means production is exposed to that recurring at any time, with no
+// deploy on our side to explain it. Bump deliberately if a newer version is
+// ever needed, not automatically.
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1937,7 +2035,7 @@ function renderOnboard() {
         <button class="btn btn-ghost" data-cook="no">🍽️ ${t("No, I just eat", "Нет, я только ем")}</button>
       </div>
       <div class="ob-note">${mem(me).em} ${t("Hi", "Привет")}, ${mName(mem(me))}!
-        <a href="#" id="notMe" style="color:#f59e0b;font-weight:600;margin-left:6px">${t("Not you? Switch", "Это не ты? Сменить")}</a></div>`;
+        <a href="#" id="notMe" style="color:var(--amber-d);font-weight:600;margin-left:6px">${t("Not you? Switch", "Это не ты? Сменить")}</a></div>`;
   } else if (cur === "avail") {
     inner = `<div class="ob-q">${t("Which meals can you cook?", "Какие приёмы пищи можешь готовить?")}</div>
       <div class="chips-wrap">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
@@ -2194,6 +2292,18 @@ function deck(queryOverride) {
 // Per-card carousel position, keyed by dish id. Persists across re-renders
 // within the session (not reset on refreshDeck) so paging doesn't jump back
 // to slide 0 every time something else on the card changes.
+// Full-screen, uncropped view of one photo - opened from the recipe detail
+// hero (see wireDetailOverlay()). Closes on tapping anywhere outside the
+// image itself, or the explicit close button.
+function openPhotoLightbox(url) {
+  if (!url) return;
+  const el = document.createElement("div");
+  el.className = "photo-lightbox";
+  el.innerHTML = `<button class="lb-close" aria-label="${T("Close", "Закрыть")}">✕</button><img src="${url.replace(/"/g, "&quot;")}" alt="">`;
+  el.addEventListener("click", () => el.remove());
+  el.querySelector("img").addEventListener("click", e => e.stopPropagation());
+  document.body.appendChild(el);
+}
 const photoIdx = {};
 // Builds the slide list for a card's photo area: approved photos first (or
 // the legacy single photo_url for recipes never re-photographed), then the
@@ -2256,6 +2366,7 @@ function stackHtml(dk) {
 function renderSpin() {
   return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
     <div style="display:flex;gap:8px;margin:0 20px 8px">
+      <button class="filter-icon-btn" id="add" title="${T("Add a new recipe", "Добавить рецепт")}" aria-label="${T("Add a new recipe", "Добавить рецепт")}">➕</button>
       <div style="position:relative;flex:1 1 auto;min-width:0">
         <input id="deckSearch" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
         ${searchSuggestHtml("deckAdv")}
@@ -2263,12 +2374,13 @@ function renderSpin() {
       ${filterIconButtonHtml("deckAdv", deckPanel.open)}
     </div>
     ${quickFilterRowHtml("deckAdv", deckAdv)}
+    <div class="hint" style="margin-top:0">🤖 ${T("AI fills the menu Thursday before the week. Until then, build it together.", "ИИ заполнит меню в четверг до начала недели. До этого собирайте вместе.")}</div>
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
-    <div class="stack" id="stack">${stackHtml(deck())}</div>
-    <div class="deck-cta"><button class="round-btn" id="nope">👎</button>
-    <button class="round-btn" id="add" style="font-size:22px">➕</button>
-    <button class="round-btn" id="like">❤️</button></div>
-    <div class="hint">🤖 ${T("AI fills the menu Thursday before the week. Until then, build it together.", "ИИ заполнит меню в четверг до начала недели. До этого собирайте вместе.")}</div>`;
+    <div style="position:relative">
+      <div class="stack" id="stack">${stackHtml(deck())}</div>
+      <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-ic">✕</span><span class="tip-arrow">←</span></button>
+      <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-ic">🗓</span><span class="tip-arrow">→</span></button>
+    </div>`;
 }
 function refreshDeck() {
   const stackEl = document.getElementById("stack");
@@ -2285,9 +2397,12 @@ function wireStack() {
     topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
     setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); refreshDeck(); }, 300);
   };
-  const nope = document.getElementById("nope"), like = document.getElementById("like"), add = document.getElementById("add");
-  if (nope) nope.onclick = () => fly(-1);
-  if (like) like.onclick = () => fly(1);
+  // Tappable "tip bubbles" over the card, teaching the swipe gesture by mirroring
+  // it exactly: left = same as swiping left (skip), right = same as swiping right
+  // (onto the menu) - not a separate action, just a discoverable equivalent.
+  const tipNope = document.getElementById("tipNope"), tipLike = document.getElementById("tipLike"), add = document.getElementById("add");
+  if (tipNope) tipNope.onclick = () => fly(-1);
+  if (tipLike) tipLike.onclick = () => fly(1);
   if (add) add.onclick = openAdd;
   const qhideBtn = topCard?.querySelector(".qhide");
   if (qhideBtn) {
@@ -2481,7 +2596,12 @@ function detailView(d) {
 
   let pane;
   if (detailTab === "about") {
-    pane = `<div class="dtl-hero" style="background:${d.g}">${d.photo_url ? "" : `<div class="em">${d.em}</div>`}</div>
+    // Same carousel as the Spin card - all photos, a pending one (if any), then
+    // a trailing "add a photo" slide (replacing the old bare-emoji fallback) -
+    // sharing photoIdx[d.id] with the deck so flipping through photos in one
+    // place stays in sync with the other.
+    const photo = photoSlideHtml(d);
+    pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}</div>
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
         <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
@@ -2557,6 +2677,32 @@ function detailView(d) {
 function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlBack")?.addEventListener("click", closeDetail);
   wrap.querySelectorAll("[data-dtltab]").forEach(t => t.addEventListener("click", () => { detailTab = t.dataset.dtltab; renderDetailOverlay(); }));
+  // Photo carousel on the hero - identical wiring to the Spin card's, just
+  // re-rendering this overlay (not refreshDeck()) since photoIdx[d.id] is the
+  // one piece of shared state between the two views.
+  wrap.querySelectorAll(".dtl-hero .pnav").forEach(btn => btn.addEventListener("click", () => {
+    photoIdx[d.id] = (photoIdx[d.id] || 0) + (btn.dataset.pnav === "next" ? 1 : -1);
+    renderDetailOverlay();
+  }));
+  const dtlPhotoFile = wrap.querySelector(".dtl-hero [data-photofile]");
+  if (dtlPhotoFile) dtlPhotoFile.addEventListener("change", async () => {
+    // uploadRecipePhoto()/resolvePendingPhoto() already re-render this overlay
+    // themselves (`if (detailOpen) renderDetailOverlay()`) once the write
+    // lands, so nothing further to do here after awaiting them.
+    const file = dtlPhotoFile.files && dtlPhotoFile.files[0];
+    dtlPhotoFile.value = "";
+    if (file) await uploadRecipePhoto(d.id, file);
+  });
+  wrap.querySelector(".dtl-hero [data-papprove]")?.addEventListener("click", () => resolvePendingPhoto(d.id, true));
+  wrap.querySelector(".dtl-hero [data-pdecline]")?.addEventListener("click", () => resolvePendingPhoto(d.id, false));
+  // Tapping the photo itself (not any of the controls above it) opens it
+  // full-screen, uncropped - the hero strip only ever shows it letterboxed.
+  wrap.querySelector(".dtl-hero")?.addEventListener("click", e => {
+    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge")) return;
+    const photos = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
+    const url = photos[photoIdx[d.id] || 0];
+    if (url) openPhotoLightbox(url);
+  });
   wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
     if (detailEditMode) { detailEditMode = false; detailDraft = null; }
     else {
@@ -2814,8 +2960,11 @@ function renderFeed() {
 function ago(ts) { const s = (Date.now()-ts)/1000; if (s<60) return T("just now", "только что"); if (s<3600) return Math.floor(s/60)+T("m ago", " мин назад"); return Math.floor(s/3600)+T("h ago", " ч назад"); }
 
 function nav() {
-  const tabs = [["menu","🗓","Menu","Меню"],["spin","🎰","Spin","Крутить"],["wish","✨","Wish","Желание"],["duel","⚔️","Duel","Дуэль"],["feed","📣","Family","Семья"]];
-  return `<div class="nav">${tabs.map(([k,ic,l,lru]) => `<button class="${tab===k?"on":""}" data-tab="${k}"><span class="ic">${ic}</span>${T(l, lru)}</button>`).join("")}</div>`;
+  // Order: Spin, Wish, Menu, Duel, Family. Menu sits dead center and gets the
+  // raised "big" bubble treatment below - it's the weekly-plan home screen, the one
+  // tab worth a second of extra visual weight versus the other four.
+  const tabs = [["spin","🎰","Spin","Крутить"],["wish","✨","Wish","Желание"],["menu","🗓","Menu","Меню"],["duel","⚔️","Duel","Дуэль"],["feed","📣","Family","Семья"]];
+  return `<div class="nav">${tabs.map(([k,ic,l,lru]) => `<button class="${tab===k?"on":""}${k==="menu"?" big":""}" data-tab="${k}"><span class="ic">${ic}</span>${T(l, lru)}</button>`).join("")}</div>`;
 }
 
 // ── wiring ──
