@@ -289,14 +289,13 @@
   }
   .swipe-tip.left { left: 38px; align-items: flex-start; }
   .swipe-tip.right { right: 38px; align-items: flex-end; }
-  .swipe-tip.right .tip-ic { font-size: 19px; }
-  /* directional arrow under each icon - a second, quieter hint of which way to
-     swipe, distinct from the icon itself so it doesn't compete for attention.
-     Bold/higher-opacity so it stays legible over a busy photo background. No
-     glow behind these anymore - just the orange icon/arrow themselves (the ✕
-     picks up the color directly; the 🗓 emoji is full-color and won't recolor,
-     same limitation as before). */
-  .swipe-tip .tip-arrow { font-size: 9px; font-weight: 800; line-height: 1; opacity: .8; }
+  /* No ✕/🗓 icon glyph anymore, per direct request - the arrow alone (3x
+     bigger than before) is the entire hint now. */
+  .swipe-tip .tip-arrow { font-size: 27px; font-weight: 800; line-height: 1; opacity: .8; }
+  /* Replaces the old "AI fills the menu" banner above the deck - one caption
+     under each arrow button, same 38px inset so "Next"/"Add to menu" sit
+     directly under the ← / → they're explaining. */
+  .spin-caption-row { display: flex; justify-content: space-between; padding: 6px 38px 0; font-size: 11px; font-weight: 700; color: #f59e0b; }
 
   .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 60; max-width: 88%; text-align: center; }
   .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 70; }
@@ -965,15 +964,16 @@ const DIET_META = {
   halal:       { en: "Halal",       ru: "Халяль" },
   kosher:      { en: "Kosher",      ru: "Кошер" },
 };
-// hideInactive defaults true: a recipe switched to "inactive" (About tab, per-recipe
-// toggle) lives on in the cookbook but is opted out of weekly menu planning surfaces
-// until someone flips it back - this filter is the "Show active / Hide inactive"
-// escape hatch to peek at (and act on) inactive recipes without permanently changing
-// what Spin/Wish default to showing.
+// hideInactive defaults FALSE: marking a recipe inactive (About tab toggle, or the
+// quick-hide eye icon on a Spin card) opts it out of the automatic AI weekly fill,
+// but should NOT silently vanish it from Spin/Wish too - that surprised people into
+// thinking the recipe was gone. Inactive recipes now stay visible everywhere by
+// default; "Hide inactive recipes" is an opt-in filter the user turns on themselves
+// if they specifically want them out of the way.
 function newAdvFilters() {
   return {
     meal: new Set(), proteins: new Set(), cuisines: new Set(), diets: new Set(),
-    time: new Set(), diff: new Set(), hideInactive: true,
+    time: new Set(), diff: new Set(), hideInactive: false,
     soupOnly: false, grillOnly: false, vegOnly: false,
   };
 }
@@ -2351,9 +2351,12 @@ function stackHtml(dk) {
     // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
     // without opening the detail view. Same is_active toggle as the About tab
     // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
+    // Icon shows the ACTION a tap takes, not the current state: active dish (still
+    // shown) gets the closed eye - tap it to hide; inactive dish (already hidden)
+    // gets the open eye - tap it to show again.
     const quickHide = d.is_active
-      ? `<button class="qhide" data-qhide="${d.id}" title="${T("Hide from Spin", "Скрыть из подборки")}" aria-label="${T("Hide from Spin", "Скрыть из подборки")}">👁️</button>`
-      : `<button class="qhide off" data-qhide="${d.id}" title="${T("Bring back to Spin", "Вернуть в подборку")}" aria-label="${T("Bring back to Spin", "Вернуть в подборку")}">🙈</button>`;
+      ? `<button class="qhide" data-qhide="${d.id}" title="${T("Hide", "Скрыть")}" aria-label="${T("Hide", "Скрыть")}">🙈</button>`
+      : `<button class="qhide off" data-qhide="${d.id}" title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">👁️</button>`;
     const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
       <div class="ph" style="${photo.bgStyle}">${thinBadge}${photo.inner}</div>
@@ -2374,12 +2377,15 @@ function renderSpin() {
       ${filterIconButtonHtml("deckAdv", deckPanel.open)}
     </div>
     ${quickFilterRowHtml("deckAdv", deckAdv)}
-    <div class="hint" style="margin-top:0">🤖 ${T("AI fills the menu Thursday before the week. Until then, build it together.", "ИИ заполнит меню в четверг до начала недели. До этого собирайте вместе.")}</div>
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div style="position:relative">
       <div class="stack" id="stack">${stackHtml(deck())}</div>
-      <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-ic">✕</span><span class="tip-arrow">←</span></button>
-      <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-ic">🗓</span><span class="tip-arrow">→</span></button>
+      <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-arrow">←</span></button>
+      <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-arrow">→</span></button>
+    </div>
+    <div class="spin-caption-row">
+      <span>${T("Spin left - Next", "Влево - Дальше")}</span>
+      <span>${T("Spin right - Add to menu", "Вправо - В меню")}</span>
     </div>`;
 }
 function refreshDeck() {
@@ -2611,7 +2617,7 @@ function detailView(d) {
           <div class="ptitle">📅 ${T("Include in weekly menu planning", "Учитывать при планировании недели")}</div>
           <div class="psub">${d.is_active
             ? T("Can be picked by Spin, manual assignment, and the automatic AI weekly fill.", "Может быть выбрано Круткой, назначено вручную или автозаполнением ИИ.")
-            : T("Inactive - hidden from Spin, manual assignment, and AI weekly fill. Still here in your cookbook, and in Wish/Duel.", "Неактивно - скрыто из Крутки, ручного назначения и автозаполнения ИИ. Рецепт остаётся в кулинарной книге, а также в Желаниях и Дуэлях.")}</div>
+            : T("Opted out of manual assignment and the automatic AI weekly fill. Still shows in Spin/Wish/Duel unless you turn on \"Hide inactive recipes\" in the filter panel.", "Не участвует в ручном назначении и автозаполнении ИИ. Всё ещё показывается в Крутке/Желаниях/Дуэлях, если не включить «Скрыть неактивные рецепты» в фильтрах.")}</div>
         </div>
         <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
       </div>
@@ -2856,9 +2862,13 @@ async function toggleRecipeActive(d) {
   detailSaving = false;
   if (!ok) { renderDetailOverlay(); return; }
   await loadCatalog();
-  toast(goingActive
-    ? T("Back in the mix - it can be picked for the weekly menu again.", "Снова участвует в планировании недели.")
-    : T("Marked inactive - hidden from weekly menu planning until switched back on.", "Помечено как неактивное - скрыто из планирования недели до включения обратно."));
+  // Explains both halves of what just happened: (1) what changed for this one
+  // recipe, and (2) that it's still showing up in Spin/Wish right now regardless -
+  // inactive just means "opted out of the AI weekly fill" - and exactly where to
+  // go if they actually want it out of sight (the filter icon by the search bar).
+  stickyToast(goingActive
+    ? T("Back in the mix - eligible for the AI weekly fill again.", "Снова участвует в автозаполнении ИИ.")
+    : T("Marked inactive - opted out of the AI weekly fill, but still shows in Spin/Wish. Want it out of the way too? Tap the filter icon next to the search bar and turn on \"Hide inactive recipes.\"", "Помечено как неактивное - не участвует в автозаполнении ИИ, но всё ещё показывается в Крутке/Желаниях. Хотите убрать совсем? Нажмите на значок фильтра рядом с поиском и включите «Скрыть неактивные рецепты»."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
@@ -3262,6 +3272,17 @@ function toast(msg) {
   document.querySelectorAll(".toast").forEach(t=>t.remove());
   const t = document.createElement("div"); t.className="toast"; t.textContent=msg;
   document.body.appendChild(t); setTimeout(()=>t.remove(), 2200);
+}
+// Same look as toast(), but for messages worth actually reading (e.g. what the
+// quick-hide eye icon just did, and where to go to change the default) - stays
+// up to 15s, or dismisses immediately on tap, instead of the standard 2.2s blip.
+function stickyToast(msg) {
+  document.querySelectorAll(".toast").forEach(t=>t.remove());
+  const t = document.createElement("div"); t.className="toast"; t.textContent=msg;
+  t.style.cursor = "pointer";
+  document.body.appendChild(t);
+  const timer = setTimeout(() => t.remove(), 15000);
+  t.addEventListener("click", () => { clearTimeout(timer); t.remove(); });
 }
 
 // ── boot ──
