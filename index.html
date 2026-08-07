@@ -724,6 +724,7 @@ function snapshotToGame(snap) {
       dish: s.recipe_id,
       cook: s.cook_member_id,
       by: s.assigned_by_member_id,
+      viaAi: s.assigned_via === "ai",
       accepted: !!s.accepted_at,
       leftover: !!s.is_leftover,
       // SPEC_AI_PREFILL.md #19: set only when the scheduled AI pre-fill had to
@@ -736,6 +737,7 @@ function snapshotToGame(snap) {
         dish: s.proposal.recipe_id,
         cook: s.proposal.cook_member_id,
         by: s.proposal.assigned_by_member_id,
+        viaAi: s.proposal.assigned_via === "ai",
       };
     }
     week[s.day_of_week][s.meal_type] = slot;
@@ -838,8 +840,8 @@ const DAYS_RU = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
 const dayN = i => (lang === "ru" ? DAYS_RU[i] : DAYS[i]);
 const MEALS = [
   { k: "breakfast", ic: "🍳", n: "Breakfast", nru: "Завтрак" },
-  { k: "lunch",     ic: "🥪", n: "Lunch",     nru: "Обед" },
-  { k: "dinner",    ic: "🍲", n: "Dinner",    nru: "Ужин" },
+  { k: "lunch",     ic: "🍲", n: "Lunch",     nru: "Обед" },
+  { k: "dinner",    ic: "🍗", n: "Dinner",    nru: "Ужин" },
 ];
 const mealN = m => (lang === "ru" ? m.nru : m.n);
 const dish = id => DISHES.find(d => d.id === id);
@@ -859,6 +861,10 @@ const mem = id => {
 };
 const dName = d => (lang === "ru" ? d.ru : d.en);
 const mName = m => (lang === "ru" ? m.ru : m.en);
+// A slot/proposal's "by" always names the human accountable for it (who hand-picked
+// it, or who triggered the AI fill that picked it) - "viaAi" is a separate flag for
+// whether AI actually chose it, so both facts can render together: "AI (Artem)".
+const assignerLabel = (byId, viaAi) => viaAi ? `🤖 AI (${mName(mem(byId))})` : mName(mem(byId));
 // crown sources: static specials + dishes named in a member's registered top-3
 function specials(d) {
   const s = new Set(d.special);
@@ -925,7 +931,7 @@ function wireQuickFilterRow(root, idPrefix, f, onChange) {
 // below. Every group in the panel is multi-select (a home cook might want to see
 // breakfast-or-lunch options at once); each gets a short "Any" chip/item that clears
 // just that group rather than a per-group "Any meal"/"Any time" long-form label.
-const MEAL_FILTERS = [["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🥪 Lunch","🥪 Обед"],["dinner","🍲 Dinner","🍲 Ужин"]];
+const MEAL_FILTERS = [["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🍲 Lunch","🍲 Обед"],["dinner","🍗 Dinner","🍗 Ужин"]];
 // protein_groups[] (food.family_cookbook_recipes, Tier 1 ingredient rollup) is the
 // real, ingredient-derived field - replaces the legacy protein_type scalar that
 // nothing has written since the pre-pivot cutover. "untagged" is a UI-only bucket for
@@ -1222,12 +1228,12 @@ function aiPopulateWeek() {
   const fillOrPropose = (day, mealKey, dishId, cook, isLeftover = false) => {
     const cur = game.week[day][mealKey];
     if (cur && cur.dish) {
-      game.week[day][mealKey].proposal = { dish: dishId, cook, by: "ai" };
+      game.week[day][mealKey].proposal = { dish: dishId, cook, by: me, viaAi: true };
       overwritten.push(1);
-      events.push(["slot_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me } })]);
+      events.push(["slot_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai" } })]);
     } else {
-      game.week[day][mealKey] = { dish: dishId, cook, by: "ai", accepted: false, leftover: isLeftover };
-      events.push(["slot_filled", slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, is_leftover: isLeftover })]);
+      game.week[day][mealKey] = { dish: dishId, cook, by: me, viaAi: true, accepted: false, leftover: isLeftover };
+      events.push(["slot_filled", slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai", is_leftover: isLeftover })]);
     }
   };
   for (let i = 0; i < 7; i++) {
@@ -1411,7 +1417,7 @@ function declineCook(day, mealKey) {
 }
 function reassignCook(day, mealKey, newCook) {
   const s = game.week[day][mealKey];
-  s.cook = newCook; s.accepted = false; s.by = me;
+  s.cook = newCook; s.accepted = false; s.by = me; s.viaAi = false;
   commitAndSync(
     `${mem(me).en} reassigned ${dish(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`,
     "slot_reassigned",
@@ -1421,7 +1427,7 @@ function reassignCook(day, mealKey, newCook) {
 }
 function acceptProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal;
-  game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, accepted: p.cook === p.by };
+  game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, viaAi: !!p.viaAi, accepted: p.cook === p.by };
   commitAndSync(`${mem(me).en} accepted the swap to ${dish(p.dish).em} on ${DAYS[day]}`, "slot_proposal_accepted", slotPayload(day, mealKey));
 }
 function rejectProposal(day, mealKey) {
@@ -2239,7 +2245,7 @@ function renderMenu() {
       if (hasDish) {
         h += `<div class="slot-dish">${dish(s.dish).em} ${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
-            : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${s.by === "ai" ? "🤖 " + T("suggested by AI", "предложено ИИ") : T("suggested by", "предложил(а)") + " " + mName(mem(s.by))}`}</div>`;
+            : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${T("suggested by", "предложил(а)")} ${assignerLabel(s.by, s.viaAi)}`}</div>`;
         if (awaiting) {
           h += `<div class="mini-row">${s.cook === me
             ? `<button class="mini-btn accept" data-cookacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
@@ -2249,8 +2255,8 @@ function renderMenu() {
         }
         if (s.proposal) {
           const p = s.proposal;
-          const iMade = p.by === me;
-          const proposerLabel = p.by === "ai" ? "🤖 AI" : mName(mem(p.by));
+          const iMade = p.by === me && !p.viaAi;
+          const proposerLabel = assignerLabel(p.by, p.viaAi);
           h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dish(p.dish).em} ${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
             ${iMade
               ? `<div class="slot-cook" style="margin-top:4px">⏳ ${T("waiting for the family to accept your swap", "ждём, пока семья примет твою замену")}</div>`
@@ -2375,7 +2381,7 @@ function stackHtml(dk) {
   return s;
 }
 function renderSpin() {
-  return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2><div class="sub">${T("Swipe left = next. Right = onto the menu.", "Влево = дальше. Вправо = в меню.")}</div></div>
+  return `<div class="screen-title"><h2>${T("Spin the Food", "Крути еду")}</h2></div>
     <div style="display:flex;gap:8px;margin:0 20px 8px">
       <button class="filter-icon-btn" id="add" title="${T("Add a new recipe", "Добавить рецепт")}" aria-label="${T("Add a new recipe", "Добавить рецепт")}">➕</button>
       <div style="position:relative;flex:1 1 auto;min-width:0">
