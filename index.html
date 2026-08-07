@@ -152,8 +152,12 @@
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
   .scard .thin-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
-  .scard .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #fff; color: #444; font-size: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
-  .scard .qhide.off { box-shadow: 0 2px 8px rgba(0,0,0,.22), inset 0 0 0 2px rgba(5,150,105,.85); }
+  /* Icon reflects CURRENT state, not the tap action: open eye = visible (light
+     green circle), closed eye = hidden (orange circle) - an inline SVG for both
+     (not the 🙈 monkey emoji) so "closed eye" reads as an actual shut eyelid,
+     not an unrelated animal. */
+  .scard .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
+  .scard .qhide.off { background: #ffedd5; color: #c2410c; }
   /* Same photo-carousel chrome (nav arrows, dots, pending/approve UI, "add a
      photo" CTA) is reused verbatim on the recipe detail view's hero, via
      photoSlideHtml() - `.dtl-hero` just needs `position:relative` (it already
@@ -2338,6 +2342,11 @@ function photoSlideHtml(d) {
     </label>` : "";
   return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${pendingBadge}${adminActions}${addSlideHtml}` };
 }
+// Reliable cross-platform icons for the quick-hide button (see .scard .qhide) -
+// an actual open/shut eyelid drawn in SVG, not the 🙈 monkey emoji, which reads
+// as "hidden" only by unrelated cultural convention rather than looking like one.
+const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_CLOSED_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c3-4 7-6 10-6s7 2 10 6"/></svg>`;
 function stackHtml(dk) {
   if (!dk.length) return `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
   let s = "";
@@ -2351,12 +2360,11 @@ function stackHtml(dk) {
     // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
     // without opening the detail view. Same is_active toggle as the About tab
     // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
-    // Icon shows the ACTION a tap takes, not the current state: active dish (still
-    // shown) gets the closed eye - tap it to hide; inactive dish (already hidden)
-    // gets the open eye - tap it to show again.
+    // Icon reflects the CURRENT state: open eye (green circle) = visible,
+    // closed eye (orange circle) = hidden - see EYE_OPEN_SVG/EYE_CLOSED_SVG.
     const quickHide = d.is_active
-      ? `<button class="qhide" data-qhide="${d.id}" title="${T("Hide", "Скрыть")}" aria-label="${T("Hide", "Скрыть")}">🙈</button>`
-      : `<button class="qhide off" data-qhide="${d.id}" title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">👁️</button>`;
+      ? `<button class="qhide" data-qhide="${d.id}" title="${T("Hide", "Скрыть")}" aria-label="${T("Hide", "Скрыть")}">${EYE_OPEN_SVG}</button>`
+      : `<button class="qhide off" data-qhide="${d.id}" title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">${EYE_CLOSED_SVG}</button>`;
     const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
       <div class="ph" style="${photo.bgStyle}">${thinBadge}${photo.inner}</div>
@@ -2384,8 +2392,8 @@ function renderSpin() {
       <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-arrow">→</span></button>
     </div>
     <div class="spin-caption-row">
-      <span>${T("Spin left - Next", "Влево - Дальше")}</span>
-      <span>${T("Spin right - Add to menu", "Вправо - В меню")}</span>
+      <span>${T("Next", "Дальше")}</span>
+      <span>${T("Onto Menu", "В меню")}</span>
     </div>`;
 }
 function refreshDeck() {
@@ -2868,7 +2876,7 @@ async function toggleRecipeActive(d) {
   // go if they actually want it out of sight (the filter icon by the search bar).
   stickyToast(goingActive
     ? T("Back in the mix - eligible for the AI weekly fill again.", "Снова участвует в автозаполнении ИИ.")
-    : T("Marked inactive - opted out of the AI weekly fill, but still shows in Spin/Wish. Want it out of the way too? Tap the filter icon next to the search bar and turn on \"Hide inactive recipes.\"", "Помечено как неактивное - не участвует в автозаполнении ИИ, но всё ещё показывается в Крутке/Желаниях. Хотите убрать совсем? Нажмите на значок фильтра рядом с поиском и включите «Скрыть неактивные рецепты»."));
+    : T("Hidden from AI weekly planning. Click the eye icon again to unhide. Stays visible in the Spinner - can be hidden completely in \"Filter\" settings above.", "Скрыто из недельного планирования ИИ. Нажмите на значок глаза ещё раз, чтобы вернуть. Всё ещё видно в Крутке - можно скрыть полностью в настройках «Фильтр» выше."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
