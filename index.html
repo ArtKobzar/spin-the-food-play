@@ -1393,6 +1393,23 @@ function subscribe() {
       table: "events",
       filter: "family_id=eq." + membership.family_id,
     }, () => { pullLatest(); })
+    // Import job completion nudge (SPEC_RECIPE_INGESTION.md #33) - a toast on
+    // top of the Family-section list, never the only place a result lives.
+    // UPDATE-only: INSERT fires immediately on job creation (queued/ready),
+    // which would toast on every extract() call, not just completions.
+    .on("postgres_changes", {
+      event: "UPDATE",
+      schema: "food",
+      table: "recipe_import_jobs",
+      filter: "family_id=eq." + membership.family_id,
+    }, (payload) => {
+      const job = payload.new;
+      if (job.source_type === "youtube" && job.status === "ready") {
+        stickyToast(T("Your YouTube recipe is ready to review! Check Settings → Recipe imports.", "Рецепт из YouTube готов к проверке! Настройки → Импортированные рецепты."));
+      } else if (job.source_type === "youtube" && job.status === "failed") {
+        stickyToast(T("Couldn't extract a recipe from that video.", "Не удалось получить рецепт из этого видео."));
+      }
+    })
     .subscribe();
 }
 
@@ -1806,6 +1823,7 @@ function openSettings() {
       <button class="btn btn-primary" id="inviteBtn" style="width:100%">👥 ${T("Invite family member", "Пригласить члена семьи")}</button>
       <button class="btn btn-ghost" id="dayRulesBtn" style="width:100%;margin-top:8px">🗓 ${T("Day Rules", "Правила дня")}</button>
     ` : ""}
+    <button class="btn btn-ghost" id="importHistoryBtn" style="width:100%;margin-top:8px">📥 ${T("Recipe imports", "Импортированные рецепты")}</button>
     <div class="sect" style="margin-top:16px">${T("My cooking profile", "Мой кулинарный профиль")}</div>
     <div style="font-size:12px;color:#999;margin-bottom:6px">${T("Availability, skill, allergies and what you eat. Redo this if it's out of date or never saved.", "Доступность, навыки, аллергии и что ты ешь. Пройди заново, если данные устарели или не сохранились.")}</div>
     <button class="btn btn-ghost" id="redoProfileBtn" style="width:100%">🔄 ${T("Redo my profile", "Заполнить профиль заново")}</button>
@@ -1824,6 +1842,7 @@ function openSettings() {
   if (inviteBtn) inviteBtn.onclick = () => { closeModal(); openInviteFlow(); };
   const dayRulesBtn = v.querySelector("#dayRulesBtn");
   if (dayRulesBtn) dayRulesBtn.onclick = () => { closeModal(); openDayRules(); };
+  v.querySelector("#importHistoryBtn").onclick = () => { closeModal(); openImportHistory(); };
   const redoProfileBtn = v.querySelector("#redoProfileBtn");
   if (redoProfileBtn) redoProfileBtn.onclick = () => {
     closeModal();
@@ -2520,7 +2539,7 @@ function wireStack() {
   const tipNope = document.getElementById("tipNope"), tipLike = document.getElementById("tipLike"), add = document.getElementById("add");
   if (tipNope) tipNope.onclick = () => fly(-1);
   if (tipLike) tipLike.onclick = () => fly(1);
-  if (add) add.onclick = openAdd;
+  if (add) add.onclick = () => openImportSheet();
   const qhideBtn = topCard?.querySelector(".qhide");
   if (qhideBtn) {
     // Stop the tap/drag from reaching the swipe listeners below - this is a
@@ -2751,7 +2770,8 @@ function detailView(d) {
         <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
       </div>
       <div style="padding:0 16px">
-        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way).", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна).")}</div>` : ""}
+        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way).", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна).")}
+          <div class="mini-row" style="margin-top:8px"><button class="mini-btn" id="dtlEnrichBtn">📸 ${T("Enrich this recipe", "Обогатить рецепт")}</button></div></div>` : ""}
         ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
         ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
           <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
@@ -2838,6 +2858,7 @@ function wireDetailOverlay(wrap, d) {
     const url = photos[photoIdx[d.id] || 0];
     if (url) openPhotoLightbox(url);
   });
+  wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
   wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
     if (detailEditMode) { detailEditMode = false; detailDraft = null; }
     else {
@@ -3463,7 +3484,10 @@ function wishStep2(kind) {
     });
     tab="wish"; render(); toast(T("Wish sent to the family ✨", "Желание отправлено семье ✨")); };
 }
-function openAdd() {
+// Blank-add keeps its own tiny flow (name + emoji + book/day) - unchanged,
+// per map decision #24: blank stays on spin_food_cookbook_add_recipe
+// directly, never routed through spin-food-import.
+function openBlankAdd() {
   const emojis = ["🍝","🥘","🍤","🥧","🍱","🌮"]; let em = "🍝";
   const v = modal(`<h3>➕ ${T("Add a dish", "Добавить блюдо")}</h3>
     <div class="sect">${T("Name", "Название")}</div><input id="nm" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px" placeholder="${T("e.g. Lasagna", "например: Лазанья")}">
@@ -3483,6 +3507,234 @@ function openAdd() {
   };
   v.querySelector("#book").onclick = async () => { const id = await mk(); if (!id) return; closeModal(); toast(T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖")); render(); };
   v.querySelector("#day").onclick = async () => { const id = await mk(); if (!id) return; closeModal(); openAssign(id); };
+}
+
+// ── Recipe Ingestion Pipeline (SPEC_RECIPE_INGESTION.md) ──
+// One sheet, shared by "Add a dish" (targetRecipeId=null) and the thin-card
+// "Enrich this recipe" button (targetRecipeId set). Layout per map ticket
+// #21's final locked variant: one URL field + 📷 camera + ➕ menu.
+function openImportSheet(targetRecipeId = null) {
+  const isEnrich = Boolean(targetRecipeId);
+  const v = modal(`<h3>${isEnrich ? "📸" : "➕"} ${isEnrich ? T("Enrich this recipe", "Обогатить рецепт") : T("Add a dish", "Добавить блюдо")}</h3>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+      <input id="impUrl" type="url" placeholder="${T("Paste a recipe URL...", "Вставьте ссылку на рецепт...")}" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
+      <button class="filter-icon-btn" id="impCamBtn" aria-label="${T("Photo", "Фото")}" style="font-size:18px">📷</button>
+      <input id="impPhoto" type="file" accept="image/*" capture="environment" multiple style="display:none">
+      ${isEnrich ? "" : `<div class="filter-dropdown">
+        <button class="filter-icon-btn" id="impPlusBtn" aria-label="${T("More ways to add", "Другие способы добавить")}" style="font-size:20px;font-weight:800">+</button>
+        <div class="dropdown-menu" id="impPlusMenu" style="display:none;right:0;left:auto">
+          <div class="dropdown-item" id="impBlankItem">📝 ${T("Start blank", "Начать с пустого")}</div>
+        </div>
+      </div>`}
+    </div>
+    <button class="btn btn-primary" id="impGo" style="width:100%;margin-top:16px;opacity:.4" disabled>${T("Continue", "Продолжить")}</button>
+    <div id="impStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px"></div>`);
+
+  const urlInput = v.querySelector("#impUrl");
+  const goBtn = v.querySelector("#impGo");
+  const statusEl = v.querySelector("#impStatus");
+  const setBusy = (busy, msg = "") => {
+    goBtn.disabled = busy || !urlInput.value.trim();
+    goBtn.style.opacity = goBtn.disabled ? .4 : 1;
+    statusEl.textContent = msg;
+    urlInput.disabled = busy;
+    v.querySelector("#impCamBtn").disabled = busy;
+  };
+  urlInput.addEventListener("input", () => setBusy(false));
+
+  v.querySelector("#impPlusBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = v.querySelector("#impPlusMenu");
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  });
+  v.querySelector("#impBlankItem")?.addEventListener("click", () => { closeModal(); openBlankAdd(); });
+
+  const photoInput = v.querySelector("#impPhoto");
+  v.querySelector("#impCamBtn").addEventListener("click", () => photoInput.click());
+  photoInput.addEventListener("change", async () => {
+    const files = Array.from(photoInput.files || []);
+    photoInput.value = "";
+    if (!files.length) return;
+    setBusy(true, T("Uploading photo...", "Загружаем фото..."));
+    const photoUrls = [];
+    for (const f of files) {
+      const url = await uploadImportPhoto(f);
+      if (url) photoUrls.push(url);
+    }
+    if (!photoUrls.length) { setBusy(false); return; }
+    setBusy(true, T("Reading the recipe...", "Читаем рецепт..."));
+    await runImportExtract("photo", { photo_urls: photoUrls }, targetRecipeId, setBusy);
+  });
+
+  goBtn.onclick = async () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    // YouTube auto-detect (map #20/#21) - no separate tab, the URL field
+    // itself routes here. Async per #33: queue and close, no spinner wait.
+    if (/(?:youtube\.com|youtu\.be)/i.test(url)) {
+      setBusy(true, T("Queuing your video...", "Ставим видео в очередь..."));
+      const { data, error } = await sb.functions.invoke("spin-food-import", {
+        body: { source_type: "youtube", action: "extract", payload: { url, target_recipe_id: targetRecipeId } },
+      });
+      if (error || !data?.ok) {
+        setBusy(false, "");
+        toast((error && error.message) || data?.error || T("Couldn't queue that video.", "Не удалось поставить видео в очередь."));
+        return;
+      }
+      closeModal();
+      toast(T("Got it! We'll notify you when your recipe is ready to review.", "Принято! Уведомим, когда рецепт будет готов к проверке."));
+      return;
+    }
+    setBusy(true, T("Reading the recipe...", "Читаем рецепт..."));
+    await runImportExtract("url", { url }, targetRecipeId, setBusy);
+  };
+}
+
+// Uploads directly to the recipe-import-photos Storage bucket at
+// <family_id>/<uuid>.<ext> - no recipe_id exists yet at this point, unlike
+// uploadRecipePhoto() which uploads into an already-saved recipe's folder.
+async function uploadImportPhoto(file) {
+  const familyId = membership?.family_id;
+  if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
+  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
+  const { error: upErr } = await sb.storage.from("recipe-import-photos").upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+  if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return null; }
+  const { data: pub } = sb.storage.from("recipe-import-photos").getPublicUrl(path);
+  return pub?.publicUrl || null;
+}
+
+async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
+  const { data, error } = await sb.functions.invoke("spin-food-import", {
+    body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId } },
+  });
+  if (error) { setBusy(false, ""); toast(error.message || T("Something went wrong.", "Что-то пошло не так.")); return; }
+  if (!data?.ok) { setBusy(false, ""); toast(data?.error || T("Couldn't read that recipe.", "Не удалось прочитать рецепт.")); return; }
+  closeModal();
+  openImportReview(data.draft, data.job_id, targetRecipeId, sourceType);
+}
+
+// Review-before-save screen, per map decision #18 (allergy-safety driven -
+// every extracted draft must be reviewed/editable before it becomes a real
+// recipe row). Deliberately its own lightweight editor rather than reusing
+// detailView()'s edit mode, which is built around an already-saved dish id.
+function openImportReview(draft, jobId, targetRecipeId, sourceType) {
+  let ingredients = (draft.ingredients || []).map(i => ({ ...i }));
+  let instructions = (draft.instructions || []).map(t => (typeof t === "string" ? t : t.text || ""));
+
+  const render = () => {
+    v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
+        <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${T("qty", "кол-во")}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <input data-ingf="unit" value="${ing.unit ?? ""}" placeholder="${T("unit", "ед.")}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <input data-ingf="name_en" value="${ing.name_en ?? ""}" placeholder="${T("ingredient", "ингредиент")}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+      </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients found - add them manually or edit the photo/link.", "Ингредиенты не найдены - добавьте вручную.")}</div>`;
+    v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
+      <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
+        <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
+        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${s}</textarea>
+        <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+      </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No instructions found - add them manually.", "Инструкции не найдены - добавьте вручную.")}</div>`;
+    wireRows();
+  };
+
+  const v = modal(`<h3>👀 ${T("Review before saving", "Проверьте перед сохранением")}</h3>
+    <div class="sect">${T("Title", "Название")}</div>
+    <input id="revTitle" value="${(draft.title || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
+    <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
+    <div id="revIng"></div>
+    <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>
+    <div class="sect" style="margin-top:12px">${T("Instructions", "Инструкции")}</div>
+    <div id="revInstr"></div>
+    <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${T("Add step", "Добавить шаг")}</button>
+    <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${T("Save", "Сохранить")}</button>`);
+
+  function wireRows() {
+    v.querySelectorAll("[data-ingidx]").forEach(row => {
+      const i = Number(row.dataset.ingidx);
+      row.querySelectorAll("[data-ingf]").forEach(inp => inp.addEventListener("input", () => {
+        const f = inp.dataset.ingf;
+        ingredients[i][f] = f === "qty" ? (inp.value === "" ? null : Number(inp.value)) : inp.value;
+      }));
+    });
+    v.querySelectorAll("[data-ingdel]").forEach(btn => btn.addEventListener("click", () => {
+      ingredients.splice(Number(btn.dataset.ingdel), 1); render();
+    }));
+    v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
+      instructions[Number(ta.dataset.instrinput)] = ta.value;
+    }));
+    v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
+      instructions.splice(Number(btn.dataset.instrdel), 1); render();
+    }));
+  }
+  render();
+
+  v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { instructions.push(""); render(); };
+
+  v.querySelector("#revSave").onclick = async () => {
+    const saveBtn = v.querySelector("#revSave");
+    saveBtn.disabled = true; saveBtn.textContent = T("Saving...", "Сохраняем...");
+    const finalDraft = {
+      title: v.querySelector("#revTitle").value.trim(),
+      ingredients: ingredients.filter(i => (i.name_en || "").trim()),
+      instructions: instructions.map(s => s.trim()).filter(Boolean),
+      photo_url: draft.photo_url ?? null,
+    };
+    const { data, error } = await sb.functions.invoke("spin-food-import", {
+      body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
+    });
+    if (error || !data?.ok) {
+      toast((error && error.message) || data?.error || T("Save failed.", "Не удалось сохранить."));
+      saveBtn.disabled = false; saveBtn.textContent = "💾 " + T("Save", "Сохранить");
+      return;
+    }
+    closeModal();
+    await loadCatalog();
+    toast(targetRecipeId ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉") : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
+    render_();
+    if (data.recipe?.id) openDetail(data.recipe.id);
+  };
+}
+// Alias avoids shadowing the local render() closure above with the app's
+// top-level render() while keeping the call obviously "re-render the app".
+function render_() { render(); }
+
+// Family-section ingestion-events list (SPEC_RECIPE_INGESTION.md #33/§3.1) -
+// every source's attempts, not just YouTube's. The durable, authoritative
+// place to find and review an import even if a completion toast is missed.
+async function openImportHistory() {
+  const v = modal(`<h3>📥 ${T("Recipe imports", "Импортированные рецепты")}</h3><div id="impHistList" style="font-size:13px;color:#999">${T("Loading...", "Загрузка...")}</div>`);
+  const { data, error } = await sb.rpc("spin_food_list_import_jobs", { p_limit: 30 });
+  const listEl = v.querySelector("#impHistList");
+  if (error) { listEl.textContent = error.message; return; }
+  const jobs = data || [];
+  if (!jobs.length) { listEl.textContent = T("No imports yet - tap ➕ or Enrich on a Thin Card to start one.", "Импортов пока нет - нажмите ➕ или «Обогатить» на тонкой карточке."); return; }
+  const sourceIcon = { url: "🔗", photo: "📷", youtube: "▶️", document: "📄" };
+  const statusLabel = {
+    queued: T("Queued", "В очереди"), processing: T("Processing...", "Обрабатывается..."),
+    ready: T("Ready to review", "Готово к проверке"), failed: T("Failed", "Не удалось"),
+  };
+  listEl.innerHTML = jobs.map(j => `
+    <div class="card" style="padding:10px 12px;margin-bottom:8px" data-jobid="${j.id}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div>${sourceIcon[j.source_type] || "📥"} ${j.draft?.title || j.error || j.source_type}</div>
+        <div style="font-size:11px;color:${j.status === "failed" ? "#ef4444" : "#888"}">${statusLabel[j.status] || j.status}</div>
+      </div>
+      ${(j.status === "ready" && !j.result_recipe_id) ? `<button class="mini-btn" data-jobreview="${j.id}" style="margin-top:6px">👀 ${T("Review", "Проверить")}</button>` : ""}
+      ${j.result_recipe_id ? `<button class="mini-btn" data-jobopen="${j.result_recipe_id}" style="margin-top:6px">📖 ${T("Open recipe", "Открыть рецепт")}</button>` : ""}
+    </div>`).join("");
+  v.querySelectorAll("[data-jobreview]").forEach(btn => btn.addEventListener("click", () => {
+    const job = jobs.find(j => j.id === btn.dataset.jobreview);
+    if (!job) return;
+    closeModal();
+    openImportReview(job.draft, job.id, job.target_recipe_id, job.source_type);
+  }));
+  v.querySelectorAll("[data-jobopen]").forEach(btn => btn.addEventListener("click", () => { closeModal(); openDetail(btn.dataset.jobopen); }));
 }
 
 function toast(msg) {
