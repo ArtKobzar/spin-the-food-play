@@ -1321,8 +1321,23 @@ function applyRemoteFromSnapshot(snap) {
 
 async function pullLatest() {
   const { data: snap, error } = await sb.rpc("spin_food_snapshot");
-  if (!error && snap) applyRemoteFromSnapshot(snap);
+  if (!error && snap) {
+    clearOfflineBanner();
+    applyRemoteFromSnapshot(snap);
+  } else if (error && !navigator.onLine) {
+    showOfflineBanner();
+  }
 }
+
+function showOfflineBanner() {
+  if (document.querySelector(".offline")) return; // already shown, don't stack
+  document.body.insertAdjacentHTML("afterbegin",
+    `<div class="offline">${T("offline - changes will sync once you're back online", "нет сети - изменения синхронизируются, когда сеть появится")}</div>`);
+}
+function clearOfflineBanner() {
+  document.querySelectorAll(".offline").forEach(el => el.remove());
+}
+window.addEventListener("online", clearOfflineBanner);
 
 async function applyEvent(eventType, payload) {
   const { error } = await sb.rpc("spin_food_apply_event", {
@@ -1330,10 +1345,20 @@ async function applyEvent(eventType, payload) {
     p_payload: payload,
   });
   if (error) {
-    toast("Sync error: " + error.message);
-    document.body.insertAdjacentHTML("afterbegin", '<div class="offline">offline - changes may not sync</div>');
+    // navigator.onLine is the only case that actually means "offline" - any
+    // other RPC failure (validation, permissions, a real server error) is a
+    // distinct problem and showing the same "you're offline" banner for it is
+    // actively misleading. That banner also used to never get cleared, so a
+    // single blip left it stuck on screen (and stacking duplicates) for the
+    // rest of the session regardless of cause (user report, 2026-08-08).
+    if (!navigator.onLine) {
+      showOfflineBanner();
+    } else {
+      toast(T("Sync error: ", "Ошибка синхронизации: ") + error.message);
+    }
     return false;
   }
+  clearOfflineBanner();
   return true;
 }
 
@@ -1598,23 +1623,23 @@ function renderSignInGate() {
 // Invitation onboarding: caller is signed in but has no food.family_members row.
 // If they arrived with ?invite=<token>, show the avatar-role + display-name
 // picker and call spin_food_accept_invitation. Otherwise show a soft error.
-function renderInvitationOnboarding() {
+function renderInvitationOnboarding(preset = null) {
   const email = authSession?.user?.email || "";
   if (!inviteTokenInUrl) {
     app.innerHTML = `<div class="gate">
       <h1>🍲 Spin the Food</h1>
-      <p>Signed in as <b>${email}</b><br>but you're not in a family kitchen yet.</p>
+      <p>${T("Signed in as", "Вошёл(-ла) как")} <b>${email}</b><br>${T("but you're not in a family kitchen yet.", "но ты пока не в семейной кухне.")}</p>
       <p style="color:#888;font-size:14px;line-height:1.5">
-        Ask the family owner to send you an invitation from Settings → Invite family member.
+        ${T("Ask the family owner to send you an invitation from Settings → Invite family member.", "Попроси владельца семьи отправить приглашение через Настройки → Пригласить члена семьи.")}
       </p>
-      <button class="btn btn-ghost" id="signoutBtn" style="width:100%">Sign out</button>
+      <button class="btn btn-ghost" id="signoutBtn" style="width:100%">${T("Sign out", "Выйти")}</button>
     </div>`;
     document.getElementById("signoutBtn").onclick = async () => {
       await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
     };
     return;
   }
-  // Have a token. Pick avatar + name, then submit.
+  // Have a token. Pick language/units, avatar + name, then submit.
   const AVATAR_CHOICES = [
     { r: "mom", em: "👩", en: "Mom", ru: "Мама" },
     { r: "dad", em: "👨", en: "Dad", ru: "Папа" },
@@ -1623,34 +1648,56 @@ function renderInvitationOnboarding() {
     { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
     { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
   ];
-  let selRole = null;
-  let displayName = "";
-  let otherLabel = "";
+  let selRole = preset?.selRole ?? null;
   app.innerHTML = `<div class="ob">
-    <h2 style="font-size:22px;margin-bottom:6px">🍲 Welcome to the family kitchen</h2>
+    <h2 style="font-size:22px;margin-bottom:6px">🍲 ${T("Welcome to the family kitchen", "Добро пожаловать в семейную кухню")}</h2>
     <div style="color:#666;font-size:14px;margin-bottom:18px">
-      Signed in as <b>${email}</b>. Tell us who you are in the family.
+      ${T("Signed in as", "Вошёл(-ла) как")} <b>${email}</b>. ${T("Tell us who you are in the family.", "Расскажи, кто ты в семье.")}
     </div>
-    <div class="sect">Your role</div>
+    <div class="sect">${T("Language", "Язык")}</div>
+    <div class="chips-wrap" id="obLangWrap">
+      <div class="chip ${lang === "en" ? "on" : ""}" data-ol="en">🇬🇧 English</div>
+      <div class="chip ${lang === "ru" ? "on" : ""}" data-ol="ru">🇷🇺 Русский</div>
+    </div>
+    <div class="sect" style="margin-top:10px">${T("Units", "Единицы измерения")}</div>
+    <div class="chips-wrap" id="obUnitsWrap">
+      <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${T("Metric (g, ml, °C)", "Метрическая (г, мл, °C)")}</div>
+      <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${T("Imperial (oz, cups, °F)", "Имперская (унции, чашки, °F)")}</div>
+    </div>
+    <div class="sect" style="margin-top:14px">${T("Your role", "Твоя роль")}</div>
     <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${c.en}</div>
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${T(c.en, c.ru)}</div>
     `).join("")}</div>
-    <div id="otherLabelWrap" style="display:none;margin-top:10px">
-      <div class="sect">What should we call this role?</div>
-      <input id="otherLabelInput" placeholder="e.g. Uncle, Nanny, Roommate" maxlength="30"
+    <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
+      <div class="sect">${T("What should we call this role?", "Как назвать эту роль?")}</div>
+      <input id="otherLabelInput" placeholder="${T("e.g. Uncle, Nanny, Roommate", "напр. Дядя, Няня, Сосед")}" maxlength="30" value="${preset?.otherLabel ?? ""}"
         style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
     </div>
-    <div class="sect" style="margin-top:14px">Your display name</div>
-    <input id="displayNameInput" placeholder="How the family will see your name" maxlength="40"
+    <div class="sect" style="margin-top:14px">${T("Your display name", "Твоё имя")}</div>
+    <input id="displayNameInput" placeholder="${T("How the family will see your name", "Как семья будет видеть твоё имя")}" maxlength="40" value="${preset?.displayName ?? ""}"
       style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
     <button class="btn btn-primary" id="acceptBtn" style="width:100%;margin-top:20px;opacity:.4" disabled>
-      Join the family kitchen →
+      ${T("Join the family kitchen →", "Присоединиться к семейной кухне →")}
     </button>
     <button class="btn btn-ghost" id="signoutBtn2" style="width:100%;margin-top:8px;color:#888">
-      Not you? Sign out
+      ${T("Not you? Sign out", "Это не ты? Выйти")}
     </button>
     <div id="acceptNote" style="color:#888;font-size:13px;margin-top:10px;line-height:1.5"></div>
   </div>`;
+
+  const captureState = () => ({
+    selRole,
+    displayName: nameInput.value,
+    otherLabel: otherInput.value,
+  });
+  document.querySelectorAll("#obLangWrap [data-ol]").forEach(c => c.onclick = () => {
+    saveLangChoice(c.dataset.ol, { forOnboard: true });
+    renderInvitationOnboarding(captureState());
+  });
+  document.querySelectorAll("#obUnitsWrap [data-ou]").forEach(c => c.onclick = () => {
+    saveUnitsChoice(c.dataset.ou);
+    renderInvitationOnboarding(captureState());
+  });
 
   const roleChips = app.querySelectorAll("#roleWrap .chip");
   const otherWrap = document.getElementById("otherLabelWrap");
@@ -1679,6 +1726,7 @@ function renderInvitationOnboarding() {
   });
   otherInput.oninput = validate;
   nameInput.oninput = validate;
+  validate();
 
   document.getElementById("signoutBtn2").onclick = async () => {
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
@@ -1686,7 +1734,7 @@ function renderInvitationOnboarding() {
 
   acceptBtn.onclick = async () => {
     if (acceptBtn.disabled) return;
-    acceptBtn.disabled = true; acceptBtn.textContent = "Joining...";
+    acceptBtn.disabled = true; acceptBtn.textContent = T("Joining...", "Присоединяемся...");
     note.textContent = ""; note.style.color = "#888";
     const { data, error } = await sb.rpc("spin_food_accept_invitation", {
       p_token: inviteTokenInUrl,
@@ -1695,10 +1743,10 @@ function renderInvitationOnboarding() {
       p_other_label: selRole === "other" ? otherInput.value.trim() : null,
     });
     if (error) {
-      note.textContent = "Couldn't join: " + error.message;
+      note.textContent = T("Couldn't join: ", "Не удалось присоединиться: ") + error.message;
       note.style.color = "#ef4444";
       acceptBtn.disabled = false;
-      acceptBtn.textContent = "Try again →";
+      acceptBtn.textContent = T("Try again →", "Попробовать снова →");
       return;
     }
     // Success. Strip ?invite= from the URL so a refresh doesn't retry the flow.
@@ -1745,6 +1793,9 @@ function openSettings() {
       <button class="btn btn-primary" id="inviteBtn" style="width:100%">👥 ${T("Invite family member", "Пригласить члена семьи")}</button>
       <button class="btn btn-ghost" id="dayRulesBtn" style="width:100%;margin-top:8px">🗓 ${T("Day Rules", "Правила дня")}</button>
     ` : ""}
+    <div class="sect" style="margin-top:16px">${T("My cooking profile", "Мой кулинарный профиль")}</div>
+    <div style="font-size:12px;color:#999;margin-bottom:6px">${T("Availability, skill, allergies and what you eat. Redo this if it's out of date or never saved.", "Доступность, навыки, аллергии и что ты ешь. Пройди заново, если данные устарели или не сохранились.")}</div>
+    <button class="btn btn-ghost" id="redoProfileBtn" style="width:100%">🔄 ${T("Redo my profile", "Заполнить профиль заново")}</button>
     <div class="sect" style="margin-top:16px">${T("Session", "Сессия")}</div>
     <button class="btn btn-ghost" id="signoutBtn3" style="width:100%">${T("Sign out", "Выйти")}</button>`);
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
@@ -1760,6 +1811,16 @@ function openSettings() {
   if (inviteBtn) inviteBtn.onclick = () => { closeModal(); openInviteFlow(); };
   const dayRulesBtn = v.querySelector("#dayRulesBtn");
   if (dayRulesBtn) dayRulesBtn.onclick = () => { closeModal(); openDayRules(); };
+  const redoProfileBtn = v.querySelector("#redoProfileBtn");
+  if (redoProfileBtn) redoProfileBtn.onclick = () => {
+    closeModal();
+    // Clear the local cache too, not just in-memory state - otherwise load()
+    // would just restore the old answers from stf_profile_<me> on next render.
+    stfDel(profileCacheKey(me));
+    if (game?.profiles) delete game.profiles[me];
+    obReset();
+    render();
+  };
   v.querySelector("#signoutBtn3").onclick = async () => {
     closeModal();
     await sb.auth.signOut();
@@ -2178,7 +2239,16 @@ function renderOnboard() {
     cacheProfile(me, game.profiles[me]);
     const profilePayload = {
       is_cook: !!ob.isCook,
-      allergen_flags: ob.allergies || [],
+      // "none" is a client-only sentinel (picking it just clears any other chips -
+      // see the data-al handler above) - it is NOT a row in food.allergen_classes,
+      // so sending it through crashes food.validate_allergen_slugs server-side
+      // with "unknown allergen slug: none" and the whole member_profile_updated
+      // event never lands (user report, 2026-08-08: an invitee who picked "None"
+      // for allergies - the single most common choice - got a hard sync failure
+      // right after onboarding, misread as an offline error, and her is_cook/
+      // eater_profile/cook_profile stayed null in food.family_members forever
+      // since nothing ever retried the failed write).
+      allergen_flags: (ob.allergies || []).filter(a => a !== "none"),
       eater_profile: { rating: ob.rating ?? null, top3: ob.top3 || "", eatGrid: ob.eatGrid || {}, registeredAt: Date.now() },
       cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {} },
     };
