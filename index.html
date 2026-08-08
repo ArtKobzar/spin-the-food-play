@@ -89,7 +89,7 @@
 
   /* menu (D) */
   .menu-ai-tip { margin: 0 16px 10px; padding: 10px 14px; background: var(--amber-tint); color: var(--amber-text); border-radius: 12px; font-size: 12.5px; line-height: 1.5; }
-  .menu-ai-tip-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+  .menu-confirm-row { margin: 4px 16px 16px; padding: 10px 14px; background: #1f2937; color: #fff; border-radius: 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
   .menu-list { padding: 0 14px; display: flex; flex-direction: column; gap: 8px; }
   .day-block { background: #fff; border: 2px solid #eee; border-radius: 16px; overflow: hidden; }
   .day-block.locked { border-color: var(--green); }
@@ -2317,14 +2317,7 @@ function renderMenu() {
   const g = game;
   const anyMeals = g.week.some(d => d.breakfast || d.lunch || d.dinner);
   let h = `<div class="screen-title"><h2>${T("This week's menu", "Меню недели")}</h2><div class="sub">${T("Build it together, or let AI draft a full week.", "Собирайте вместе или доверьте черновик ИИ.")}</div></div>
-    <div class="menu-ai-tip">
-      <div>💡 ${T("Slots nobody fills get auto-filled by AI every Thursday 6am, taking into account all your family's dietary settings. The assigned cooks still have to Accept to confirm their assignments. AI auto-confirms the menu on Sundays 20:00.", "Слоты, которые никто не заполнил, автоматически получают блюдо от ИИ каждый четверг в 6:00, с учётом диетических настроек всей семьи. Назначенным поварам всё равно нужно подтвердить, нажав «Принять». ИИ автоматически подтверждает меню в воскресенье в 20:00.")}</div>
-      <div class="menu-ai-tip-row">
-        ${g.locked
-          ? `<span>🔒 ${T("Confirmed - grocery list ready", "Подтверждено - список покупок готов")}</span><button class="mini-btn" id="unlock">${T("reopen", "открыть")}</button>`
-          : `<span></span><button class="mini-btn" id="confirm">${T("Confirm now", "Подтвердить")}</button>`}
-      </div>
-    </div>
+    <div class="menu-ai-tip">💡 ${T("Slots nobody fills get auto-filled by AI every Thursday 6am, taking into account all your family dietary settings. AI locks the menu on Sundays 20:00.", "Слоты, которые никто не заполнил, автоматически получают блюдо от ИИ каждый четверг в 6:00, с учётом диетических настроек семьи. ИИ закрывает меню в воскресенье в 20:00.")}</div>
     <button class="ai-fill" id="aiFill">🤖 ${T("Generate a full AI menu", "Собрать меню на неделю с ИИ")}<small>${anyMeals ? T("refreshes AI's own picks instantly — meals you or family added need approval to swap", "мгновенно обновляет собственные варианты ИИ — блюда, добавленные вами или семьёй, меняются только с одобрением") : T("empty slots get filled — cooks accept their meals", "заполнит пустые слоты — повара подтвердят")}</small></button>
     <div class="menu-list">`;
   g.week.forEach((dayW, di) => {
@@ -2372,6 +2365,8 @@ function renderMenu() {
     h += `</div>`;
   });
   h += `</div>${g.locked ? `<div class="banner">🛒 ${T("Grocery list generated from the locked menu", "Список покупок собран из закрытого меню")}</div>` : ""}`;
+  h += `<div class="menu-confirm-row"><span>${g.locked ? "🔒 " + T("Confirmed - grocery list ready", "Подтверждено - список покупок готов") : "⏰ " + T("Auto-confirms Sunday 20:00", "Подтвердится в вс 20:00")}</span>
+    ${g.locked ? `<button class="mini-btn" id="unlock">${T("reopen", "открыть")}</button>` : `<button class="mini-btn" id="confirm">${T("Confirm now", "Подтвердить")}</button>`}</div>`;
   return h;
 }
 
