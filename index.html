@@ -145,6 +145,7 @@
   .search-suggest-item { padding: 9px 11px; font-size: 14px; border-radius: 9px; cursor: pointer; }
   .search-suggest-item:hover { background: #f8fafc; }
   .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
+  .wish-stack { height: 300px; margin: 0; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
@@ -3348,36 +3349,99 @@ function wishStep2(kind) {
       </div>
       ${quickFilterRowHtml("dishAdv", dishAdv)}
       <div style="margin-bottom:8px">${advFilterPanelHtml("dishAdv", dishAdv, dishPanel.open)}</div>
-      <div class="chips-wrap" id="WD"></div>` : ""}
+      <div id="wishPick" style="margin-bottom:8px"></div>` : ""}
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div>
     <div class="chips-wrap" id="WK"><div class="chip on" data-c="any">🎲 ${T("Anyone", "Кто угодно")}</div>${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
     ${target ? "" : `<div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>`}
     <button class="btn btn-primary" id="wgo" style="width:100%;margin-top:16px;opacity:.4">✨ ${T("Wish it", "Загадать")}</button>`);
   const ok = () => selDay!==null && (kind==="choice" || (kind==="dish"?selDish:selCui));
-  function renderDishList() {
+  // Wish's dish step mimics the Spin deck (user report, 2026-08-08): the same
+  // swipeable card stack, search bar, and filter row instead of a flat chip
+  // list - browsing for a wish should feel like browsing for the menu itself,
+  // not a different, lesser picker. Own local deck order (wishOrder) so
+  // skipping a card here never disturbs the real Spin screen's deckOrder.
+  let wishOrder = DISHES.filter(d => d.dish_role !== "component").map(d => d.id);
+  function wishDeckList() {
     const q = dishSearch.trim().toLowerCase();
-    const list = DISHES.filter(d => {
+    return wishOrder.map(dish).filter(d => {
+      if (d.dish_role === "component") return false;
       if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
       return matchesAdvFilters(d, dishAdv);
     });
-    const wd = v.querySelector("#WD");
-    wd.innerHTML = list.length
-      ? list.map(d => `<div class="chip ${selDish===d.id?"on":""}" data-i="${d.id}">${d.em} ${dName(d)}</div>`).join("")
-      : `<div style="color:#aaa;font-size:13px;padding:6px 0">${T("No recipes match", "Нет подходящих рецептов")}</div>`;
-    wd.querySelectorAll("[data-i]").forEach(c => c.onclick = () => { selDish = c.dataset.i; renderDishList(); upd(); });
   }
-  const upd = () => { v.querySelectorAll("#WD .chip").forEach(c=>c.classList.toggle("on",c.dataset.i===selDish));
-    v.querySelectorAll("#WC .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCui));
+  function wishStackHtml(list) {
+    let s = "";
+    list.slice(0, 3).reverse().forEach((d, i, arr) => {
+      const top = i === arr.length - 1, dep = arr.length - 1 - i;
+      const photo = photoSlideHtml(d);
+      s += `<div class="scard ${top ? "top" : ""}" data-dish="${d.id}" style="transform:translateY(${dep*-6}px) scale(${1-dep*.04});z-index:${10-dep}">
+        <div class="ph" style="${photo.bgStyle}"></div>
+        <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+        <div class="stamp yes">${T("PICK!", "БЕРУ!")}</div><div class="stamp no">${T("SKIP", "ДАЛЬШЕ")}</div></div>`;
+    });
+    return s;
+  }
+  function wireWishStack() {
+    const topCard = v.querySelector("#wishStack .scard.top");
+    const flyWish = dir => {
+      if (!topCard) return;
+      const id = topCard.dataset.dish;
+      topCard.style.transition = "transform .3s, opacity .3s";
+      topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
+      setTimeout(() => {
+        wishOrder = [...wishOrder.filter(x => x !== id), id];
+        if (dir > 0) selDish = id;
+        renderWishPicker(); upd();
+      }, 260);
+    };
+    const tipNope = v.querySelector("#wishTipNope"), tipLike = v.querySelector("#wishTipLike");
+    if (tipNope) tipNope.onclick = () => flyWish(-1);
+    if (tipLike) tipLike.onclick = () => flyWish(1);
+    if (topCard) {
+      let sx=0,dx=0,drag=false;
+      topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
+      topCard.addEventListener("pointermove", e => { if(!drag)return; dx=e.clientX-sx; topCard.style.transform=`translateX(${dx}px) rotate(${dx/18}deg)`;
+        topCard.querySelector(".stamp.yes").style.opacity = dx>40?Math.min(1,dx/120):0; topCard.querySelector(".stamp.no").style.opacity = dx<-40?Math.min(1,-dx/120):0; });
+      topCard.addEventListener("pointerup", () => { drag=false; if(dx>90)flyWish(1); else if(dx<-90)flyWish(-1);
+        else { topCard.style.transition="transform .2s"; topCard.style.transform=""; topCard.querySelectorAll(".stamp").forEach(s=>s.style.opacity=0); } dx=0; });
+    }
+  }
+  function renderWishPicker() {
+    const box = v.querySelector("#wishPick");
+    if (!box) return;
+    if (selDish) {
+      const d = dish(selDish);
+      const photo = photoSlideHtml(d);
+      box.innerHTML = `<div class="scard" style="position:relative;height:auto">
+          <div class="ph" style="${photo.bgStyle};height:120px"></div>
+          <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+        </div>
+        <button class="mini-btn" id="wishChange" style="margin-top:8px">🔄 ${T("Change dish", "Выбрать другое")}</button>`;
+      const chg = box.querySelector("#wishChange");
+      if (chg) chg.onclick = () => { selDish = null; renderWishPicker(); upd(); };
+      return;
+    }
+    const list = wishDeckList();
+    box.innerHTML = list.length
+      ? `<div style="position:relative">
+          <div class="stack wish-stack" id="wishStack">${wishStackHtml(list)}</div>
+          <button class="swipe-tip left" id="wishTipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-arrow">←</span></button>
+          <button class="swipe-tip right" id="wishTipLike" title="${T("Pick this dish", "Выбрать это блюдо")}" aria-label="${T("Pick this dish", "Выбрать это блюдо")}"><span class="tip-arrow">→</span></button>
+        </div>`
+      : `<div style="text-align:center;color:#aaa;padding:24px 0">${T("No recipes match", "Нет подходящих рецептов")}</div>`;
+    wireWishStack();
+  }
+  const upd = () => { v.querySelectorAll("#WC .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCui));
     v.querySelectorAll("#WK .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCook));
     v.querySelectorAll("#WY .chip").forEach(c=>c.classList.toggle("on",+c.dataset.d===selDay));
     v.querySelector("#wgo").style.opacity = ok()?1:.4; };
   if (kind === "dish") {
-    renderDishList();
-    v.querySelector("#dishSearch").addEventListener("input", e => { dishSearch = e.target.value; renderDishList(); });
-    wireQuickFilterRow(v, "dishAdv", dishAdv, renderDishList);
+    renderWishPicker();
+    v.querySelector("#dishSearch").addEventListener("input", e => { dishSearch = e.target.value; renderWishPicker(); });
+    wireQuickFilterRow(v, "dishAdv", dishAdv, renderWishPicker);
     wireFilterToggle(v, "dishAdv", dishPanel);
-    wireAdvFilterPanel(v, "dishAdv", dishAdv, renderDishList);
+    wireAdvFilterPanel(v, "dishAdv", dishAdv, renderWishPicker);
     wireSearchOpensFilters(v, "dishSearch", "dishAdv", dishPanel);
   }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
