@@ -40,10 +40,6 @@
   .ob-big { display: flex; flex-direction: column; gap: 12px; }
   .ob-big .btn { font-size: 17px; padding: 17px; }
   .ob-note { color: #999; font-size: 13px; padding-top: 12px; }
-  .rate-row { display: flex; flex-wrap: wrap; gap: 7px; }
-  .rate-btn { width: 44px; height: 44px; border-radius: 12px; border: 1.5px solid #e5e7eb; background: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
-  .rate-btn.on { background: var(--amber); color: var(--amber-text); border-color: var(--amber-d); }
-  .rate-btn.seven { color: #ccc; text-decoration: line-through; }
   .ob-text { width: 100%; min-height: 110px; border: 2px solid #e5e7eb; border-radius: 16px; padding: 12px; font-size: 15px; font-family: inherit; resize: none; background: #fff; }
   .ob-next { margin-top: auto; }
   .mealgrid { display: grid; grid-template-columns: 52px repeat(3, 1fr); gap: 6px; font-size: 12px; }
@@ -777,11 +773,12 @@ function snapshotToGame(snap) {
     profiles[m.member_id] = {
       isCook: !!m.is_cook,
       allergies: m.allergen_flags || [],
-      rating: m.eater_profile?.rating ?? null,
       top3: m.eater_profile?.top3 || "",
       eatGrid: m.eater_profile?.eatGrid || {},
       avail: m.cook_profile?.avail || [],
       cookGrid: m.cook_profile?.cookGrid || {},
+      techniques: m.cook_profile?.techniques || [],
+      appliances: m.cook_profile?.appliances || [],
       registeredAt: m.eater_profile?.registeredAt || Date.now(),
     };
   }
@@ -1527,22 +1524,26 @@ function renderLangGate() {
 // the invitee is redirected back to this page with the session established
 // and the invite token still in the URL (if any).
 function renderSignInGate() {
-  // Language-agnostic since the user may not have picked a language yet.
+  // Driven by whatever language the device-level gate already picked
+  // (render() runs that gate before this one) - only falls back to English
+  // if somehow reached with no language chosen yet.
   const hasInvite = Boolean(inviteTokenInUrl);
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>${hasInvite ? "You've been invited to a family kitchen.<br>Sign in with your email to join." : "Sign in to your family kitchen"}</p>
+    <p>${hasInvite
+      ? T("You've been invited to a family kitchen.<br>Sign in with your email to join.", "Тебя пригласили в семейную кухню.<br>Войди по email, чтобы присоединиться.")
+      : T("Sign in to your family kitchen", "Войди в семейную кухню")}</p>
     <input id="signinEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"
       style="width:100%;padding:14px;font-size:16px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
-    <button class="btn btn-primary" id="signinGo" style="width:100%">Send magic link ✉️</button>
+    <button class="btn btn-primary" id="signinGo" style="width:100%">${T("Send magic link ✉️", "Отправить ссылку ✉️")}</button>
     <div id="signinCodeBox" style="display:none;flex-direction:column;gap:14px;margin-top:4px">
-      <input id="signinCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="code from email"
+      <input id="signinCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="${T("code from email", "код из письма")}"
         style="width:100%;padding:14px;font-size:20px;letter-spacing:4px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
-      <button class="btn btn-primary" id="signinVerify" style="width:100%">Verify code</button>
-      <button class="btn btn-ghost" id="signinResend" style="width:100%">Resend</button>
+      <button class="btn btn-primary" id="signinVerify" style="width:100%">${T("Verify code", "Подтвердить код")}</button>
+      <button class="btn btn-ghost" id="signinResend" style="width:100%">${T("Resend", "Отправить снова")}</button>
     </div>
     <div id="signinNote" style="color:#888;font-size:13px;line-height:1.5">
-      We'll email you a one-tap link. No password.
+      ${T("We'll email you a one-tap link. No password.", "Пришлём ссылку на email. Пароль не нужен.")}
     </div>
   </div>`;
   const input = document.getElementById("signinEmail");
@@ -1556,11 +1557,11 @@ function renderSignInGate() {
   const send = async () => {
     const email = (input.value || "").trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      note.textContent = "That doesn't look like a valid email.";
+      note.textContent = T("That doesn't look like a valid email.", "Похоже, это не корректный email.");
       note.style.color = "#ef4444";
       return false;
     }
-    btn.disabled = true; btn.textContent = "Sending...";
+    btn.disabled = true; btn.textContent = T("Sending...", "Отправляю...");
     // The redirect URL preserves invite + family params so a fresh browser
     // that opens the emailed link lands in the same room as the owner.
     const redirectUrl = new URL(location.href);
@@ -1571,9 +1572,9 @@ function renderSignInGate() {
       options: { emailRedirectTo: redirectUrl.toString() },
     });
     if (error) {
-      note.textContent = "Send failed: " + error.message;
+      note.textContent = T("Send failed: ", "Не удалось отправить: ") + error.message;
       note.style.color = "#ef4444";
-      btn.disabled = false; btn.textContent = "Send magic link ✉️";
+      btn.disabled = false; btn.textContent = T("Send magic link ✉️", "Отправить ссылку ✉️");
       return false;
     }
     sentEmail = email;
@@ -1582,7 +1583,10 @@ function renderSignInGate() {
     // magic-link token before a human ever clicks it. The 6-digit code in the
     // same email is a reliable fallback since there's no link for a scanner
     // to consume.
-    note.innerHTML = `📬 Check <b>${email}</b><br>Tap the link, or type the code from the same email below.<br>Expires in 1 hour.`;
+    note.innerHTML = T(
+      `📬 Check <b>${email}</b><br>Tap the link, or type the code from the same email below.<br>Expires in 1 hour.`,
+      `📬 Проверь <b>${email}</b><br>Нажми на ссылку или введи код из того же письма ниже.<br>Действует 1 час.`
+    );
     note.style.color = "#059669";
     btn.style.display = "none";
     input.disabled = true;
@@ -1593,16 +1597,16 @@ function renderSignInGate() {
   const verify = async () => {
     const code = (codeInput.value || "").trim();
     if (!/^\d{6,10}$/.test(code)) {
-      note.textContent = "Enter the numeric code from the email.";
+      note.textContent = T("Enter the numeric code from the email.", "Введи числовой код из письма.");
       note.style.color = "#ef4444";
       return;
     }
-    verifyBtn.disabled = true; verifyBtn.textContent = "Verifying...";
+    verifyBtn.disabled = true; verifyBtn.textContent = T("Verifying...", "Проверяю...");
     const { error } = await sb.auth.verifyOtp({ email: sentEmail, token: code, type: "email" });
     if (error) {
-      note.textContent = "Verify failed: " + error.message;
+      note.textContent = T("Verify failed: ", "Не удалось подтвердить: ") + error.message;
       note.style.color = "#ef4444";
-      verifyBtn.disabled = false; verifyBtn.textContent = "Verify code";
+      verifyBtn.disabled = false; verifyBtn.textContent = T("Verify code", "Подтвердить код");
       return;
     }
     // onAuthStateChange picks up the new session and re-renders.
@@ -1978,7 +1982,7 @@ function openDayRules() {
 
 // ── onboarding (registration gate - every member passes it once) ──
 let ob = null;
-function obReset() { ob = { step: 0, isCook: null, avail: [], cookGrid: {}, rating: null, top3: "", allergies: [], eatGrid: {} }; }
+function obReset() { ob = { step: 0, isCook: null, avail: [], cookGrid: {}, techniques: [], appliances: [], top3: "", allergies: [], eatGrid: {} }; }
 // Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
 // declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
 const OB_ALG = [
@@ -2091,7 +2095,7 @@ function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell,
     cell.addEventListener("lostpointercapture", end);
   });
 }
-function obSteps() { return ob.isCook === false ? ["cookq","eat","done"] : ["cookq","avail","cookweek","rate","top3","eat","done"]; }
+function obSteps() { return ob.isCook === false ? ["cookq","eat","done"] : ["cookq","avail","cookweek","kit","top3","eat","done"]; }
 function renderOnboard() {
   if (!ob) obReset();
   const t = T; // language already chosen at the very first screen; carries through
@@ -2130,12 +2134,13 @@ function renderOnboard() {
         }).join("")}
       </div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
-  } else if (cur === "rate") {
-    inner = `<div class="ob-q">${t("Rate your cooking skills", "Оцени свои кулинарные навыки")}</div>
-      <div class="rate-row">${Array.from({length:10},(_,i)=>i+1).map(n =>
-        `<button class="rate-btn ${ob.rating === n ? "on" : ""} ${n === 7 ? "seven" : ""}" data-rate="${n}">${n}</button>`).join("")}</div>
-      <div class="ob-note">${t("Yes, there is no 7. Decide.", "Да, семёрки нет. Определись.")}</div>
-      <button class="btn btn-primary ob-next" id="obNext" ${ob.rating ? "" : `disabled style="opacity:.4"`}>${t("Next", "Дальше")}</button>`;
+  } else if (cur === "kit") {
+    inner = `<div class="ob-q">${t("Your kitchen skills", "Твои кулинарные навыки")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which techniques can you cook with? Pick as many as apply.", "Какими техниками готовки ты владеешь? Выбери все подходящие.")}</div>
+      <div class="chips-wrap" style="margin-bottom:14px">${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which appliances do you have and use?", "Какая техника есть у тебя дома и используется?")}</div>
+      <div class="chips-wrap">${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}</div>
+      <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else if (cur === "top3") {
     inner = `<div class="ob-q">${t("Your top-3 dishes to cook for your loved ones", "Твои топ-3 блюда для любимых")}</div>
       <textarea class="ob-text" id="obTop3" placeholder="${t("e.g. plov, borscht, syrniki...", "например: плов, борщ, сырники...")}">${ob.top3}</textarea>
@@ -2164,7 +2169,8 @@ function renderOnboard() {
     inner = `<div class="ob-q">🎉 ${t("Profile ready!", "Профиль готов!")}</div>
       <div class="ob-sum">
         ${ob.isCook ? `👨‍🍳 ${t("Cook", "Повар")}: ${ob.avail.map(k => MEALS.find(m => m.k === k).ic).join(" ")}<br>
-        📊 ${t("Skill", "Навык")}: ${ob.rating ?? "-"}/10<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
+        🔧 ${t("Techniques", "Техники")}: ${ob.techniques.length ? ob.techniques.length : t("none picked", "не выбрано")}<br>
+        🍳 ${t("Appliances", "Техника на кухне")}: ${ob.appliances.length ? ob.appliances.length : t("none picked", "не выбрано")}<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
         ⚠️ ${ob.allergies.length ? ob.allergies.join(", ") : t("no allergies", "без аллергий")}
       </div>
       <button class="btn btn-primary ob-next" id="obDone">${t("To this week's menu →", "К меню недели →")}</button>`;
@@ -2201,10 +2207,15 @@ function renderOnboard() {
       onEnd: () => refreshCookBulkDims(grid),
     });
   }
-  app.querySelectorAll("[data-rate]").forEach(b => b.onclick = () => {
-    const n = +b.dataset.rate;
-    if (n === 7) { toast(T("There is no 7. Be honest.", "Семёрки нет. Будь честен.")); return; }
-    ob.rating = n; render();
+  app.querySelectorAll("[data-tech]").forEach(b => b.onclick = () => {
+    const k = b.dataset.tech;
+    ob.techniques = ob.techniques.includes(k) ? ob.techniques.filter(x => x !== k) : [...ob.techniques, k];
+    render();
+  });
+  app.querySelectorAll("[data-appl]").forEach(b => b.onclick = () => {
+    const k = b.dataset.appl;
+    ob.appliances = ob.appliances.includes(k) ? ob.appliances.filter(x => x !== k) : [...ob.appliances, k];
+    render();
   });
   app.querySelectorAll("[data-al]").forEach(b => b.onclick = () => {
     const k = b.dataset.al;
@@ -2235,7 +2246,7 @@ function renderOnboard() {
   };
   const done = document.getElementById("obDone");
   if (done) done.onclick = async () => {
-    game.profiles[me] = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, rating: ob.rating, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
+    game.profiles[me] = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
     cacheProfile(me, game.profiles[me]);
     const profilePayload = {
       is_cook: !!ob.isCook,
@@ -2249,8 +2260,14 @@ function renderOnboard() {
       // eater_profile/cook_profile stayed null in food.family_members forever
       // since nothing ever retried the failed write).
       allergen_flags: (ob.allergies || []).filter(a => a !== "none"),
-      eater_profile: { rating: ob.rating ?? null, top3: ob.top3 || "", eatGrid: ob.eatGrid || {}, registeredAt: Date.now() },
-      cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {} },
+      eater_profile: { top3: ob.top3 || "", eatGrid: ob.eatGrid || {}, registeredAt: Date.now() },
+      // Techniques/appliances are cooking capability, not eating preference - they
+      // live in cook_profile (2026-08-08: replaced the old 1-10 "rate your skills"
+      // slider, which was too coarse to be useful for matching recipes to what a
+      // cook can actually make - a controlled-vocabulary multiselect against the
+      // same food.techniques/food.appliances taxonomy recipes are tagged with is
+      // directly comparable and opens the door to skill/equipment-aware AI-fill).
+      cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {}, techniques: ob.techniques || [], appliances: ob.appliances || [] },
     };
     ob = null; tab = "menu";
     await commitAndSync(`${mem(me).en} registered their profile`, "member_profile_updated", profilePayload);
@@ -2313,7 +2330,7 @@ function renderMenu() {
         : "";
       h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main">`;
       if (hasDish) {
-        h += `<div class="slot-dish">${dish(s.dish).em} ${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
+        h += `<div class="slot-dish">${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
             : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${T("suggested by", "предложил(а)")} ${assignerLabel(s.by, s.viaAi)}`}</div>`;
         if (awaiting) {
@@ -2327,7 +2344,7 @@ function renderMenu() {
           const p = s.proposal;
           const iMade = p.by === me && !p.viaAi;
           const proposerLabel = assignerLabel(p.by, p.viaAi);
-          h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dish(p.dish).em} ${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
+          h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
             ${iMade
               ? `<div class="slot-cook" style="margin-top:4px">⏳ ${T("waiting for the family to accept your swap", "ждём, пока семья примет твою замену")}</div>`
               : `<div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
@@ -2568,6 +2585,14 @@ const TECHNIQUES = [
   "boiled", "simmered", "steamed", "braised_stewed", "sauteed", "pan_fried", "deep_fried",
   "sous_vide_cooked", "raw",
 ];
+// Must match food.appliances (20260801120000_food_ontology_v1.sql) exactly, minus
+// the "raw" row - that one means "no appliance needed" on a recipe, which isn't a
+// meaningful answer to "which appliances do you own/use" on a member's profile.
+const APPLIANCES = [
+  "stovetop_pan", "wok", "oven", "air_fryer", "deep_fryer", "grill_bbq",
+  "slow_cooker", "pressure_cooker", "sous_vide", "microwave", "bread_maker",
+  "blender_food_processor",
+];
 
 function dishRoleLabel(v) {
   return ({ main: T("Main dish", "Основное блюдо"), side: T("Side dish", "Гарнир"), component: T("Component", "Компонент") })[v] || v;
@@ -2589,6 +2614,16 @@ function techLabel(v) {
     sauteed: T("Sauteed", "Обжаренное с помешиванием"), pan_fried: T("Pan-fried", "Жареное на сковороде"),
     deep_fried: T("Deep-fried", "Во фритюре"), sous_vide_cooked: T("Sous vide", "Су-вид"),
     raw: T("Raw / no cook", "Сырое"),
+  })[v] || v;
+}
+function applianceLabel(v) {
+  return ({
+    stovetop_pan: T("Stovetop pan", "Сковорода на плите"), wok: T("Wok", "Вок"),
+    oven: T("Oven", "Духовка"), air_fryer: T("Air fryer", "Аэрогриль"),
+    deep_fryer: T("Deep fryer", "Фритюрница"), grill_bbq: T("Grill / BBQ", "Гриль / BBQ"),
+    slow_cooker: T("Slow cooker", "Мультиварка"), pressure_cooker: T("Pressure cooker", "Скороварка"),
+    sous_vide: T("Sous vide", "Су-вид"), microwave: T("Microwave", "Микроволновка"),
+    bread_maker: T("Bread maker", "Хлебопечка"), blender_food_processor: T("Blender / food processor", "Блендер / кухонный комбайн"),
   })[v] || v;
 }
 // Formats a plain number for display, stripping trailing zeros (matches
