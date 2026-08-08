@@ -1535,7 +1535,7 @@ function renderSignInGate() {
     <input id="signinEmail" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com"
       style="width:100%;padding:14px;font-size:16px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
     <button class="btn btn-primary" id="signinGo" style="width:100%">Send magic link ✉️</button>
-    <div id="signinCodeBox" style="display:none">
+    <div id="signinCodeBox" style="display:none;flex-direction:column;gap:14px;margin-top:4px">
       <input id="signinCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="code from email"
         style="width:100%;padding:14px;font-size:20px;letter-spacing:4px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;text-align:center">
       <button class="btn btn-primary" id="signinVerify" style="width:100%">Verify code</button>
@@ -1586,7 +1586,7 @@ function renderSignInGate() {
     note.style.color = "#059669";
     btn.style.display = "none";
     input.disabled = true;
-    codeBox.style.display = "block";
+    codeBox.style.display = "flex";
     codeInput.focus();
     return true;
   };
