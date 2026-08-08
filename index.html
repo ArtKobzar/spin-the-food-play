@@ -746,6 +746,7 @@ function snapshotToGame(snap) {
     by: w.wished_by_member_id,
     votes: w.votes || [],
     day: w.target_day,
+    meal: w.target_meal_type || "dinner",
     committed: w.status === "granted" ? "granted" : null,
   }));
   const duel = snap.duel ? {
@@ -3050,7 +3051,7 @@ function renderWish() {
     const iVoted = w.votes.includes(me);
     h += `<div class="card ${commit ? "granted" : ""}"><div class="wish-head">
       <div class="wish-dish">${w.kind==="dish"?dish(w.dish).em:w.kind==="cuisine"?"🌍":"🎁"}</div>
-      <div><div class="wish-title">${title}</div><div class="wish-by">${by.em} ${mName(by)} ${T("wishes · from", "загадал(а) · от")} ${want} · ${dayN(w.day)}</div></div></div>
+      <div><div class="wish-title">${title}</div><div class="wish-by">${by.em} ${mName(by)} ${T("wishes · from", "загадал(а) · от")} ${want} · ${dayN(w.day)} ${MEALS.find(m=>m.k===w.meal)?.ic || ""}</div></div></div>
       <div class="dots">${w.votes.map(v => `<div class="dot">${mem(v).em}</div>`).join("")} ${w.votes.length} ${T("votes", "голосов")}</div>`;
     if (commit) h += `<div class="status ok">✅ ${mName(commit)} ${commit.em} ${T("takes it - added to the menu · +5 hero pts", "берёт - добавлено в меню · +5 очков героя")}</div>`;
     else {
@@ -3131,7 +3132,7 @@ function wire() {
   document.querySelectorAll("[data-propacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.propacc.split("-"); acceptProposal(+d,k); });
   document.querySelectorAll("[data-proprej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.proprej.split("-"); rejectProposal(+d,k); });
   document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(T("Swipe right to fill ", "Свайпни вправо, чтобы заполнить ") + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic); });
-  document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); tab="wish"; render(); openWish(+d); });
+  document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); wishTarget = { day: +d, meal: k }; tab="wish"; render(); openWish(); });
   document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
   document.querySelectorAll("[data-ainote]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.ainote.split("-"); openAiNote(+d,k); });
 
@@ -3152,7 +3153,7 @@ function wire() {
   wireStack();
 
   // wish
-  document.getElementById("newWish") && (document.getElementById("newWish").onclick = () => openWish(null));
+  document.getElementById("newWish") && (document.getElementById("newWish").onclick = () => { wishTarget = null; openWish(); });
   document.querySelectorAll("[data-wvote]").forEach(b => b.onclick = () => {
     const w = game.wishes[+b.dataset.wvote];
     w.votes.push(me);
@@ -3168,7 +3169,7 @@ function wire() {
     saving = true;
     const ok = await applyEvent("wish_granted", { wish_id: w.id });
     saving = false;
-    if (ok) assignToSlot(w.day, "dinner", d, me);
+    if (ok) assignToSlot(w.day, w.meal || "dinner", d, me);
     toast(T("Wish granted - added to the menu 🎉", "Желание исполнено - добавлено в меню 🎉"));
   });
 
@@ -3183,6 +3184,11 @@ function wire() {
 
 // ── modals ──
 let spinTarget = null;
+// {day, meal} when the "Wish" button was tapped on a specific empty slot, so
+// granting doesn't have to re-ask which day (and the resulting wish records
+// the right meal type instead of always assuming dinner - see
+// 20260808000000_food_wish_meal_type_v1.sql).
+let wishTarget = null;
 function modal(html) {
   closeModal();
   modalOpen = true;
@@ -3238,8 +3244,20 @@ function openAiNote(day, mealKey) {
 }
 
 function openAssign(dishId) {
-  let selDay = spinTarget ? spinTarget.day : null, selMeal = spinTarget ? spinTarget.meal : "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
-  spinTarget = null;
+  // Spin launched from a specific empty day/meal slot already knows exactly where
+  // the swiped-right card belongs - re-asking "which day? which meal?" here would
+  // just be re-litigating a choice the user already made by tapping that slot's
+  // Spin button in the first place (user report, 2026-08-08). Fill it directly and
+  // skip the picker entirely; only fall back to the picker when Spin was opened
+  // generically (bottom-nav tab, no slot context).
+  if (spinTarget) {
+    const { day, meal } = spinTarget;
+    spinTarget = null;
+    const cook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
+    assignToSlot(day, meal, dishId, cook);
+    return;
+  }
+  let selDay = null, selMeal = "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
   const v = modal(`<h3>${dish(dishId).em} ${dName(dish(dishId))} → ${T("the menu", "в меню")}</h3>
     <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
     <div class="sect">${T("Which meal?", "Какой приём?")}</div><div class="chips-wrap" id="M">${MEALS.map(m=>`<div class="chip ${m.k===selMeal?"on":""}" data-m="${m.k}">${m.ic} ${mealN(m)}</div>`).join("")}</div>
@@ -3302,17 +3320,23 @@ function openAiFill() {
   };
   v.querySelector("#aiCancel").onclick = closeModal;
 }
-function openWish(presetDay) {
+function openWish() {
   const v = modal(`<h3>✨ ${T("What kind of wish?", "Какое желание?")}</h3>
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn btn-ghost" data-k="dish" style="text-align:left">🍛 ${T("A specific dish", "Конкретное блюдо")}</button>
       <button class="btn btn-ghost" data-k="cuisine" style="text-align:left">🌍 ${T("A cuisine night (chef picks)", "Вечер кухни (блюдо выбирает повар)")}</button>
       <button class="btn btn-ghost" data-k="choice" style="text-align:left">🎁 ${T("Cook's choice (surprise me)", "Выбор повара (удиви меня)")}</button>
     </div>`);
-  v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => wishStep2(b.dataset.k, presetDay));
+  v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => wishStep2(b.dataset.k));
 }
-function wishStep2(kind, presetDay) {
-  let selDish=null, selCui=null, selCook="any", selDay=presetDay??null;
+function wishStep2(kind) {
+  // Wish launched from a specific empty slot's button already knows exactly
+  // which day and meal it's for - showing the "which day?" chips again would
+  // just be re-litigating a choice already made by tapping that slot (matches
+  // the same fix applied to Spin's openAssign()). Only ask when Wish was
+  // opened generically (bottom-nav "+ new wish", no slot context).
+  const target = wishTarget;
+  let selDish=null, selCui=null, selCook="any", selDay = target ? target.day : null;
   let dishSearch="";
   const dishAdv = newAdvFilters();
   const dishPanel = { open: false };
@@ -3328,7 +3352,7 @@ function wishStep2(kind, presetDay) {
     ${kind==="cuisine"?`<div class="chips-wrap" id="WC">${availableCuisines().map(c=>`<div class="chip" data-c="${c}">${cuisineLabel(c)}</div>`).join("")}</div>`:""}
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div>
     <div class="chips-wrap" id="WK"><div class="chip on" data-c="any">🎲 ${T("Anyone", "Кто угодно")}</div>${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
-    <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
+    ${target ? "" : `<div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="WY">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>`}
     <button class="btn btn-primary" id="wgo" style="width:100%;margin-top:16px;opacity:.4">✨ ${T("Wish it", "Загадать")}</button>`);
   const ok = () => selDay!==null && (kind==="choice" || (kind==="dish"?selDish:selCui));
   function renderDishList() {
@@ -3365,9 +3389,11 @@ function wishStep2(kind, presetDay) {
     if (kind === "cuisine") recipeId = DISHES.find(d => d.c === selCui)?.id;
     else if (kind === "choice") recipeId = DISHES[Math.floor(Math.random() * DISHES.length)]?.id;
     if (!recipeId) { toast(T("Pick a recipe first", "Сначала выбери рецепт")); return; }
-    game.wishes.unshift({ id: wishId, kind, dish: recipeId, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay });
+    const mealType = target ? target.meal : "dinner";
+    wishTarget = null;
+    game.wishes.unshift({ id: wishId, kind, dish: recipeId, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay, meal: mealType });
     commitAndSync(`${mem(me).en} made a wish`, "wish_created", {
-      wish_id: wishId, plan_id: activePlanId, target_day: selDay, recipe_id: recipeId,
+      wish_id: wishId, plan_id: activePlanId, target_day: selDay, target_meal_type: mealType, recipe_id: recipeId,
       wished_by_member_id: me,
     });
     tab="wish"; render(); toast(T("Wish sent to the family ✨", "Желание отправлено семье ✨")); };
