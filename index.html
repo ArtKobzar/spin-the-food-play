@@ -89,6 +89,7 @@
 
   /* menu (D) */
   .deadline { margin: 0 16px 8px; padding: 8px 14px; background: #1f2937; color: #fff; border-radius: 12px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .menu-ai-tip { margin: 0 16px 10px; padding: 10px 14px; background: var(--amber-tint); color: var(--amber-text); border-radius: 12px; font-size: 12.5px; line-height: 1.5; }
   .menu-list { padding: 0 14px; display: flex; flex-direction: column; gap: 8px; }
   .day-block { background: #fff; border: 2px solid #eee; border-radius: 16px; overflow: hidden; }
   .day-block.locked { border-color: var(--green); }
@@ -2316,6 +2317,7 @@ function renderMenu() {
   const g = game;
   const anyMeals = g.week.some(d => d.breakfast || d.lunch || d.dinner);
   let h = `<div class="screen-title"><h2>${T("This week's menu", "Меню недели")}</h2><div class="sub">${T("Build it together, or let AI draft a full week.", "Собирайте вместе или доверьте черновик ИИ.")}</div></div>
+    <div class="menu-ai-tip">💡 ${T("Slots nobody fills get auto-picked by AI every Thursday 6am (safely - never against an allergy). The assigned cook still has to tap Accept before it's final.", "Незаполненные слоты автоматически получают блюдо от ИИ каждый четверг в 6:00 (безопасно - никогда против аллергии). Назначенный повар всё равно должен нажать «Принять», чтобы блюдо стало окончательным.")}</div>
     <button class="ai-fill" id="aiFill">🤖 ${T("Generate a full AI menu", "Собрать меню на неделю с ИИ")}<small>${anyMeals ? T("refreshes AI's own picks instantly — meals you or family added need approval to swap", "мгновенно обновляет собственные варианты ИИ — блюда, добавленные вами или семьёй, меняются только с одобрением") : T("empty slots get filled — cooks accept their meals", "заполнит пустые слоты — повара подтвердят")}</small></button>
     <div class="deadline"><span>${g.locked ? "🔒 " + T("Confirmed - grocery list ready", "Подтверждено - список покупок готов") : "⏰ " + T("Auto-confirms Sunday 20:00", "Подтвердится в вс 20:00")}</span>
       ${g.locked ? `<button class="mini-btn" id="unlock">${T("reopen", "открыть")}</button>` : `<button class="mini-btn" id="confirm">${T("Confirm now", "Подтвердить")}</button>`}</div>
