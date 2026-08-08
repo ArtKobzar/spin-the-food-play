@@ -1207,10 +1207,15 @@ function seedGame() {
 }
 
 // AI populate. Empty slots get accepted:false so the assigned cook must accept.
-// Slots that already hold a user-added dish become a proposal (the family must
-// approve, matching the existing swap flow). Mutates game.week for the instant
-// render, and returns the food.events this needs to become durable - the
-// caller must apply every one of them, or the fill is a local-only illusion
+// A slot that currently holds AI's own earlier suggestion (viaAi) is fair game
+// for AI to silently refresh - re-running "Generate with AI" over its own guess
+// isn't a meaningful edit for anyone to review (user report, 2026-08-08: having
+// to accept/reject a pile of proposals just to re-roll AI's own picks was pure
+// friction). Only a slot a human deliberately chose (viaAi false - whether that
+// human is the one clicking regenerate or someone else) becomes a proposal the
+// family must approve, matching the existing swap flow. Mutates game.week for
+// the instant render, and returns the food.events this needs to become durable -
+// the caller must apply every one of them, or the fill is a local-only illusion
 // that reverts on the next sync/reload/other-device view.
 function aiPopulateWeek() {
   const cookIds = FAMILY.filter(m => m.cook).map(m => m.id);
@@ -1224,7 +1229,7 @@ function aiPopulateWeek() {
   const overwritten = [];
   const fillOrPropose = (day, mealKey, dishId, cook, isLeftover = false) => {
     const cur = game.week[day][mealKey];
-    if (cur && cur.dish) {
+    if (cur && cur.dish && !cur.viaAi) {
       game.week[day][mealKey].proposal = { dish: dishId, cook, by: me, viaAi: true };
       overwritten.push(1);
       events.push(["slot_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai" } })]);
@@ -2311,7 +2316,7 @@ function renderMenu() {
   const g = game;
   const anyMeals = g.week.some(d => d.breakfast || d.lunch || d.dinner);
   let h = `<div class="screen-title"><h2>${T("This week's menu", "Меню недели")}</h2><div class="sub">${T("Build it together, or let AI draft a full week.", "Собирайте вместе или доверьте черновик ИИ.")}</div></div>
-    <button class="ai-fill" id="aiFill">🤖 ${T("Generate a full AI menu", "Собрать меню на неделю с ИИ")}<small>${anyMeals ? T("will overwrite existing meals — family must approve", "перезапишет существующие блюда — семья должна одобрить") : T("empty slots get filled — cooks accept their meals", "заполнит пустые слоты — повара подтвердят")}</small></button>
+    <button class="ai-fill" id="aiFill">🤖 ${T("Generate a full AI menu", "Собрать меню на неделю с ИИ")}<small>${anyMeals ? T("refreshes AI's own picks instantly — meals you or family added need approval to swap", "мгновенно обновляет собственные варианты ИИ — блюда, добавленные вами или семьёй, меняются только с одобрением") : T("empty slots get filled — cooks accept their meals", "заполнит пустые слоты — повара подтвердят")}</small></button>
     <div class="deadline"><span>${g.locked ? "🔒 " + T("Confirmed - grocery list ready", "Подтверждено - список покупок готов") : "⏰ " + T("Auto-confirms Sunday 20:00", "Подтвердится в вс 20:00")}</span>
       ${g.locked ? `<button class="mini-btn" id="unlock">${T("reopen", "открыть")}</button>` : `<button class="mini-btn" id="confirm">${T("Confirm now", "Подтвердить")}</button>`}</div>
     <div class="menu-list">`;
@@ -3269,8 +3274,8 @@ function openAiFill() {
   const v = modal(`<h3>🤖 ${T("Generate a full AI menu?", "Собрать меню с ИИ?")}</h3>
     <div style="font-size:14px;color:#555;line-height:1.6">
       ${anyMeals
-        ? T("This will touch every day of the week. Meals already on the menu become swap proposals - the family (and anyone whose spin or wish is on that slot) must approve before they change. Newly filled empty slots still need their assigned cook to accept.",
-            "Это затронет каждый день недели. Уже стоящие блюда станут предложениями замены - семья (и те, чей спин или желание там стоит) должны одобрить, прежде чем что-то изменится. Новые пустые слоты всё равно ждут подтверждения от назначенного повара.")
+        ? T("This will touch every day of the week. Meals AI suggested itself get refreshed instantly - no approval needed. Meals you or the family chose by hand become swap proposals that must be approved before they change. Newly filled empty slots still need their assigned cook to accept.",
+            "Это затронет каждый день недели. Блюда, предложенные самим ИИ, обновятся мгновенно - без подтверждения. Блюда, выбранные вами или семьёй вручную, станут предложениями замены, которые нужно одобрить. Новые пустые слоты всё равно ждут подтверждения от назначенного повара.")
         : T("Every empty slot gets a suggested dish and cook. Each assigned cook must accept before it's final.",
             "Каждый пустой слот получит блюдо и повара. Каждый назначенный повар должен подтвердить, прежде чем это станет окончательным.")}
     </div>
