@@ -745,6 +745,7 @@ function snapshotToGame(snap) {
     kind: "dish",
     dish: w.recipe_id,
     by: w.wished_by_member_id,
+    wishCook: w.wish_cook_member_id || "any",
     votes: w.votes || [],
     day: w.target_day,
     meal: w.target_meal_type || "dinner",
@@ -3458,7 +3459,7 @@ function wishStep2(kind) {
     game.wishes.unshift({ id: wishId, kind, dish: recipeId, cuisine: selCui, by: me, wishCook: selCook, votes: [], committed: null, day: selDay, meal: mealType });
     commitAndSync(`${mem(me).en} made a wish`, "wish_created", {
       wish_id: wishId, plan_id: activePlanId, target_day: selDay, target_meal_type: mealType, recipe_id: recipeId,
-      wished_by_member_id: me,
+      wished_by_member_id: me, wish_cook_member_id: selCook === "any" ? null : selCook,
     });
     tab="wish"; render(); toast(T("Wish sent to the family ✨", "Желание отправлено семье ✨")); };
 }
