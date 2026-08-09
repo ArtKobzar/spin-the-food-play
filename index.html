@@ -332,9 +332,6 @@
   .dtl-banner { margin: 10px 16px; padding: 10px 13px; border-radius: 14px; font-size: 12.5px; font-weight: 600; }
   .dtl-banner.edit { background: var(--amber-tint); border: 1px dashed var(--amber); color: var(--amber-text); }
   .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
-  .dtl-tabs { display: flex; gap: 6px; padding: 8px 14px; overflow-x: auto; position: sticky; top: 62px; background: #fafaf7; z-index: 4; border-bottom: 1px solid #f0f0ee; }
-  .dtl-tab { flex-shrink: 0; padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; color: #888; cursor: pointer; background: #fff; border: 1.5px solid #eee; }
-  .dtl-tab.on { background: var(--amber); color: var(--amber-text); border-color: var(--amber-d); }
   .dtl-editbar { position: sticky; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(0deg,#fafaf7 60%,rgba(250,250,247,0)); display: flex; gap: 8px; }
   .dtl-editbar .btn { flex: 1; }
 </style>
@@ -723,6 +720,11 @@ function recipeToDish(r) {
     special: [],
     allergens: r.allergen_flags || [],
     photo_url: r.photo_url,
+    // External page the hero photo (and, in practice, the whole recipe) was
+    // scraped from at import time (20260809020000) - the closest thing to a
+    // recipe-level "source URL" that's actually persisted; surfaced as the
+    // "Source" link (linksHtml()).
+    photo_source_url: r.photo_source_url || null,
     youtube_url: r.youtube_url || null,
     // thin/thick eligibility (SPEC_AI_PREFILL.md #3/#4): thin cards stay fully usable
     // everywhere, they just aren't picked by the automatic AI pre-fill and get a
@@ -2736,14 +2738,16 @@ function wireStack() {
 
 // ── recipe detail view - full-screen literal flip, tap any Spin card
 // (ONTOLOGY.md section 9, wayfinder map issue #9, prototyped on issue #16).
-// About tab carries the full taxonomy as editable chips; edits go through
-// food.apply_event's recipe_edit_proposed / _accepted / _declined so an
-// owned recipe's edits queue for the owning cook instead of landing live.
-// Ingredients/instructions are read-only for now (out of scope for this
-// pass - see the migration header for the full deferred list).
+// The detail pane carries the full taxonomy as editable chips; edits go
+// through food.apply_event's recipe_edit_proposed / _accepted / _declined so
+// an owned recipe's edits queue for the owning cook instead of landing live.
 let detailOpen = null;      // dish id currently shown full-screen, or null
-let detailTab = "cook";     // "about" | "cook" - cook (ingredients/instructions) opens first (2026-08-09), matching what users actually want to see when tapping into a recipe
-let detailEditMode = false; // About tab taxonomy edit toggle
+// Single unified pane (2026-08-09): the old "About" tab's taxonomy/diet/
+// allergen chips + author/source/video links now render at the bottom of
+// the one and only detail view, right after Instructions, instead of living
+// behind a separate tab - there was never a real reason to make the user
+// pick a tab to see them.
+let detailEditMode = false; // taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
@@ -2861,7 +2865,7 @@ function instructionSteps(d) {
 
 function openDetail(id) {
   if (!dish(id)) return;
-  detailOpen = id; detailTab = "cook"; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
+  detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   renderDetailOverlay();
 }
 function closeDetail() {
@@ -2884,10 +2888,12 @@ function renderDetailOverlay() {
   wireDetailOverlay(wrap, d);
 }
 
-// Shared top block for both detail tabs (2026-08-09) - hero photo carousel
-// through the pending-edit/thin-card/fork banners, identical on "cook" and
-// "about" so switching tabs doesn't lose the photo/title/video context.
-// Only the chip rows below it (meal type onward) stay About-tab-only.
+// Top block of the single detail pane (2026-08-09) - hero photo carousel
+// through the pending-edit/thin-card/fork banners. Originally duplicated
+// across a separate "cook"/"about" tab pair; the tabs are gone (2026-08-09
+// follow-up - taxonomy/diet/allergen/links content now lives at the bottom
+// of this same pane, right after Instructions - see detailView()'s
+// `aboutHtml`/`linksHtml()`), so this is just the header now.
 // The old "Include in weekly menu planning" switch+description block is gone -
 // replaced by the same 👁/🙈 quick-hide button, same toggleRecipeActive()
 // logic and same Hide/Show tooltips, as the Spin card (see stackHtml()) -
@@ -2923,8 +2929,24 @@ function detailHeaderHtml(d) {
       ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("This recipe is a fork of another one.", "Этот рецепт - копия другого рецепта.")}</div>` : ""}
     </div>`;
 }
+// Author/source/video, as small buttons rather than a prominent block - the
+// recipe itself is the point, these are just "where did this come from"
+// breadcrumbs. Author is who added it to the family cookbook (member row);
+// Source reuses photo_source_url (the external page the hero photo/recipe
+// was scraped from at import time - the closest thing to a recipe-level
+// source URL that's actually persisted today, see 20260809020000); Video is
+// the same youtube_url already linked at the top of the header, repeated
+// here since this is now the one place all of a recipe's metadata lives.
+function linksHtml(d) {
+  const author = d.added_by_member_id ? mem(d.added_by_member_id) : null;
+  const parts = [];
+  if (author) parts.push(`<span class="chip on">${author.em} ${T("Added by", "Добавил(а)")} ${mName(author)}</span>`);
+  if (d.photo_source_url) parts.push(`<a href="${d.photo_source_url}" target="_blank" rel="noopener" class="mini-btn" style="text-decoration:none;display:inline-block">🔗 ${T("Source", "Источник")}</a>`);
+  if (d.youtube_url) parts.push(`<a href="${d.youtube_url}" target="_blank" rel="noopener" class="mini-btn" style="text-decoration:none;display:inline-block">▶️ ${T("Video", "Видео")}</a>`);
+  if (!parts.length) return "";
+  return `<div class="sect" style="margin-top:18px">${T("Links", "Ссылки")}</div><div class="chips-wrap">${parts.join("")}</div>`;
+}
 function detailView(d) {
-  const tabs = [["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")], ["about", T("About", "О рецепте")]];
   const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
   const courseVal = detailEditMode ? detailDraft.course_category : d.course_category;
   const mealsVal = detailEditMode ? detailDraft.meal_types : new Set(d.meals);
@@ -2936,33 +2958,33 @@ function detailView(d) {
       : (opts.filter(([v]) => isOn(v)).map(([, l]) => `<div class="chip on">${l}</div>`).join("") || `<span style="font-size:12px;color:#bbb">${T("not set", "не задано")}</span>`)
   }</div>`;
 
-  let pane;
-  if (detailTab === "about") {
-    pane = `${detailHeaderHtml(d)}
-      <div style="padding:0 16px 16px">
-        ${chipRow(T("Meal type", "Тип приёма"), MEALS.map(m => [m.k, m.ic + " " + mealN(m)]), v => mealsVal.has(v), "meal_types")}
-        ${chipRow(T("Dish role", "Роль блюда"), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
-        ${chipRow(T("Course category", "Категория подачи"), COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => courseVal === v, "course_category")}
-        ${chipRow(T("Techniques", "Техники"), TECHNIQUES.map(t => [t, techLabel(t)]), v => techVal.has(v), "techniques")}
-        ${d.diet_compatible_with.length ? `<div class="sect">${T("Diet compatible", "Подходит для диеты")}</div><div class="chips-wrap">${d.diet_compatible_with.map(v => `<div class="chip on">${DIET_META[v] ? T(DIET_META[v].en, DIET_META[v].ru) : v}</div>`).join("")}</div>` : ""}
-        ${d.allergens.length ? `<div class="sect">${T("Allergens", "Аллергены")}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
-      </div>`;
-  } else {
-    // Ingredients: read-only list, or a full add/remove/edit editor when
-    // editing - mirrors openImportReview's ingredient editor (same
-    // data-ingf/data-ingidx/data-ingdel wiring), reusing the shared
-    // unitDisplay()/unitFromInput() helpers so units localize identically
-    // to a freshly-imported draft.
-    // Scaling (2026-08-09, revised same day): food.family_cookbook_recipes.servings
-    // is nullable so a *stored* value only ever means "confirmed from the
-    // source" (20260809050000 migration - never write a guess there). The
-    // scaling stepper is a different, purely client-side, never-persisted
-    // concern: it needs *some* baseline to scale from even when the
-    // recipe's true servings was never confirmed, so it falls back to an
-    // assumed 4 (baseServings) - shared by the ingredient math below and
-    // servingsHtml's stepper - and that assumption never touches the DB or
-    // survives closing the detail view / entering edit mode.
-    const baseServings = d.servings || 4;
+  // Former "About" tab content (2026-08-09: folded into the single detail
+  // pane, right after Instructions - see comment on `detailEditMode` decl).
+  // Every chip row keeps its original header; only the container changed.
+  const aboutHtml = `
+    ${chipRow(T("Meal type", "Тип приёма"), MEALS.map(m => [m.k, m.ic + " " + mealN(m)]), v => mealsVal.has(v), "meal_types")}
+    ${chipRow(T("Dish role", "Роль блюда"), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
+    ${chipRow(T("Course category", "Категория подачи"), COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => courseVal === v, "course_category")}
+    ${chipRow(T("Techniques", "Техники"), TECHNIQUES.map(t => [t, techLabel(t)]), v => techVal.has(v), "techniques")}
+    ${d.diet_compatible_with.length ? `<div class="sect">${T("Diet compatible", "Подходит для диеты")}</div><div class="chips-wrap">${d.diet_compatible_with.map(v => `<div class="chip on">${DIET_META[v] ? T(DIET_META[v].en, DIET_META[v].ru) : v}</div>`).join("")}</div>` : ""}
+    ${d.allergens.length ? `<div class="sect">${T("Allergens", "Аллергены")}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
+    ${linksHtml(d)}`;
+
+  // Ingredients: read-only list, or a full add/remove/edit editor when
+  // editing - mirrors openImportReview's ingredient editor (same
+  // data-ingf/data-ingidx/data-ingdel wiring), reusing the shared
+  // unitDisplay()/unitFromInput() helpers so units localize identically
+  // to a freshly-imported draft.
+  // Scaling (2026-08-09, revised same day): food.family_cookbook_recipes.servings
+  // is nullable so a *stored* value only ever means "confirmed from the
+  // source" (20260809050000 migration - never write a guess there). The
+  // scaling stepper is a different, purely client-side, never-persisted
+  // concern: it needs *some* baseline to scale from even when the
+  // recipe's true servings was never confirmed, so it falls back to an
+  // assumed 4 (baseServings) - shared by the ingredient math below and
+  // servingsHtml's stepper - and that assumption never touches the DB or
+  // survives closing the detail view / entering edit mode.
+  const baseServings = d.servings || 4;
     let ingHtml;
     if (detailEditMode) {
       const ings = detailDraft.ingredients;
@@ -3043,27 +3065,25 @@ function detailView(d) {
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
-    pane = `${detailHeaderHtml(d)}
+  const pane = `${detailHeaderHtml(d)}
       <div style="padding:6px 16px 20px">
       <div style="margin-bottom:6px">${servingsHtml}</div>
       <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
       ${instrHtml}
+      ${aboutHtml}
     </div>`;
-  }
   return `
   <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
     <div style="flex:1;font-weight:800;font-size:15px">${dName(d)}</div>
     <button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button></div>
-  <div class="dtl-tabs">${tabs.map(([k, l]) => `<div class="dtl-tab ${detailTab === k ? "on" : ""}" data-dtltab="${k}">${l}</div>`).join("")}</div>
   ${pane}
   ${detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${T("Cancel", "Отмена")}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? T("Saving...", "Сохранение...") : T("Save changes", "Сохранить")}</button></div>` : ""}`;
 }
 
 function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlBack")?.addEventListener("click", closeDetail);
-  wrap.querySelectorAll("[data-dtltab]").forEach(t => t.addEventListener("click", () => { detailTab = t.dataset.dtltab; renderDetailOverlay(); }));
   // Photo carousel on the hero - identical wiring to the Spin card's, just
   // re-rendering this overlay (not refreshDeck()) since photoIdx[d.id] is the
   // one piece of shared state between the two views.
