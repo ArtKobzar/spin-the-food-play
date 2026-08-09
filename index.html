@@ -616,6 +616,37 @@ function convertQty(qty, unitSlug) {
   return { qty: roundToIncrement(outVal, target.round_increment), unit: target };
 }
 
+// Localizes a canonical food.units slug (e.g. "tablespoon") for display in the
+// viewer's UI language - shared by the persisted-recipe ingredient list
+// (ingredientLine() below) and the import review dialog (openImportReview()),
+// both of which store/display the same canonical-slug shape.
+function unitDisplay(slug) {
+  if (!slug) return "";
+  const rec = UNITS_BY_SLUG[slug];
+  if (!rec) return slug;
+  return (lang === "ru" ? rec.name_ru : rec.name_en) || slug;
+}
+// Resolves user-typed unit text (either language, or the raw slug itself)
+// back to the canonical food.units slug for storage; unrecognized text is
+// kept as free text, same lenient fallback the field always had.
+function unitFromInput(text) {
+  const t = (text || "").trim();
+  if (!t) return null;
+  if (UNITS_BY_SLUG[t]) return t;
+  const tl = t.toLowerCase();
+  const match = UNITS.find(u => (u.name_en || "").toLowerCase() === tl || (u.name_ru || "").toLowerCase() === tl || (u.slug || "").toLowerCase() === tl);
+  return match ? match.slug : t;
+}
+// Client-side twin of spin-food-import's slugify() (Deno function, same
+// logic) - used when saving a hand-edited ingredient name so ingredient_slug
+// stays consistent instead of going stale/blank.
+function slugifyIngredientName(name) {
+  let s = (name || "").trim().toLowerCase();
+  s = s.replace(/[^\w\s\-]/gu, "");
+  s = s.replace(/\s+/g, "_");
+  return s.slice(0, 80) || "unknown";
+}
+
 function recipeToDish(r) {
   const diff = r.difficulty || 2;
   const dots = "●".repeat(Math.min(3, Math.max(1, diff))).padEnd(3, "○");
@@ -661,6 +692,10 @@ function recipeToDish(r) {
     required_appliances: r.required_appliances || [],
     ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
     ingredients_raw: r.ingredients_raw || "",
+    // Serving size (food.family_cookbook_recipes.servings, default 4) -
+    // captured by the extraction pipeline, shown/edited here; the actual
+    // "scale this recipe" math is future work (2026-08-09 decision).
+    servings: Number.isFinite(r.servings) ? r.servings : null,
     instructions: Array.isArray(r.instructions) ? r.instructions : [],
     added_by_member_id: r.added_by_member_id || null,
     pending_edit: r.pending_edit || null,
@@ -2712,9 +2747,9 @@ function ingredientLine(ing) {
   // Recipe Unit Conversion (SPEC_RECIPE_I18N.md decision #9/#11/#13):
   // show the viewer's preferred system when a conversion is available;
   // otherwise fall back to the recipe's original qty/unit unconverted.
-  const converted = convertQty(ing.qty, ing.unit_slug);
+  const converted = convertQty(ing.qty, ing.unit);
   const qty = converted ? fmtQty(converted.qty) : (ing.qty ? String(ing.qty).replace(/\.0+$/, "") : "");
-  const unit = converted ? (lang === "ru" ? converted.unit.name_ru : converted.unit.name_en) : (ing.unit || "");
+  const unit = converted ? (lang === "ru" ? converted.unit.name_ru : converted.unit.name_en) : unitDisplay(ing.unit);
   const line = [qty, unit, name].filter(Boolean).join(" ");
   return (line || ing.raw || "") + note;
 }
@@ -2844,9 +2879,36 @@ function detailView(d) {
         ${d.allergens.length ? `<div class="sect">${T("Allergens", "Аллергены")}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
       </div>`;
   } else {
-    const ingHtml = d.ingredients.length
-      ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i)}</li>`).join("")}</ul>`
-      : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
+    // Ingredients: read-only list, or a full add/remove/edit editor when
+    // editing - mirrors openImportReview's ingredient editor (same
+    // data-ingf/data-ingidx/data-ingdel wiring), reusing the shared
+    // unitDisplay()/unitFromInput() helpers so units localize identically
+    // to a freshly-imported draft.
+    let ingHtml;
+    if (detailEditMode) {
+      const ings = detailDraft.ingredients;
+      ingHtml = `<div id="ingList">${ings.map((ing, i) => {
+        const name = (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
+        return `
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
+          <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${T("qty", "кол-во")}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+          <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${T("unit", "ед.")}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+          <input data-ingf="name" value="${name.replace(/"/g, "&quot;")}" placeholder="${T("ingredient", "ингредиент")}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+          <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+        </div>`;
+      }).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients yet - add them below.", "Ингредиентов пока нет - добавьте ниже.")}</div>`}</div>
+        <button class="mini-btn" id="dtlIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>`;
+    } else {
+      ingHtml = d.ingredients.length
+        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i)}</li>`).join("")}</ul>`
+        : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
+    }
+
+    // Serving size (food.family_cookbook_recipes.servings, default 4) - just
+    // captured/shown/edited here, no scaling math yet (2026-08-09 decision).
+    const servingsHtml = detailEditMode
+      ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#888;font-weight:400">👥 <input id="dtlServingsInput" type="number" min="1" value="${detailDraft.servings ?? ""}" style="width:44px;border:1px solid #eee;border-radius:8px;padding:3px 5px;font-size:12px"> ${T("servings", "порций")}</span>`
+      : (d.servings ? `<span style="font-size:12px;color:#888;font-weight:400">👥 ${T("Serves", "Порций:")} ${d.servings}</span>` : "");
 
     let instrHtml;
     if (detailEditMode) {
@@ -2854,6 +2916,10 @@ function detailView(d) {
       instrHtml = `<div id="stepList">${steps.map((s, i) => `
         <div class="step-row" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px" data-stepidx="${i}">
           <div style="flex:0 0 26px;font-weight:800;color:#bbb;padding-top:10px;text-align:right">${i + 1}.</div>
+          ${s.photo_url
+            ? `<div style="position:relative;flex:0 0 44px;margin-top:2px"><img src="${s.photo_url}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;display:block">
+                <button class="dtl-back" data-stepphotodel="${i}" title="${T("Remove photo", "Удалить фото")}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;font-size:10px;line-height:1;color:#ef4444;background:#fff;border-radius:50%;padding:0">✕</button></div>`
+            : `<label class="dtl-back" title="${T("Add a photo", "Добавить фото")}" style="flex:0 0 44px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;margin-top:2px">📷<input type="file" accept="image/*" capture="environment" data-stepphotoadd="${i}" style="display:none"></label>`}
           <textarea data-stepinput="${i}" rows="2" style="flex:1;font-size:14px;line-height:1.6;padding:8px 10px;border:1px solid #eee;border-radius:10px;font-family:inherit;resize:vertical">${s.text}</textarea>
           <div style="display:flex;flex-direction:column;gap:2px">
             <button class="dtl-back" data-stepup="${i}" ${i === 0 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↑</button>
@@ -2865,16 +2931,18 @@ function detailView(d) {
     } else {
       const steps = instructionSteps(d);
       instrHtml = steps.length
-        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:8px">${s.text}</li>`).join("")}</ol>`
+        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:8px"><div style="display:flex;gap:10px;align-items:flex-start">${s.photo_url ? `<img src="${s.photo_url}" style="flex:0 0 48px;width:48px;height:48px;border-radius:8px;object-fit:cover">` : ""}<div style="flex:1">${s.text}</div></div></li>`).join("")}</ol>`
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
     pane = `<div style="padding:6px 16px 20px">
-      <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
+      <div class="sect" style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
+        <span>${T("Ingredients", "Ингредиенты")}</span>
+        ${servingsHtml}
+      </div>
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
       ${instrHtml}
-      ${!detailEditMode ? `<div style="margin-top:18px;font-size:11px;color:#bbb">${T("Ingredient editing and per-step photos are coming soon.", "Редактирование ингредиентов и фото по шагам скоро появятся.")}</div>` : ""}
     </div>`;
   }
   return `
@@ -2924,10 +2992,12 @@ function wireDetailOverlay(wrap, d) {
         dish_role: d.dish_role, course_category: d.course_category,
         meal_types: new Set(d.meals), techniques: new Set(d.techniques),
         instructions: instructionSteps(d).map(s => ({ ...s })),
+        ingredients: d.ingredients.map(i => ({ ...i })),
         titleEn: d.en, titleRu: d.ru,
         cuisine: d.c === "family" ? "" : d.c,
         difficulty: d.difficulty,
         cookTimeMinutes: d.t,
+        servings: d.servings ?? null,
       };
     }
     renderDetailOverlay();
@@ -2963,6 +3033,10 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlCuisineInput")?.addEventListener("input", (e) => {
     if (!detailDraft) return;
     detailDraft.cuisine = e.target.value;
+  });
+  wrap.querySelector("#dtlServingsInput")?.addEventListener("input", (e) => {
+    if (!detailDraft) return;
+    detailDraft.servings = e.target.value === "" ? null : Number(e.target.value);
   });
   wrap.querySelectorAll("#dtlDiffPicker [data-diffval]").forEach(s => s.addEventListener("click", () => {
     if (!detailDraft) return;
@@ -3021,6 +3095,55 @@ function wireDetailOverlay(wrap, d) {
     detailDraft.instructions.splice(i, 1);
     renderDetailOverlay();
   }));
+  // Per-step photo: uploads immediately (so the review can show the result
+  // right away) but only stashes the resulting URL into the draft - it isn't
+  // persisted until "Save changes", exactly like step text edits above. No
+  // new event type needed: it rides along in the same `instructions` array
+  // recipe_edit_proposed already fully replaces.
+  wrap.querySelectorAll("[data-stepphotoadd]").forEach(inp => inp.addEventListener("change", async () => {
+    const idx = Number(inp.dataset.stepphotoadd);
+    const file = inp.files && inp.files[0];
+    inp.value = "";
+    if (!file || !detailDraft?.instructions?.[idx]) return;
+    const url = await uploadStepPhoto(d.id, file);
+    if (!url) return;
+    detailDraft.instructions[idx].photo_url = url;
+    renderDetailOverlay();
+  }));
+  wrap.querySelectorAll("[data-stepphotodel]").forEach(b => b.addEventListener("click", () => {
+    const i = Number(b.dataset.stepphotodel);
+    const step = detailDraft?.instructions?.[i];
+    if (!step) return;
+    step.photo_url = null;
+    renderDetailOverlay();
+  }));
+
+  // Ingredients: same add/remove/edit-qty/unit/name pattern as
+  // openImportReview's editor. qty/unit/name edits update the draft in
+  // place (no full re-render, keeps input focus); add/remove re-render
+  // since the row count changes.
+  wrap.querySelectorAll("[data-ingidx]").forEach(row => {
+    const i = Number(row.dataset.ingidx);
+    row.querySelectorAll("[data-ingf]").forEach(inp => inp.addEventListener("input", () => {
+      const ing = detailDraft?.ingredients?.[i];
+      if (!ing) return;
+      const f = inp.dataset.ingf;
+      if (f === "qty") { ing.qty = inp.value === "" ? null : Number(inp.value); return; }
+      if (f === "name") { if (lang === "ru") ing.name_ru = inp.value; else ing.name_en = inp.value; return; }
+      if (f === "unit") { ing.unit = unitFromInput(inp.value); return; }
+    }));
+  });
+  wrap.querySelectorAll("[data-ingdel]").forEach(b => b.addEventListener("click", () => {
+    const i = Number(b.dataset.ingdel);
+    if (!detailDraft) return;
+    detailDraft.ingredients.splice(i, 1);
+    renderDetailOverlay();
+  }));
+  wrap.querySelector("#dtlIngAdd")?.addEventListener("click", () => {
+    if (!detailDraft) return;
+    detailDraft.ingredients.push({ name_en: lang === "ru" ? null : "", name_ru: lang === "ru" ? "" : null, qty: null, unit: null, note: null, section: null });
+    renderDetailOverlay();
+  });
 }
 
 async function saveDetailEdit(d) {
@@ -3050,6 +3173,7 @@ async function saveDetailEdit(d) {
   const draftCuisine = (detailDraft.cuisine || "").trim().toLowerCase();
   const currentCuisine = d.c === "family" ? "" : d.c;
   if (draftCuisine && draftCuisine !== currentCuisine) proposed.cuisine = draftCuisine;
+  if (detailDraft.servings && detailDraft.servings !== d.servings) proposed.servings = detailDraft.servings;
 
   // Bilingual step diffing (SPEC_RECIPE_I18N.md): both text_en and text_ru
   // travel together so an edit in one language never overwrites the
@@ -3066,6 +3190,38 @@ async function saveDetailEdit(d) {
     photo_url: (typeof s === "string" ? null : s?.photo_url) || null,
   }));
   if (JSON.stringify(draftSteps) !== JSON.stringify(currentSteps)) proposed.instructions = draftSteps;
+
+  // Ingredient diffing: full-array replace, same shape spin-food-import
+  // writes at import time (raw/name_en/name_ru/qty/unit/note/section/
+  // ingredient_slug). ingredient_slug is recomputed client-side (same
+  // slugify as the server) so it stays consistent with a hand-edited name -
+  // note this does NOT retrigger AI classification (protein_groups/
+  // diet_compatible_with/allergens/card_state can go stale until a future
+  // re-classify pass, same accepted limitation instructions-editing has
+  // for techniques).
+  const draftIngredients = detailDraft.ingredients
+    .filter(i => (i.name_en || "").trim() || (i.name_ru || "").trim())
+    .map(i => ({
+      raw: i.raw || "",
+      name_en: i.name_en || null,
+      name_ru: i.name_ru || null,
+      qty: i.qty ?? null,
+      unit: i.unit || null,
+      note: i.note || null,
+      section: i.section || null,
+      ingredient_slug: slugifyIngredientName(i.name_en || i.name_ru || ""),
+    }));
+  const currentIngredients = (Array.isArray(d.ingredients) ? d.ingredients : []).map(i => ({
+    raw: i.raw || "",
+    name_en: i.name_en || null,
+    name_ru: i.name_ru || null,
+    qty: i.qty ?? null,
+    unit: i.unit || null,
+    note: i.note || null,
+    section: i.section || null,
+    ingredient_slug: i.ingredient_slug || slugifyIngredientName(i.name_en || i.name_ru || ""),
+  }));
+  if (JSON.stringify(draftIngredients) !== JSON.stringify(currentIngredients)) proposed.ingredients = draftIngredients;
 
   if (!Object.keys(proposed).length) { detailEditMode = false; detailDraft = null; renderDetailOverlay(); return; }
 
@@ -3154,6 +3310,29 @@ async function resolvePendingPhoto(dishId, approve) {
   toast(approve ? T("Photo approved.", "Фото одобрено.") : T("Photo declined.", "Фото отклонено."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
+}
+
+// Uploads a per-step photo the same way uploadRecipePhoto() uploads a hero
+// photo (same bucket, same family-scoped path prefix so storage RLS applies
+// unchanged - see 20260804020000), but returns the URL instead of writing it
+// anywhere: the "cook" tab's edit mode stashes it into detailDraft.instructions[i].photo_url,
+// and it only actually persists when the user hits "Save changes", riding
+// along in the same recipe_edit_proposed{instructions:[...]} write as any
+// other step edit. Returns null on failure (toasts the error itself).
+async function uploadStepPhoto(dishId, file) {
+  const familyId = membership?.family_id;
+  if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
+  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${familyId}/${dishId}/steps/${crypto.randomUUID()}.${ext}`;
+  toast(T("Uploading photo...", "Загружаем фото..."));
+  const { error: upErr } = await sb.storage.from("recipe-photos").upload(path, file, {
+    contentType: file.type || "image/jpeg",
+    upsert: false,
+  });
+  if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return null; }
+  const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
+  if (!pub?.publicUrl) { toast(T("Upload failed - no URL returned.", "Ошибка загрузки - URL не получен.")); return null; }
+  return pub.publicUrl;
 }
 
 function renderWish() {
@@ -3850,29 +4029,13 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   );
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
+  let servings = draft.servings ?? null;
 
   const ingName = (ing) => (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
   const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
-  // Units are a fixed vocabulary (food.units, loaded once at app init into
-  // UNITS_BY_SLUG) - the draft stores the canonical slug (e.g. "kg"), same
-  // as saved recipes, so display it translated the same way ingredientLine()
-  // does. Typing a known name/slug back in (either language) re-resolves to
-  // the canonical slug; anything unrecognized is kept as free text, same
-  // lenient fallback the field always had.
-  const unitDisplay = (slug) => {
-    if (!slug) return "";
-    const rec = UNITS_BY_SLUG[slug];
-    if (!rec) return slug;
-    return (lang === "ru" ? rec.name_ru : rec.name_en) || slug;
-  };
-  const unitFromInput = (text) => {
-    const t = (text || "").trim();
-    if (!t) return null;
-    if (UNITS_BY_SLUG[t]) return t;
-    const tl = t.toLowerCase();
-    const match = UNITS.find(u => (u.name_en || "").toLowerCase() === tl || (u.name_ru || "").toLowerCase() === tl || (u.slug || "").toLowerCase() === tl);
-    return match ? match.slug : t;
-  };
+  // unitDisplay()/unitFromInput() are shared top-level helpers (see convertQty
+  // above) - the draft stores the canonical slug (e.g. "kg"), same as saved
+  // recipes, so this reuses the exact same localization ingredientLine() does.
 
   const render = () => {
     v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
@@ -3907,6 +4070,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <div class="sect">${T("Title", "Название")}</div>
     <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
     ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a></div>` : ""}
+    <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${T("Serves", "Порций")} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
     <div id="revIng"></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>
@@ -3925,6 +4089,9 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
 
   v.querySelector("#revTitle").addEventListener("input", (e) => {
     if (lang === "ru") titleRu = e.target.value; else titleEn = e.target.value;
+  });
+  v.querySelector("#revServings").addEventListener("input", (e) => {
+    servings = e.target.value === "" ? null : Number(e.target.value);
   });
 
   function wireRows() {
@@ -3966,6 +4133,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
         .filter(s => s.text_en || s.text_ru),
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
+      servings: servings || null,
     };
     const { data, error } = await invokeWithTimeout("spin-food-import", {
       body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
