@@ -3592,23 +3592,44 @@ function openRecipeWebsiteSearch(defaultQuery) {
   }));
 }
 
-// sb.functions.invoke() has no timeout of its own - a stalled network layer
-// (flaky mobile connection, service worker interference, etc.) leaves the
-// caller awaiting forever with the UI stuck on a spinner and no error ever
-// shown. Mirrors the same-shape timeout fix already applied server-side in
-// spin-food-import (see index.ts's withDeadline) so a stall fails fast and
-// visibly instead of hanging silently.
+// Bug found 2026-08-09 (part 3): sb.functions.invoke() internally calls the
+// SDK's getSession(), which in this supabase-js version serializes through a
+// cross-tab navigator.locks mutex before it will even build the request and
+// call fetch(). Confirmed via DevTools that submitting a link produced zero
+// network activity at all (not even a pending request) in both a normal
+// window and a fresh Incognito window with extensions disabled - the hang is
+// inside the SDK, before any fetch is issued, consistent with a stuck lock.
+// Fix: bypass sb.functions.invoke() entirely and call fetch() directly with
+// the already-cached authSession.access_token, exactly like the existing
+// (working) spin-food-invite call above - no getSession(), no lock, no hang.
 const CLIENT_INVOKE_TIMEOUT_MS = 45_000;
 function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
   console.log(`[invoke] -> ${fnName}`, opts?.body);
-  const invokePromise = sb.functions.invoke(fnName, opts).then((res) => {
-    console.log(`[invoke] <- ${fnName}`, res);
-    return res;
-  });
+  const accessToken = authSession?.access_token;
+  const doFetch = (async () => {
+    if (!accessToken) {
+      return { data: null, error: { message: T("Session expired - please sign in again.", "Сессия истекла - войдите снова.") } };
+    }
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
+        body: JSON.stringify(opts?.body ?? {}),
+      });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) return { data: null, error: { message: body?.error || `Request failed (${resp.status})` } };
+      return { data: body, error: null };
+    } catch (e) {
+      return { data: null, error: { message: e?.message || String(e) } };
+    }
+  })();
   const timeoutPromise = new Promise((resolve) => {
     setTimeout(() => resolve({ data: null, error: { message: T("Request timed out - please check your connection and try again.", "Превышено время ожидания - проверьте соединение и попробуйте снова.") } }), timeoutMs);
   });
-  return Promise.race([invokePromise, timeoutPromise]);
+  return Promise.race([doFetch, timeoutPromise]).then((res) => {
+    console.log(`[invoke] <- ${fnName}`, res);
+    return res;
+  });
 }
 
 // ── Recipe Ingestion Pipeline (SPEC_RECIPE_INGESTION.md) ──
