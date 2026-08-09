@@ -3592,6 +3592,25 @@ function openRecipeWebsiteSearch(defaultQuery) {
   }));
 }
 
+// sb.functions.invoke() has no timeout of its own - a stalled network layer
+// (flaky mobile connection, service worker interference, etc.) leaves the
+// caller awaiting forever with the UI stuck on a spinner and no error ever
+// shown. Mirrors the same-shape timeout fix already applied server-side in
+// spin-food-import (see index.ts's withDeadline) so a stall fails fast and
+// visibly instead of hanging silently.
+const CLIENT_INVOKE_TIMEOUT_MS = 45_000;
+function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
+  console.log(`[invoke] -> ${fnName}`, opts?.body);
+  const invokePromise = sb.functions.invoke(fnName, opts).then((res) => {
+    console.log(`[invoke] <- ${fnName}`, res);
+    return res;
+  });
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve({ data: null, error: { message: T("Request timed out - please check your connection and try again.", "Превышено время ожидания - проверьте соединение и попробуйте снова.") } }), timeoutMs);
+  });
+  return Promise.race([invokePromise, timeoutPromise]);
+}
+
 // ── Recipe Ingestion Pipeline (SPEC_RECIPE_INGESTION.md) ──
 // One sheet, shared by "Add a dish" (targetRecipeId=null) and the thin-card
 // "Enrich this recipe" button (targetRecipeId set). Layout per map ticket
@@ -3663,7 +3682,7 @@ function openImportSheet(targetRecipeId = null) {
     // itself routes here. Async per #33: queue and close, no spinner wait.
     if (/(?:youtube\.com|youtu\.be)/i.test(url)) {
       setBusy(true, T("Queuing your video...", "Ставим видео в очередь..."));
-      const { data, error } = await sb.functions.invoke("spin-food-import", {
+      const { data, error } = await invokeWithTimeout("spin-food-import", {
         body: { source_type: "youtube", action: "extract", payload: { url, target_recipe_id: targetRecipeId } },
       });
       if (error || !data?.ok) {
@@ -3698,7 +3717,7 @@ async function uploadImportPhoto(file) {
 }
 
 async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
-  const { data, error } = await sb.functions.invoke("spin-food-import", {
+  const { data, error } = await invokeWithTimeout("spin-food-import", {
     body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId } },
   });
   if (error) { setBusy(false, ""); toast(error.message || T("Something went wrong.", "Что-то пошло не так.")); return; }
@@ -3775,7 +3794,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       instructions: instructions.map(s => s.trim()).filter(Boolean),
       photo_url: draft.photo_url ?? null,
     };
-    const { data, error } = await sb.functions.invoke("spin-food-import", {
+    const { data, error } = await invokeWithTimeout("spin-food-import", {
       body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
     });
     if (error || !data?.ok) {
