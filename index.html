@@ -149,13 +149,14 @@
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
-  .scard .thin-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
-  /* Enrich action for Thin Cards - same amber as .thin-badge (same "needs
-     ingredients" signal), floating bottom-right of the photo so it never
-     collides with the badge (bottom-left) or .qhide (top-left). Shared between
-     the Spin card and the detail/about hero (`.dtl-hero`) so the action sits in
-     the exact same corner wherever a Thin Card's photo is shown. */
-  .scard .enrich-fab, .dtl-hero .enrich-fab { position: absolute; bottom: 10px; right: 10px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(217,119,6,.92); color: #fff; font-size: 15px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
+  /* Enrich action for Thin Cards - a ✨ "AI can do more with this" affordance,
+     floating bottom-left of the photo (replaces the old static "Add
+     ingredients" text badge that used to sit here - this button IS the "add
+     ingredients" action now, not just a label pointing at one). Shared
+     between the Spin card and the detail/about hero (`.dtl-hero`) so the
+     action sits in the exact same corner wherever a Thin Card's photo is
+     shown - opposite corner from `.qhide` (top-left), so it never collides. */
+  .scard .enrich-fab, .dtl-hero .enrich-fab { position: absolute; bottom: 10px; left: 10px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(217,119,6,.92); color: #fff; font-size: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
   /* Icon reflects CURRENT state, not the tap action: open eye = visible (light
      green circle), closed eye = hidden (orange circle) - an inline SVG for both
      (not the 🙈 monkey emoji) so "closed eye" reads as an actual shut eyelid,
@@ -2483,13 +2484,13 @@ function stackHtml(dk) {
     // SPEC_AI_PREFILL.md #3/#4: thin cards remain fully usable everywhere (Spin,
     // Wish, Duel, manual assignment) - they just aren't eligible for the automatic
     // AI pre-fill, so nudge the family to add ingredients rather than block anything.
-    const thinBadge = d.card_state === "thin"
-      ? `<div class="thin-badge">📝 ${T("Add ingredients", "Добавить ингредиенты")}</div>` : "";
-    // Enrich action - bottom-right corner of the photo, same spot as the
+    // Enrich action - bottom-left corner of the photo, same spot as the
     // detail/about hero's version (see .enrich-fab). Opens the import sheet
     // directly from the Spin deck, no need to open the detail view first.
+    // Replaces the old static "Add ingredients" text badge that used to sit
+    // in this corner - the ✨ button IS the action now, not just a label.
     const enrichBtn = d.card_state === "thin"
-      ? `<button class="enrich-fab" data-enrich="${d.id}" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">📸</button>` : "";
+      ? `<button class="enrich-fab" data-enrich="${d.id}" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>` : "";
     // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
     // without opening the detail view. Same is_active toggle as the About tab
     // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
@@ -2500,7 +2501,7 @@ function stackHtml(dk) {
       : `<button class="qhide off" data-qhide="${d.id}" title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">${EYE_CLOSED_SVG}</button>`;
     const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="${photo.bgStyle}">${thinBadge}${enrichBtn}${photo.inner}</div>
+      <div class="ph" style="${photo.bgStyle}">${enrichBtn}${photo.inner}</div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
       ${quickHide}
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
@@ -2772,11 +2773,11 @@ function detailView(d) {
     // sharing photoIdx[d.id] with the deck so flipping through photos in one
     // place stays in sync with the other.
     const photo = photoSlideHtml(d);
-    // Enrich action lives in the hero's bottom-right corner - same spot as the
+    // Enrich action lives in the hero's bottom-left corner - same spot as the
     // Spin card's version (see .enrich-fab) - not inline in the banner text
     // below, so the action is in the same place no matter how you got here.
     const enrichBtn = d.card_state === "thin"
-      ? `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">📸</button>` : "";
+      ? `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>` : "";
     pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}</div>
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
@@ -2792,7 +2793,7 @@ function detailView(d) {
         <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
       </div>
       <div style="padding:0 16px">
-        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way). Tap 📸 on the photo above to enrich it.", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна). Нажмите 📸 на фото выше, чтобы дополнить.")}</div>` : ""}
+        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way). Tap ✨ on the photo above to enrich it.", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна). Нажмите ✨ на фото выше, чтобы дополнить.")}</div>` : ""}
         ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
         ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
           <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
@@ -3535,7 +3536,11 @@ function openBlankAdd() {
 // each site's own search box - every site's internal search URL format is
 // different (and changes without notice), while `site:domain` search results
 // are consistent and don't need per-site maintenance.
-const RECIPE_SEARCH_SITES = [
+// Two separate lists, not one merged list - an English-UI cook has never
+// heard of 1000.menu and a Russian-UI cook has never heard of Delish, so
+// recipeSearchSites() below picks the one that matches the product's current
+// UI language (same `lang` global everything else in the app reads).
+const RECIPE_SEARCH_SITES_EN = [
   { name: "AllRecipes", domain: "allrecipes.com" },
   { name: "Food Network", domain: "foodnetwork.com" },
   { name: "BBC Good Food", domain: "bbcgoodfood.com" },
@@ -3545,6 +3550,14 @@ const RECIPE_SEARCH_SITES = [
   { name: "Epicurious", domain: "epicurious.com" },
   { name: "Delish", domain: "delish.com" },
 ];
+const RECIPE_SEARCH_SITES_RU = [
+  { name: "1000.menu", domain: "1000.menu" },
+  { name: "Povarёnok", domain: "povarenok.ru" },
+  { name: "Eda.ru", domain: "eda.ru" },
+  { name: "Gastronom", domain: "gastronom.ru" },
+  { name: "Edimdoma", domain: "edimdoma.ru" },
+];
+const recipeSearchSites = () => (lang === "ru" ? RECIPE_SEARCH_SITES_RU : RECIPE_SEARCH_SITES_EN);
 // Lets the user look a recipe up on one of the sites above instead of
 // hunting for a URL themselves - opens a site-restricted Google search in a
 // new tab for whichever site they pick, prefilled with `defaultQuery` (the
@@ -3556,7 +3569,7 @@ function openRecipeWebsiteSearch(defaultQuery) {
     <div class="sect">${T("Search term", "Поисковый запрос")}</div>
     <input id="wsQuery" value="${(defaultQuery || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name...", "Название рецепта...")}" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
     <div class="sect" style="margin-top:14px">${T("Search on", "Искать на")}</div>
-    <div style="display:flex;flex-direction:column;gap:8px">${RECIPE_SEARCH_SITES.map(s => `<button class="mini-btn" data-wssite="${s.domain}" style="text-align:left;width:100%">🌐 ${s.name}</button>`).join("")}</div>`);
+    <div style="display:flex;flex-direction:column;gap:8px">${recipeSearchSites().map(s => `<button class="mini-btn" data-wssite="${s.domain}" style="text-align:left;width:100%">🌐 ${s.name}</button>`).join("")}</div>`);
   v.querySelectorAll("[data-wssite]").forEach(btn => btn.addEventListener("click", () => {
     const q = v.querySelector("#wsQuery").value.trim();
     if (!q) { v.querySelector("#wsQuery").focus(); return; }
