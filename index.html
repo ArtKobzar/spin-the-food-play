@@ -4238,6 +4238,20 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
+  // Taxonomy proposal (2026-08-09 follow-up) - server only attaches this when
+  // the draft has ingredients/instructions to classify from (see
+  // buildTaxonomyProposal in spin-food-import). Null means "nothing to show",
+  // not "loading" - there's no separate async fetch here, it rode along with
+  // the extraction response.
+  let taxonomy = draft.taxonomy ? {
+    cuisine: draft.taxonomy.cuisine || "",
+    dish_role: draft.taxonomy.dish_role || "main",
+    course_category: draft.taxonomy.course_category || null,
+    meal_types: new Set(draft.taxonomy.meal_types || []),
+    techniques: new Set(draft.taxonomy.techniques || []),
+    required_appliances: new Set(draft.taxonomy.required_appliances || []),
+    reasoning: draft.taxonomy.reasoning || null,
+  } : null;
 
   const ingName = (ing) => (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
   const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
@@ -4263,6 +4277,62 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     wireRows();
   };
 
+  // Recipe-details chip section - same vocab/labels/chip look as the About
+  // tab's edit mode (MEALS/DISH_ROLES/COURSE_CATEGORIES/TECHNIQUES/APPLIANCES,
+  // chipRow pattern) so a value picked here reads identically once saved.
+  // Rendered into its own container + re-wired standalone (rather than
+  // routed through the outer render()/wireRows() pair) since it has its own
+  // dish_role<->course_category/meal_types locking logic to re-run on every
+  // click, same invariant enforced server-side by
+  // spin_food_upsert_recipe_classification.
+  const taxChip = (opts, isOn, key) => opts.map(([optVal, l]) =>
+    `<div class="chip ${isOn(optVal) ? "on" : ""}" data-revchip="${key}" data-val="${optVal}">${l}</div>`).join("");
+  const taxHtml = () => {
+    if (!taxonomy) return "";
+    const isComponent = taxonomy.dish_role === "component";
+    return `
+      <div class="sect" style="margin-top:12px">${T("Recipe details", "Детали рецепта")}</div>
+      ${taxonomy.reasoning ? `<div style="font-size:11px;color:#aaa;margin-bottom:4px">🤖 ${taxonomy.reasoning}</div>` : ""}
+      <div style="font-size:12px;color:#666;margin-bottom:4px">${T("Dish role", "Роль блюда")}</div>
+      <div class="chips-wrap">${taxChip(DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => taxonomy.dish_role === v, "dish_role")}</div>
+      ${!isComponent ? `
+        <div style="font-size:12px;color:#666;margin:8px 0 4px">${T("Meal type", "Тип приёма")}</div>
+        <div class="chips-wrap">${taxChip(MEALS.map(m => [m.k, m.ic + " " + mealN(m)]), v => taxonomy.meal_types.has(v), "meal_types")}</div>
+        <div style="font-size:12px;color:#666;margin:8px 0 4px">${T("Course category", "Категория подачи")}</div>
+        <div class="chips-wrap">${taxChip(COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => taxonomy.course_category === v, "course_category")}</div>` : ""}
+      <div style="font-size:12px;color:#666;margin:8px 0 4px">${T("Techniques", "Техники")}</div>
+      <div class="chips-wrap">${taxChip(TECHNIQUES.map(t => [t, techLabel(t)]), v => taxonomy.techniques.has(v), "techniques")}</div>
+      <div style="font-size:12px;color:#666;margin:8px 0 4px">${T("Appliances needed", "Нужная техника")}</div>
+      <div class="chips-wrap">${taxChip(APPLIANCES.map(a => [a, applianceLabel(a)]), v => taxonomy.required_appliances.has(v), "required_appliances")}</div>
+      <div style="font-size:12px;color:#666;margin:8px 0 4px">${T("Cuisine", "Кухня")}</div>
+      <input id="revCuisine" value="${(taxonomy.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${T("cuisine", "кухня")}" style="width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px">`;
+  };
+  const wireTax = () => {
+    if (!taxonomy) return;
+    v.querySelector("#revCuisine")?.addEventListener("input", (e) => { taxonomy.cuisine = e.target.value; });
+    v.querySelectorAll("[data-revchip]").forEach(c => c.addEventListener("click", () => {
+      const key = c.dataset.revchip, val = c.dataset.val;
+      if (key === "dish_role") {
+        taxonomy.dish_role = val;
+        // dish_role='component' <=> meal_types=['component'] is a DB
+        // invariant (see spin_food_upsert_recipe_classification) - keep the
+        // two fields in lockstep here too, same as the About tab's editor.
+        if (val === "component") { taxonomy.meal_types = new Set(["component"]); taxonomy.course_category = null; }
+        else if (taxonomy.meal_types.has("component")) taxonomy.meal_types = new Set(["dinner"]);
+      } else if (key === "meal_types") {
+        if (taxonomy.meal_types.has(val)) taxonomy.meal_types.delete(val); else taxonomy.meal_types.add(val);
+      } else if (key === "course_category") {
+        taxonomy.course_category = taxonomy.course_category === val ? null : val;
+      } else if (key === "techniques") {
+        if (taxonomy.techniques.has(val)) taxonomy.techniques.delete(val); else taxonomy.techniques.add(val);
+      } else if (key === "required_appliances") {
+        if (taxonomy.required_appliances.has(val)) taxonomy.required_appliances.delete(val); else taxonomy.required_appliances.add(val);
+      }
+      v.querySelector("#revTax").innerHTML = taxHtml();
+      wireTax();
+    }));
+  };
+
   const heroHtml = () => heroPhotoUrl ? `
     <div id="revHeroWrap" style="position:relative;margin-bottom:10px">
       <img src="${heroPhotoUrl}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;display:block">
@@ -4285,8 +4355,10 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <div class="sect" style="margin-top:12px">${T("Instructions", "Инструкции")}</div>
     <div id="revInstr"></div>
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${T("Add step", "Добавить шаг")}</button>
+    <div id="revTax">${taxHtml()}</div>
     <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${T("Save", "Сохранить")}</button>`,
     { preventBackdropClose: true });
+  wireTax();
 
   v.querySelector("#revCancel").onclick = () => closeModal();
   const wireHero = () => {
@@ -4342,6 +4414,15 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
+      taxonomy: taxonomy ? {
+        cuisine: (taxonomy.cuisine || "").trim().toLowerCase() || null,
+        dish_role: taxonomy.dish_role || "main",
+        course_category: taxonomy.course_category,
+        meal_types: [...taxonomy.meal_types],
+        techniques: [...taxonomy.techniques],
+        required_appliances: [...taxonomy.required_appliances],
+        reasoning: taxonomy.reasoning,
+      } : null,
     };
     const { data, error } = await invokeWithTimeout("spin-food-import", {
       body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
