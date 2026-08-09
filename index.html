@@ -2952,6 +2952,16 @@ function detailView(d) {
     // data-ingf/data-ingidx/data-ingdel wiring), reusing the shared
     // unitDisplay()/unitFromInput() helpers so units localize identically
     // to a freshly-imported draft.
+    // Scaling (2026-08-09, revised same day): food.family_cookbook_recipes.servings
+    // is nullable so a *stored* value only ever means "confirmed from the
+    // source" (20260809050000 migration - never write a guess there). The
+    // scaling stepper is a different, purely client-side, never-persisted
+    // concern: it needs *some* baseline to scale from even when the
+    // recipe's true servings was never confirmed, so it falls back to an
+    // assumed 4 (baseServings) - shared by the ingredient math below and
+    // servingsHtml's stepper - and that assumption never touches the DB or
+    // survives closing the detail view / entering edit mode.
+    const baseServings = d.servings || 4;
     let ingHtml;
     if (detailEditMode) {
       const ings = detailDraft.ingredients;
@@ -2967,12 +2977,7 @@ function detailView(d) {
       }).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients yet - add them below.", "Ингредиентов пока нет - добавьте ниже.")}</div>`}</div>
         <button class="mini-btn" id="dtlIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>`;
     } else {
-      // Scaling (2026-08-09): only meaningful once the recipe has a
-      // confirmed (non-null) base servings count - food.family_cookbook_recipes.servings
-      // is nullable with no default precisely so "unknown" and "really N"
-      // are distinguishable (see 20260809050000 migration). scaleFactor is a
-      // pure display-time multiplier, never written back.
-      const scaleFactor = (detailScaleTo && d.servings) ? detailScaleTo / d.servings : 1;
+      const scaleFactor = detailScaleTo ? detailScaleTo / baseServings : 1;
       ingHtml = d.ingredients.length
         ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor)}</li>`).join("")}</ul>`
         : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
@@ -2980,22 +2985,26 @@ function detailView(d) {
 
     // Serving size (food.family_cookbook_recipes.servings, nullable - a
     // stored number means "confirmed from the source", 2026-08-09). In
-    // edit mode it's a plain input (sets the recipe's real base count). In
-    // read mode, once a base is known, it doubles as a scaling stepper: +/-
-    // changes detailScaleTo (view-only target, resets whenever the detail
-    // view is reopened or edit mode is entered) and recomputes every
-    // ingredient's displayed qty via scaleFactor above - the stored
-    // ingredients/servings are never touched by this.
+    // edit mode it's a plain input (sets the recipe's real base count and
+    // is what actually gets saved/persisted). In read mode it's always a
+    // scaling stepper - even when servings was never confirmed, using
+    // baseServings' assumed-4 fallback (see above) so scaling is never
+    // blocked on that; +/- changes detailScaleTo (view-only target, resets
+    // whenever the detail view is reopened or edit mode is entered) and
+    // recomputes every ingredient's displayed qty via scaleFactor - the
+    // stored ingredients/servings are never touched by this. When servings
+    // is unconfirmed, a muted "(?)" plus a nudge to set the real value via
+    // ✏️ makes clear the base is only a guess, not a database fact.
+    const shownServings = detailScaleTo || baseServings;
     const servingsHtml = detailEditMode
       ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#888;font-weight:400">👥 <input id="dtlServingsInput" type="number" min="1" value="${detailDraft.servings ?? ""}" style="width:44px;border:1px solid #eee;border-radius:8px;padding:3px 5px;font-size:12px"> ${T("servings", "порций")}</span>`
-      : (d.servings
-          ? `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#888;font-weight:400">👥 ${T("Serves", "Порций")}
-              <button class="dtl-back" id="dtlScaleDown" ${(detailScaleTo || d.servings) <= 1 ? "disabled" : ""} style="width:22px;height:22px;font-size:12px;padding:0">−</button>
-              <b style="color:#333;min-width:14px;text-align:center">${detailScaleTo || d.servings}</b>
-              <button class="dtl-back" id="dtlScaleUp" style="width:22px;height:22px;font-size:12px;padding:0">+</button>
-              ${detailScaleTo && detailScaleTo !== d.servings ? `<button class="dtl-back" id="dtlScaleReset" style="font-size:10px;padding:2px 6px;height:auto">${T("Reset", "Сброс")}</button>` : ""}
-            </span>`
-          : `<span style="font-size:12px;color:#aaa;font-weight:400">👥 ${T("Serving size unknown - tap ✏️ to set it", "Размер порции неизвестен - нажмите ✏️, чтобы указать")}</span>`);
+      : `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#888;font-weight:400">👥 ${T("Serves", "Порций")}
+          <button class="dtl-back" id="dtlScaleDown" ${shownServings <= 1 ? "disabled" : ""} style="width:22px;height:22px;font-size:12px;padding:0">−</button>
+          <b style="color:#333;min-width:14px;text-align:center">${shownServings}${d.servings ? "" : "<sup>?</sup>"}</b>
+          <button class="dtl-back" id="dtlScaleUp" style="width:22px;height:22px;font-size:12px;padding:0">+</button>
+          ${detailScaleTo && detailScaleTo !== baseServings ? `<button class="dtl-back" id="dtlScaleReset" style="font-size:10px;padding:2px 6px;height:auto">${T("Reset", "Сброс")}</button>` : ""}
+          ${!d.servings ? `<span style="font-size:11px;color:#c99">${T("(guess - tap ✏️ to confirm)", "(предположительно - нажмите ✏️, чтобы указать)")}</span>` : ""}
+        </span>`;
 
     let instrHtml;
     if (detailEditMode) {
@@ -3023,10 +3032,8 @@ function detailView(d) {
     }
 
     pane = `<div style="padding:6px 16px 20px">
-      <div class="sect" style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
-        <span>${T("Ingredients", "Ингредиенты")}</span>
-        ${servingsHtml}
-      </div>
+      <div style="margin-bottom:6px">${servingsHtml}</div>
+      <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
       ${instrHtml}
@@ -3132,11 +3139,11 @@ function wireDetailOverlay(wrap, d) {
     renderDetailOverlay();
   }));
   wrap.querySelector("#dtlScaleUp")?.addEventListener("click", () => {
-    detailScaleTo = (detailScaleTo || d.servings) + 1;
+    detailScaleTo = (detailScaleTo || d.servings || 4) + 1;
     renderDetailOverlay();
   });
   wrap.querySelector("#dtlScaleDown")?.addEventListener("click", () => {
-    const next = (detailScaleTo || d.servings) - 1;
+    const next = (detailScaleTo || d.servings || 4) - 1;
     if (next < 1) return;
     detailScaleTo = next;
     renderDetailOverlay();
