@@ -3532,48 +3532,59 @@ function openBlankAdd() {
 }
 
 // Curated cooking sites for the 🔍 "find this recipe online" lookup below.
-// Deliberately routes through a site-restricted Google search rather than
-// each site's own search box - every site's internal search URL format is
-// different (and changes without notice), while `site:domain` search results
-// are consistent and don't need per-site maintenance.
+// Each site has a `search(q)` builder that lands the user directly on that
+// site's own results page - verified against the live site (see chat/commit
+// history for the research), not guessed - so there's no Google hop in
+// between. A few sites (marked `domain` only, no `search`) don't have a
+// public, bookmarkable search URL we could confirm - 1000.menu's search is
+// purely client-side/AJAX (nothing in its robots.txt or homepage points to a
+// GET-able results URL), and Povarenok/Eda.ru/Edimdoma's search forms didn't
+// resolve to a stable query-string format either. Those fall back to a
+// site-restricted Google search instead of risking a broken/404 direct link.
 // Two separate lists, not one merged list - an English-UI cook has never
 // heard of 1000.menu and a Russian-UI cook has never heard of Delish, so
 // recipeSearchSites() below picks the one that matches the product's current
 // UI language (same `lang` global everything else in the app reads).
 const RECIPE_SEARCH_SITES_EN = [
-  { name: "AllRecipes", domain: "allrecipes.com" },
-  { name: "Food Network", domain: "foodnetwork.com" },
-  { name: "BBC Good Food", domain: "bbcgoodfood.com" },
-  { name: "Bon Appétit", domain: "bonappetit.com" },
-  { name: "Serious Eats", domain: "seriouseats.com" },
-  { name: "NYT Cooking", domain: "cooking.nytimes.com" },
-  { name: "Epicurious", domain: "epicurious.com" },
-  { name: "Delish", domain: "delish.com" },
+  { name: "AllRecipes", domain: "allrecipes.com", search: q => `https://www.allrecipes.com/search?q=${encodeURIComponent(q)}` },
+  // Food Network's search URL is a slug, not a query string: lowercase,
+  // non-alphanumerics collapsed to single hyphens, with a trailing hyphen -
+  // e.g. "chicken pasta" -> "/search/chicken-pasta-".
+  { name: "Food Network", domain: "foodnetwork.com", search: q => `https://www.foodnetwork.com/search/${q.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}-` },
+  { name: "BBC Good Food", domain: "bbcgoodfood.com", search: q => `https://www.bbcgoodfood.com/search?q=${encodeURIComponent(q)}` },
+  { name: "Bon Appétit", domain: "bonappetit.com", search: q => `https://www.bonappetit.com/search?q=${encodeURIComponent(q)}` },
+  { name: "Serious Eats", domain: "seriouseats.com", search: q => `https://www.seriouseats.com/search?q=${encodeURIComponent(q)}` },
+  { name: "NYT Cooking", domain: "cooking.nytimes.com", search: q => `https://cooking.nytimes.com/search?q=${encodeURIComponent(q)}` },
+  { name: "Epicurious", domain: "epicurious.com", search: q => `https://www.epicurious.com/search?q=${encodeURIComponent(q)}` },
+  { name: "Delish", domain: "delish.com", search: q => `https://www.delish.com/search/?q=${encodeURIComponent(q)}` },
 ];
 const RECIPE_SEARCH_SITES_RU = [
+  { name: "Gastronom", domain: "gastronom.ru", search: q => `https://www.gastronom.ru/search?text=${encodeURIComponent(q)}` },
   { name: "1000.menu", domain: "1000.menu" },
   { name: "Povarёnok", domain: "povarenok.ru" },
   { name: "Eda.ru", domain: "eda.ru" },
-  { name: "Gastronom", domain: "gastronom.ru" },
   { name: "Edimdoma", domain: "edimdoma.ru" },
 ];
 const recipeSearchSites = () => (lang === "ru" ? RECIPE_SEARCH_SITES_RU : RECIPE_SEARCH_SITES_EN);
 // Lets the user look a recipe up on one of the sites above instead of
-// hunting for a URL themselves - opens a site-restricted Google search in a
-// new tab for whichever site they pick, prefilled with `defaultQuery` (the
-// dish name on Enrich, whatever's already typed in the URL field on Add).
-// They still paste the URL back into the import sheet themselves afterwards -
-// this is a lookup aid, not its own extraction source.
+// hunting for a URL themselves - opens the site's own results page (or, for
+// the handful of sites with no confirmed direct search URL, a site-restricted
+// Google search) in a new tab, prefilled with `defaultQuery` (the dish name
+// on Enrich, whatever's already typed in the URL field on Add). They still
+// paste the URL back into the import sheet themselves afterwards - this is a
+// lookup aid, not its own extraction source.
 function openRecipeWebsiteSearch(defaultQuery) {
   const v = modal(`<h3>🔍 ${T("Find this recipe online", "Найти рецепт в сети")}</h3>
     <div class="sect">${T("Search term", "Поисковый запрос")}</div>
     <input id="wsQuery" value="${(defaultQuery || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name...", "Название рецепта...")}" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
     <div class="sect" style="margin-top:14px">${T("Search on", "Искать на")}</div>
-    <div style="display:flex;flex-direction:column;gap:8px">${recipeSearchSites().map(s => `<button class="mini-btn" data-wssite="${s.domain}" style="text-align:left;width:100%">🌐 ${s.name}</button>`).join("")}</div>`);
-  v.querySelectorAll("[data-wssite]").forEach(btn => btn.addEventListener("click", () => {
+    <div style="display:flex;flex-direction:column;gap:8px">${recipeSearchSites().map((s, i) => `<button class="mini-btn" data-wsidx="${i}" style="text-align:left;width:100%">🌐 ${s.name}${s.search ? "" : ` <span style="color:#aaa;font-weight:400">(${T("via Google", "через Google")})</span>`}</button>`).join("")}</div>`);
+  const sites = recipeSearchSites();
+  v.querySelectorAll("[data-wsidx]").forEach(btn => btn.addEventListener("click", () => {
     const q = v.querySelector("#wsQuery").value.trim();
     if (!q) { v.querySelector("#wsQuery").focus(); return; }
-    const url = `https://www.google.com/search?q=${encodeURIComponent(`site:${btn.dataset.wssite} ${q}`)}`;
+    const site = sites[Number(btn.dataset.wsidx)];
+    const url = site.search ? site.search(q) : `https://www.google.com/search?q=${encodeURIComponent(`site:${site.domain} ${q}`)}`;
     window.open(url, "_blank", "noopener");
   }));
 }
