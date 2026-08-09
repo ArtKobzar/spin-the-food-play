@@ -2751,7 +2751,7 @@ function wireStack() {
 // Ingredients/instructions are read-only for now (out of scope for this
 // pass - see the migration header for the full deferred list).
 let detailOpen = null;      // dish id currently shown full-screen, or null
-let detailTab = "about";    // "about" | "cook"
+let detailTab = "cook";     // "about" | "cook" - cook (ingredients/instructions) opens first (2026-08-09), matching what users actually want to see when tapping into a recipe
 let detailEditMode = false; // About tab taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
@@ -2870,7 +2870,7 @@ function instructionSteps(d) {
 
 function openDetail(id) {
   if (!dish(id)) return;
-  detailOpen = id; detailTab = "about"; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
+  detailOpen = id; detailTab = "cook"; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   renderDetailOverlay();
 }
 function closeDetail() {
@@ -2894,7 +2894,7 @@ function renderDetailOverlay() {
 }
 
 function detailView(d) {
-  const tabs = [["about", T("About", "О рецепте")], ["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")]];
+  const tabs = [["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")], ["about", T("About", "О рецепте")]];
   const isOwner = !!(d.added_by_member_id && d.added_by_member_id === me);
   const canApprove = !!(d.pending_edit && isOwner);
   const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
