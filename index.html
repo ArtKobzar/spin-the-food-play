@@ -2480,7 +2480,12 @@ function renderMenu() {
       const noteBadge = s && s.aiNote
         ? `<button class="ai-note-badge" data-ainote="${di}-${m.k}" title="${T("Why?", "Почему?")}">ℹ️</button>`
         : "";
-      h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main">`;
+      // Tapping a filled slot opens that recipe full-screen (openDetail),
+      // same as tapping its card anywhere else in the app - the buttons
+      // inside (Accept/Decline/Reassign/Spin/Wish/etc.) still take priority,
+      // guarded in the click handler below since they all bubble up through
+      // this same [data-openrecipe] container.
+      h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main"${hasDish ? ` data-openrecipe="${s.dish}"` : ""}${hasDish ? ` style="cursor:pointer"` : ""}>`;
       if (hasDish) {
         h += `<div class="slot-dish">${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
@@ -3555,6 +3560,10 @@ function wire() {
   document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); wishTarget = { day: +d, meal: k }; tab="wish"; render(); openWish(); });
   document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
   document.querySelectorAll("[data-ainote]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.ainote.split("-"); openAiNote(+d,k); });
+  document.querySelectorAll("[data-openrecipe]").forEach(el => el.addEventListener("click", e => {
+    if (e.target.closest("button")) return; // Accept/Decline/Reassign/Spin/Wish/etc. keep their own action
+    openDetail(el.dataset.openrecipe);
+  }));
 
   // spin
   const deckSearchEl = document.getElementById("deckSearch");
