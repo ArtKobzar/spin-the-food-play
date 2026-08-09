@@ -163,8 +163,8 @@
      green circle), closed eye = hidden (orange circle) - an inline SVG for both
      (not the 🙈 monkey emoji) so "closed eye" reads as an actual shut eyelid,
      not an unrelated animal. */
-  .scard .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
-  .scard .qhide.off { background: #ffedd5; color: #c2410c; }
+  .scard .qhide, .dtl-hero .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
+  .scard .qhide.off, .dtl-hero .qhide.off { background: #ffedd5; color: #c2410c; }
   /* Same photo-carousel chrome (nav arrows, dots, pending/approve UI, "add a
      photo" CTA) is reused verbatim on the recipe detail view's hero, via
      photoSlideHtml() - `.dtl-hero` just needs `position:relative` (it already
@@ -329,15 +329,6 @@
   .photo-lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.92); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
   .photo-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: default; }
   .photo-lightbox .lb-close { position: absolute; top: 14px; right: 14px; z-index: 1; width: 38px; height: 38px; border-radius: 50%; border: none; background: rgba(255,255,255,.15); color: #fff; font-size: 18px; cursor: pointer; }
-  .plan-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 16px 10px; padding: 12px 14px; border-radius: 14px; background: #f9fafb; border: 1px solid #eee; }
-  .plan-toggle .ptxt { flex: 1; }
-  .plan-toggle .ptitle { font-weight: 700; font-size: 14px; }
-  .plan-toggle .psub { font-size: 11.5px; color: #888; margin-top: 3px; line-height: 1.4; }
-  .sw { position: relative; width: 46px; height: 26px; border-radius: 14px; background: #d1d5db; border: none; cursor: pointer; flex: 0 0 auto; transition: background .2s; padding: 0; }
-  .sw.on { background: var(--green); }
-  .sw:disabled { opacity: .6; cursor: default; }
-  .sw i { position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .2s; }
-  .sw.on i { left: 22px; }
   .dtl-banner { margin: 10px 16px; padding: 10px 13px; border-radius: 14px; font-size: 12.5px; font-weight: 600; }
   .dtl-banner.edit { background: var(--amber-tint); border: 1px dashed var(--amber); color: var(--amber-text); }
   .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
@@ -2893,10 +2884,47 @@ function renderDetailOverlay() {
   wireDetailOverlay(wrap, d);
 }
 
-function detailView(d) {
-  const tabs = [["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")], ["about", T("About", "О рецепте")]];
+// Shared top block for both detail tabs (2026-08-09) - hero photo carousel
+// through the pending-edit/thin-card/fork banners, identical on "cook" and
+// "about" so switching tabs doesn't lose the photo/title/video context.
+// Only the chip rows below it (meal type onward) stay About-tab-only.
+// The old "Include in weekly menu planning" switch+description block is gone -
+// replaced by the same 👁/🙈 quick-hide button, same toggleRecipeActive()
+// logic and same Hide/Show tooltips, as the Spin card (see stackHtml()) -
+// just anchored to this hero's top-left corner instead of the card's.
+function detailHeaderHtml(d) {
   const isOwner = !!(d.added_by_member_id && d.added_by_member_id === me);
   const canApprove = !!(d.pending_edit && isOwner);
+  const photo = photoSlideHtml(d);
+  const enrichBtn = `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>`;
+  const eyeBtn = d.is_active
+    ? `<button class="qhide" id="dtlActiveEye" ${detailSaving ? "disabled" : ""} title="${T("Hide", "Скрыть")}" aria-label="${T("Hide", "Скрыть")}">${EYE_OPEN_SVG}</button>`
+    : `<button class="qhide off" id="dtlActiveEye" ${detailSaving ? "disabled" : ""} title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">${EYE_CLOSED_SVG}</button>`;
+  return `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}${eyeBtn}</div>
+    <div style="padding:14px 16px">
+      ${detailEditMode
+        ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name", "Название рецепта")}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
+        : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>`}
+      <div class="mt" style="margin-top:8px">
+        ${detailEditMode
+          ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${T("min", "мин")}</span>
+            <span id="dtlDiffPicker" style="display:inline-flex;gap:3px;cursor:pointer;margin-right:10px;vertical-align:middle">${[1, 2, 3].map(n => `<span data-diffval="${n}" style="opacity:${n <= detailDraft.difficulty ? "1" : "0.25"};font-size:15px">●</span>`).join("")}</span>
+            <input id="dtlCuisineInput" value="${(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${T("cuisine", "кухня")}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
+          : `⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
+      </div>
+      ${d.youtube_url ? `<div style="margin-top:6px"><a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a></div>` : ""}
+    </div>
+    <div style="padding:0 16px">
+      ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("Thin Card - tap ✨ to add ingredients.", "Тонкая карточка - нажмите ✨, чтобы добавить ингредиенты.")}</div>` : ""}
+      ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
+      ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
+        <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
+        <button class="mini-btn reject" id="dtlDecline">🍴 ${T("Decline (fork instead)", "Отклонить (создать копию)")}</button></div></div>` : ""}
+      ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("This recipe is a fork of another one.", "Этот рецепт - копия другого рецепта.")}</div>` : ""}
+    </div>`;
+}
+function detailView(d) {
+  const tabs = [["cook", T("Ingredients & Instructions", "Ингредиенты и приготовление")], ["about", T("About", "О рецепте")]];
   const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
   const courseVal = detailEditMode ? detailDraft.course_category : d.course_category;
   const mealsVal = detailEditMode ? detailDraft.meal_types : new Set(d.meals);
@@ -2910,51 +2938,7 @@ function detailView(d) {
 
   let pane;
   if (detailTab === "about") {
-    // Same carousel as the Spin card - all photos, a pending one (if any), then
-    // a trailing "add a photo" slide (replacing the old bare-emoji fallback) -
-    // sharing photoIdx[d.id] with the deck so flipping through photos in one
-    // place stays in sync with the other.
-    const photo = photoSlideHtml(d);
-    // Enrich action lives in the hero's bottom-left corner - same spot as the
-    // Spin card's version (see .enrich-fab) - not inline in the banner text
-    // below, so the action is in the same place no matter how you got here.
-    // Unlike the Spin card's version (thin cards only), the About tab's copy
-    // is available for thick recipes too (2026-08-09) - re-running Enrich
-    // here is the manual way to backfill a fact the original import missed
-    // (e.g. servings) without disturbing already-filled content, which the
-    // enrich-merge gates on the server protect either way.
-    const enrichBtn = `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>`;
-    pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}</div>
-      <div style="padding:14px 16px">
-        ${detailEditMode
-          ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name", "Название рецепта")}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
-          : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>`}
-        <div class="mt" style="margin-top:8px">
-          ${detailEditMode
-            ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${T("min", "мин")}</span>
-              <span id="dtlDiffPicker" style="display:inline-flex;gap:3px;cursor:pointer;margin-right:10px;vertical-align:middle">${[1, 2, 3].map(n => `<span data-diffval="${n}" style="opacity:${n <= detailDraft.difficulty ? "1" : "0.25"};font-size:15px">●</span>`).join("")}</span>
-              <input id="dtlCuisineInput" value="${(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${T("cuisine", "кухня")}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
-            : `⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
-        </div>
-        ${d.youtube_url ? `<div style="margin-top:6px"><a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a></div>` : ""}
-      </div>
-      <div class="plan-toggle">
-        <div class="ptxt">
-          <div class="ptitle">📅 ${T("Include in weekly menu planning", "Учитывать при планировании недели")}</div>
-          <div class="psub">${d.is_active
-            ? T("Can be picked by Spin, manual assignment, and the automatic AI weekly fill.", "Может быть выбрано Круткой, назначено вручную или автозаполнением ИИ.")
-            : T("Opted out of manual assignment and the automatic AI weekly fill. Still shows in Spin/Wish/Duel unless you turn on \"Hide inactive recipes\" in the filter panel.", "Не участвует в ручном назначении и автозаполнении ИИ. Всё ещё показывается в Крутке/Желаниях/Дуэлях, если не включить «Скрыть неактивные рецепты» в фильтрах.")}</div>
-        </div>
-        <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
-      </div>
-      <div style="padding:0 16px">
-        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way). Tap ✨ on the photo above to enrich it.", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна). Нажмите ✨ на фото выше, чтобы дополнить.")}</div>` : ""}
-        ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
-        ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
-          <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
-          <button class="mini-btn reject" id="dtlDecline">🍴 ${T("Decline (fork instead)", "Отклонить (создать копию)")}</button></div></div>` : ""}
-        ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("This recipe is a fork of another one.", "Этот рецепт - копия другого рецепта.")}</div>` : ""}
-      </div>
+    pane = `${detailHeaderHtml(d)}
       <div style="padding:0 16px 16px">
         ${chipRow(T("Meal type", "Тип приёма"), MEALS.map(m => [m.k, m.ic + " " + mealN(m)]), v => mealsVal.has(v), "meal_types")}
         ${chipRow(T("Dish role", "Роль блюда"), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
@@ -3059,7 +3043,8 @@ function detailView(d) {
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
-    pane = `<div style="padding:6px 16px 20px">
+    pane = `${detailHeaderHtml(d)}
+      <div style="padding:6px 16px 20px">
       <div style="margin-bottom:6px">${servingsHtml}</div>
       <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
       ${ingHtml}
@@ -3100,7 +3085,7 @@ function wireDetailOverlay(wrap, d) {
   // Tapping the photo itself (not any of the controls above it) opens it
   // full-screen, uncropped - the hero strip only ever shows it letterboxed.
   wrap.querySelector(".dtl-hero")?.addEventListener("click", e => {
-    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .enrich-fab")) return;
+    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .enrich-fab, .qhide")) return;
     const photos = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
     const url = photos[photoIdx[d.id] || 0];
     if (url) openPhotoLightbox(url);
@@ -3183,7 +3168,7 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
   wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
   wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
-  wrap.querySelector("#dtlActiveToggle")?.addEventListener("click", () => toggleRecipeActive(d));
+  wrap.querySelector("#dtlActiveEye")?.addEventListener("click", () => toggleRecipeActive(d));
 
   // Step text edits update the draft in place without a full re-render, so
   // the textarea keeps focus/cursor position while typing. Only the
