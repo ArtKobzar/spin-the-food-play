@@ -2512,7 +2512,12 @@ function renderMenu() {
           <div class="mini-row"><button class="mini-btn" data-spin="${di}-${m.k}">🎰 ${T("Spin", "Крутить")}</button>
           <button class="mini-btn" data-wish="${di}-${m.k}">✨ ${T("Wish", "Загадать")}</button></div>`;
       }
-      h += `</div>${noteBadge}${!g.locked && hasDish ? `<button class="slot-edit" data-edit="${di}-${m.k}">✏️</button>` : ""}</div>`;
+      // ✏️ now opens the full Spin deck (search + all filters) targeting
+      // this slot, same flow as the empty slot's 🎰 Spin button below -
+      // replaces the old bare unfiltered dish-chip modal (2026-08-09). 🗑
+      // clears the slot directly, since that's no longer reachable from
+      // inside the (now-removed) edit modal.
+      h += `</div>${noteBadge}${!g.locked && hasDish ? `<button class="slot-edit" data-edit="${di}-${m.k}" title="${T("Pick a different dish", "Выбрать другое блюдо")}">✏️</button><button class="slot-edit" data-clearslot="${di}-${m.k}" title="${T("Clear this slot", "Очистить слот")}">🗑</button>` : ""}</div>`;
     });
     h += `</div>`;
   });
@@ -3558,7 +3563,13 @@ function wire() {
   document.querySelectorAll("[data-proprej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.proprej.split("-"); rejectProposal(+d,k); });
   document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(T("Swipe right to fill ", "Свайпни вправо, чтобы заполнить ") + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic); });
   document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); wishTarget = { day: +d, meal: k }; tab="wish"; render(); openWish(); });
-  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.edit.split("-"); openEdit(+d,k); });
+  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => {
+    const [d,k]=b.dataset.edit.split("-");
+    spinTarget = { day: +d, meal: k };
+    tab = "spin"; render();
+    toast(T("Swipe right to replace ", "Свайпни вправо, чтобы заменить ") + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic);
+  });
+  document.querySelectorAll("[data-clearslot]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.clearslot.split("-"); clearSlot(+d,k); });
   document.querySelectorAll("[data-ainote]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.ainote.split("-"); openAiNote(+d,k); });
   document.querySelectorAll("[data-openrecipe]").forEach(el => el.addEventListener("click", e => {
     if (e.target.closest("button")) return; // Accept/Decline/Reassign/Spin/Wish/etc. keep their own action
@@ -3706,14 +3717,6 @@ function openAssign(dishId) {
   v.querySelectorAll("#M .chip").forEach(c=>c.onclick=()=>{selMeal=c.dataset.m;upd();});
   v.querySelectorAll("#C .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
   v.querySelector("#go").onclick = () => { if(selDay===null)return; closeModal(); assignToSlot(selDay,selMeal,dishId,selCook); };
-}
-function openEdit(day, mealKey) {
-  const v = modal(`<h3>✏️ ${dayN(day)} · ${mealN(MEALS.find(m=>m.k===mealKey))}</h3>
-    <div class="sect">${T("Suggest a different dish", "Предложи другое блюдо")}</div>
-    <div class="chips-wrap">${DISHES.filter(d=>d.is_active).map(d=>`<div class="chip" data-s="${d.id}">${d.em} ${dName(d)}</div>`).join("")}</div>
-    <button class="btn btn-ghost" id="clear" style="width:100%;margin-top:14px">🗑 ${T("Clear this slot", "Очистить слот")}</button>`);
-  v.querySelectorAll("[data-s]").forEach(c=>c.onclick=()=>{ closeModal(); assignToSlot(day,mealKey,c.dataset.s,mem(me).cook?me:(FAMILY.find(m=>m.cook)?.id||me)); });
-  v.querySelector("#clear").onclick = () => { closeModal(); clearSlot(day,mealKey); };
 }
 function openReassignCook(day, mealKey) {
   const s = game.week[day][mealKey];
