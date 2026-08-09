@@ -144,6 +144,8 @@
   .search-suggest { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30; max-height: 240px; overflow-y: auto; background: #fff; border: 1.5px solid #e5e7eb; border-radius: 14px; box-shadow: 0 12px 28px rgba(0,0,0,.14); padding: 6px; }
   .search-suggest-item { padding: 9px 11px; font-size: 14px; border-radius: 9px; cursor: pointer; }
   .search-suggest-item:hover { background: #f8fafc; }
+  .search-clear-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border: none; border-radius: 50%; background: #e5e7eb; color: #6b7280; font-size: 12px; line-height: 1; align-items: center; justify-content: center; cursor: pointer; padding: 0; z-index: 5; }
+  .search-clear-btn:hover { background: #d1d5db; }
   .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
   .wish-stack { height: 300px; margin: 0; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
@@ -1120,20 +1122,6 @@ function wireFilterToggle(root, idPrefix, panelState) {
     toggle.classList.toggle("on", panelState.open);
   };
 }
-// Focusing the search input also opens the panel (doesn't close it on blur - a home
-// cook typing a search term while also picking filter chips shouldn't fight the UI).
-function wireSearchOpensFilters(root, searchId, idPrefix, panelState) {
-  const input = root.querySelector("#"+searchId);
-  if (!input) return;
-  input.addEventListener("focus", () => {
-    if (panelState.open) return;
-    panelState.open = true;
-    const panel = root.querySelector("#"+idPrefix+"Panel");
-    const toggle = root.querySelector("#"+idPrefix+"Toggle");
-    if (panel) panel.style.display = "block";
-    if (toggle) toggle.classList.add("on");
-  });
-}
 // A floating box under a search input, "id"Suggest, listing recipe-name matches as the
 // user types - typing alone previously only silently re-filtered whatever's rendered
 // below (the Spin swipe deck), giving no feedback that search was doing anything until
@@ -1141,6 +1129,27 @@ function wireSearchOpensFilters(root, searchId, idPrefix, panelState) {
 // caller); `onPick(dish)` runs when a suggestion is tapped, then the box closes itself.
 function searchSuggestHtml(idPrefix) {
   return `<div class="search-suggest" id="${idPrefix}Suggest" style="display:none"></div>`;
+}
+// A small "✕" clear button overlaid on the right edge of a search input, shown only
+// once there's text to clear. `getValue`/`onClear` decouple this from any one screen's
+// search-state variable (deckSearch, dishSearch, ...).
+function searchClearBtnHtml(searchId) {
+  return `<button type="button" class="search-clear-btn" id="${searchId}Clear" aria-label="${T("Clear search", "Очистить поиск")}" style="display:none">✕</button>`;
+}
+function wireSearchClear(root, searchId, getValue, onClear) {
+  const input = root.querySelector("#"+searchId);
+  const btn = root.querySelector("#"+searchId+"Clear");
+  if (!input || !btn) return;
+  const sync = () => { btn.style.display = getValue().length ? "flex" : "none"; };
+  sync();
+  input.addEventListener("input", sync);
+  btn.onclick = e => {
+    e.stopPropagation();
+    input.value = "";
+    onClear();
+    sync();
+    input.focus();
+  };
 }
 function wireSearchSuggest(root, searchId, idPrefix, getMatches, onPick) {
   const input = root.querySelector("#"+searchId);
@@ -1308,13 +1317,26 @@ async function kickLoad() {
   }
 }
 
-// Apply a fresher remote state. Deferred while a modal is open or mid-registration
-// so it never disrupts what the user is filling in.
+// Apply a fresher remote state. Deferred while a modal is open, mid-registration, or the
+// user has a text field focused (typing a search query shouldn't get its input element
+// yanked out from under it by a full re-render triggered by someone else's edit) so it
+// never disrupts what the user is filling in.
 function shouldDefer() {
   if (modalOpen) return true;
   if (me && game && !game.profiles[me] && ob && ob.step > 0) return true;
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return true;
   return false;
 }
+// Companion to shouldDefer()'s text-field check: once the user leaves that field,
+// apply whatever remote update was held back while they were typing.
+document.addEventListener("focusout", e => {
+  if (!pendingRemote) return;
+  if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
+    pendingRemote = false;
+    render();
+  }
+});
 function applyRemote(state, ts) {
   if (!state || !state.week) return;
   if (ts && ts <= lastSeenTs) return;   // ignore stale / our own echo
@@ -2516,7 +2538,8 @@ function renderSpin() {
     <div style="display:flex;gap:8px;margin:0 20px 8px">
       <button class="filter-icon-btn" id="add" title="${T("Add a new recipe", "Добавить рецепт")}" aria-label="${T("Add a new recipe", "Добавить рецепт")}">➕</button>
       <div style="position:relative;flex:1 1 auto;min-width:0">
-        <input id="deckSearch" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+        <input id="deckSearch" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:9px 30px 9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}" value="${deckSearch}">
+        ${searchClearBtnHtml("deckSearch")}
         ${searchSuggestHtml("deckAdv")}
       </div>
       ${filterIconButtonHtml("deckAdv", deckPanel.open)}
@@ -3234,7 +3257,7 @@ function wire() {
   if (document.getElementById("deckAdvQuick")) wireQuickFilterRow(app, "deckAdv", deckAdv, refreshDeck);
   if (document.getElementById("deckAdvToggle")) wireFilterToggle(app, "deckAdv", deckPanel);
   if (document.getElementById("deckAdvMeal")) wireAdvFilterPanel(app, "deckAdv", deckAdv, refreshDeck);
-  wireSearchOpensFilters(app, "deckSearch", "deckAdv", deckPanel);
+  wireSearchClear(app, "deckSearch", () => deckSearch, () => { deckSearch = ""; refreshDeck(); });
   wireSearchSuggest(app, "deckSearch", "deckAdv", q => deck(q), id => {
     const idx = deckOrder.indexOf(id);
     if (idx > 0) { deckOrder.splice(idx, 1); deckOrder.unshift(id); }
@@ -3440,7 +3463,10 @@ function wishStep2(kind) {
   const v = modal(`<h3>${kind==="dish"?"🍛 "+T("Which dish?","Какое блюдо?"):kind==="cuisine"?"🌍 "+T("Which cuisine?","Какая кухня?"):"🎁 "+T("Cook's choice","Выбор повара")}</h3>
     ${kind==="dish"?`
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <input id="dishSearch" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
+        <div style="position:relative;flex:1 1 auto;min-width:0">
+          <input id="dishSearch" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:9px 30px 9px 12px;font-size:14px" placeholder="${T("Search recipes...", "Поиск рецептов...")}">
+          ${searchClearBtnHtml("dishSearch")}
+        </div>
         ${filterIconButtonHtml("dishAdv", dishPanel.open)}
       </div>
       ${quickFilterRowHtml("dishAdv", dishAdv)}
@@ -3538,7 +3564,7 @@ function wishStep2(kind) {
     wireQuickFilterRow(v, "dishAdv", dishAdv, renderWishPicker);
     wireFilterToggle(v, "dishAdv", dishPanel);
     wireAdvFilterPanel(v, "dishAdv", dishAdv, renderWishPicker);
-    wireSearchOpensFilters(v, "dishSearch", "dishAdv", dishPanel);
+    wireSearchClear(v, "dishSearch", () => dishSearch, () => { dishSearch = ""; renderWishPicker(); });
   }
   v.querySelectorAll("#WC .chip").forEach(c=>c.onclick=()=>{selCui=c.dataset.c;upd();});
   v.querySelectorAll("#WK .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
