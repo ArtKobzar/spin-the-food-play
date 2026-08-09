@@ -1252,8 +1252,12 @@ function wireSearchSuggest(root, searchId, idPrefix, getMatches, onPick) {
     const q = input.value.trim();
     const matches = q ? getMatches(q).slice(0, 6) : [];
     if (!matches.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+    // No leading emoji here (2026-08-09) - d.em is only ever a generic
+    // picture-frame/plate placeholder (recipeToDish(): "🖼" if there's a
+    // photo, "🍽" otherwise, never anything dish-specific), which read as a
+    // stray broken-image icon in a plain text list rather than useful info.
     box.innerHTML = matches.map(d =>
-      `<div class="search-suggest-item" data-i="${d.id}">${d.em ? d.em + " " : ""}${dName(d)}</div>`).join("");
+      `<div class="search-suggest-item" data-i="${d.id}">${dName(d)}</div>`).join("");
     box.style.display = "block";
     box.querySelectorAll(".search-suggest-item").forEach(item => item.onclick = e => {
       e.stopPropagation();
