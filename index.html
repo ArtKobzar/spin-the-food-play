@@ -3945,7 +3945,11 @@ function openBlankAdd() {
 // recipeSearchSites() below picks the one that matches the product's current
 // UI language (same `lang` global everything else in the app reads).
 const RECIPE_SEARCH_SITES_EN = [
-  { name: "AllRecipes", domain: "allrecipes.com", search: q => `https://www.allrecipes.com/search?q=${encodeURIComponent(q)}` },
+  // AllRecipes removed (2026-08-09) - runs Akamai-class bot protection that
+  // blocks/throttles server-side fetches (confirmed: repeat requests from the
+  // same client got 403'd or came back empty), so any recipe a user finds
+  // there can never actually be imported via our 🔗 URL flow. No point
+  // sending users to a dead end.
   // Food Network's search URL is a slug, not a query string: lowercase,
   // non-alphanumerics collapsed to single hyphens, with a trailing hyphen -
   // e.g. "chicken pasta" -> "/search/chicken-pasta-".
