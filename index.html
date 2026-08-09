@@ -3560,7 +3560,10 @@ const RECIPE_SEARCH_SITES_EN = [
 ];
 const RECIPE_SEARCH_SITES_RU = [
   { name: "Gastronom", domain: "gastronom.ru", search: q => `https://www.gastronom.ru/search?text=${encodeURIComponent(q)}` },
-  { name: "1000.menu", domain: "1000.menu" },
+  // Found via manual site navigation (not guessable from robots.txt/homepage -
+  // the actual search page lives at /cooking/search, and takes the query in
+  // `str`, not `text`/`q`/`query`). Verified with two different search terms.
+  { name: "1000.menu", domain: "1000.menu", search: q => `https://1000.menu/cooking/search?str=${encodeURIComponent(q)}` },
   { name: "Povarёnok", domain: "povarenok.ru" },
   { name: "Eda.ru", domain: "eda.ru" },
   { name: "Edimdoma", domain: "edimdoma.ru" },
