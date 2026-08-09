@@ -3751,22 +3751,39 @@ async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
 // every extracted draft must be reviewed/editable before it becomes a real
 // recipe row). Deliberately its own lightweight editor rather than reusing
 // detailView()'s edit mode, which is built around an already-saved dish id.
+// Bilingual review (SPEC_RECIPE_I18N.md shape, extended to the pre-save
+// draft too - see 2026-08-09 CHANGELOG entry): the extraction call always
+// fills both name_en/name_ru, title_en/title_ru, and text_en/text_ru, so
+// the reviewer sees their own current UI language regardless of source
+// language, while both languages travel together untouched into the
+// eventual recipe row (no separate on-the-fly-translation step needed at
+// display time, matching the "translated once, persisted" storage model).
+// Editing writes back only into the language-matched field for whatever
+// the reviewer is currently looking at - the untouched language's
+// extracted translation is preserved, same convention as saveDetailEdit().
 function openImportReview(draft, jobId, targetRecipeId, sourceType) {
+  let titleEn = draft.title_en ?? draft.title ?? "";
+  let titleRu = draft.title_ru ?? null;
   let ingredients = (draft.ingredients || []).map(i => ({ ...i }));
-  let instructions = (draft.instructions || []).map(t => (typeof t === "string" ? t : t.text || ""));
+  let instructions = (draft.instructions || []).map(s =>
+    typeof s === "string" ? { text_en: s, text_ru: null } : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null }
+  );
+
+  const ingName = (ing) => (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
+  const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
 
   const render = () => {
     v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
         <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${T("qty", "кол-во")}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="unit" value="${ing.unit ?? ""}" placeholder="${T("unit", "ед.")}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <input data-ingf="name_en" value="${ing.name_en ?? ""}" placeholder="${T("ingredient", "ингредиент")}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <input data-ingf="name" value="${ingName(ing).replace(/"/g, "&quot;")}" placeholder="${T("ingredient", "ингредиент")}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients found - add them manually or edit the photo/link.", "Ингредиенты не найдены - добавьте вручную.")}</div>`;
     v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
         <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
-        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${s}</textarea>
+        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No instructions found - add them manually.", "Инструкции не найдены - добавьте вручную.")}</div>`;
     wireRows();
@@ -3774,7 +3791,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
 
   const v = modal(`<h3>👀 ${T("Review before saving", "Проверьте перед сохранением")}</h3>
     <div class="sect">${T("Title", "Название")}</div>
-    <input id="revTitle" value="${(draft.title || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
+    <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
     <div id="revIng"></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>
@@ -3783,19 +3800,26 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${T("Add step", "Добавить шаг")}</button>
     <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${T("Save", "Сохранить")}</button>`);
 
+  v.querySelector("#revTitle").addEventListener("input", (e) => {
+    if (lang === "ru") titleRu = e.target.value; else titleEn = e.target.value;
+  });
+
   function wireRows() {
     v.querySelectorAll("[data-ingidx]").forEach(row => {
       const i = Number(row.dataset.ingidx);
       row.querySelectorAll("[data-ingf]").forEach(inp => inp.addEventListener("input", () => {
         const f = inp.dataset.ingf;
-        ingredients[i][f] = f === "qty" ? (inp.value === "" ? null : Number(inp.value)) : inp.value;
+        if (f === "qty") { ingredients[i].qty = inp.value === "" ? null : Number(inp.value); return; }
+        if (f === "name") { if (lang === "ru") ingredients[i].name_ru = inp.value; else ingredients[i].name_en = inp.value; return; }
+        ingredients[i][f] = inp.value;
       }));
     });
     v.querySelectorAll("[data-ingdel]").forEach(btn => btn.addEventListener("click", () => {
       ingredients.splice(Number(btn.dataset.ingdel), 1); render();
     }));
     v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
-      instructions[Number(ta.dataset.instrinput)] = ta.value;
+      const i = Number(ta.dataset.instrinput);
+      if (lang === "ru") instructions[i].text_ru = ta.value; else instructions[i].text_en = ta.value;
     }));
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
       instructions.splice(Number(btn.dataset.instrdel), 1); render();
@@ -3804,15 +3828,18 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   render();
 
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
-  v.querySelector("#revInstrAdd").onclick = () => { instructions.push(""); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null }); render(); };
 
   v.querySelector("#revSave").onclick = async () => {
     const saveBtn = v.querySelector("#revSave");
     saveBtn.disabled = true; saveBtn.textContent = T("Saving...", "Сохраняем...");
     const finalDraft = {
-      title: v.querySelector("#revTitle").value.trim(),
-      ingredients: ingredients.filter(i => (i.name_en || "").trim()),
-      instructions: instructions.map(s => s.trim()).filter(Boolean),
+      title_en: (titleEn || "").trim(),
+      title_ru: (titleRu || "").trim() || null,
+      ingredients: ingredients.filter(i => (i.name_en || "").trim() || (i.name_ru || "").trim()),
+      instructions: instructions
+        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null }))
+        .filter(s => s.text_en || s.text_ru),
       photo_url: draft.photo_url ?? null,
     };
     const { data, error } = await invokeWithTimeout("spin-food-import", {
@@ -3852,7 +3879,7 @@ async function openImportHistory() {
   listEl.innerHTML = jobs.map(j => `
     <div class="card" style="padding:10px 12px;margin-bottom:8px" data-jobid="${j.id}">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div>${sourceIcon[j.source_type] || "📥"} ${j.draft?.title || j.error || j.source_type}</div>
+        <div>${sourceIcon[j.source_type] || "📥"} ${(lang === "ru" ? (j.draft?.title_ru || j.draft?.title_en) : (j.draft?.title_en || j.draft?.title_ru)) || j.draft?.title || j.error || j.source_type}</div>
         <div style="font-size:11px;color:${j.status === "failed" ? "#ef4444" : "#888"}">${statusLabel[j.status] || j.status}</div>
       </div>
       ${(j.status === "ready" && !j.result_recipe_id) ? `<button class="mini-btn" data-jobreview="${j.id}" style="margin-top:6px">👀 ${T("Review", "Проверить")}</button>` : ""}
