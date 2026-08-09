@@ -150,6 +150,12 @@
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
   .scard .ph small { position: absolute; bottom: 8px; left: 10px; font-size: 9px; color: rgba(255,255,255,.85); background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 6px; }
   .scard .thin-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; z-index: 2; }
+  /* Enrich action for Thin Cards - same amber as .thin-badge (same "needs
+     ingredients" signal), floating bottom-right of the photo so it never
+     collides with the badge (bottom-left) or .qhide (top-left). Shared between
+     the Spin card and the detail/about hero (`.dtl-hero`) so the action sits in
+     the exact same corner wherever a Thin Card's photo is shown. */
+  .scard .enrich-fab, .dtl-hero .enrich-fab { position: absolute; bottom: 10px; right: 10px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: rgba(217,119,6,.92); color: #fff; font-size: 15px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
   /* Icon reflects CURRENT state, not the tap action: open eye = visible (light
      green circle), closed eye = hidden (orange circle) - an inline SVG for both
      (not the 🙈 monkey emoji) so "closed eye" reads as an actual shut eyelid,
@@ -2479,6 +2485,11 @@ function stackHtml(dk) {
     // AI pre-fill, so nudge the family to add ingredients rather than block anything.
     const thinBadge = d.card_state === "thin"
       ? `<div class="thin-badge">📝 ${T("Add ingredients", "Добавить ингредиенты")}</div>` : "";
+    // Enrich action - bottom-right corner of the photo, same spot as the
+    // detail/about hero's version (see .enrich-fab). Opens the import sheet
+    // directly from the Spin deck, no need to open the detail view first.
+    const enrichBtn = d.card_state === "thin"
+      ? `<button class="enrich-fab" data-enrich="${d.id}" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">📸</button>` : "";
     // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
     // without opening the detail view. Same is_active toggle as the About tab
     // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
@@ -2489,7 +2500,7 @@ function stackHtml(dk) {
       : `<button class="qhide off" data-qhide="${d.id}" title="${T("Show", "Показать")}" aria-label="${T("Show", "Показать")}">${EYE_CLOSED_SVG}</button>`;
     const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="${photo.bgStyle}">${thinBadge}${photo.inner}</div>
+      <div class="ph" style="${photo.bgStyle}">${thinBadge}${enrichBtn}${photo.inner}</div>
       <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${T("min", "мин")}</span><span>${d.d}</span><span>${d.c}</span></div></div>
       ${quickHide}
       <div class="stamp yes">${T("MENU!", "В МЕНЮ!")}</div><div class="stamp no">${T("NOPE", "НЕТ")}</div></div>`;
@@ -2551,6 +2562,12 @@ function wireStack() {
       const d = dish(id);
       if (d) await toggleRecipeActive(d);
     });
+  }
+  const enrichBtn = topCard?.querySelector(".enrich-fab");
+  if (enrichBtn) {
+    ["pointerdown", "pointerup", "pointermove", "click"].forEach(evt =>
+      enrichBtn.addEventListener(evt, e => e.stopPropagation()));
+    enrichBtn.addEventListener("click", () => openImportSheet(enrichBtn.dataset.enrich));
   }
   // Photo carousel nav, upload CTA, and admin approve/decline - all discrete
   // taps on the top card's photo area, none of which should trigger the
@@ -2755,7 +2772,12 @@ function detailView(d) {
     // sharing photoIdx[d.id] with the deck so flipping through photos in one
     // place stays in sync with the other.
     const photo = photoSlideHtml(d);
-    pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}</div>
+    // Enrich action lives in the hero's bottom-right corner - same spot as the
+    // Spin card's version (see .enrich-fab) - not inline in the banner text
+    // below, so the action is in the same place no matter how you got here.
+    const enrichBtn = d.card_state === "thin"
+      ? `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">📸</button>` : "";
+    pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}</div>
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
         <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
@@ -2770,8 +2792,7 @@ function detailView(d) {
         <button class="sw ${d.is_active ? "on" : ""}" id="dtlActiveToggle" ${detailSaving ? "disabled" : ""} aria-label="${T("Include in weekly menu planning", "Учитывать при планировании недели")}"><i></i></button>
       </div>
       <div style="padding:0 16px">
-        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way).", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна).")}
-          <div class="mini-row" style="margin-top:8px"><button class="mini-btn" id="dtlEnrichBtn">📸 ${T("Enrich this recipe", "Обогатить рецепт")}</button></div></div>` : ""}
+        ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("This is a Thin Card - add its ingredients so it becomes eligible for the automatic AI weekly menu fill (it stays fully usable for Spin, Wish, and Duel either way). Tap 📸 on the photo above to enrich it.", "Это Тонкая карточка - добавьте ингредиенты, чтобы её мог использовать автоматический ИИ-планировщик недели (для Крутки, Желаний и Дуэлей она уже доступна). Нажмите 📸 на фото выше, чтобы дополнить.")}</div>` : ""}
         ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${T("An edit is pending the owning cook's approval.", "Изменение ожидает подтверждения от повара-владельца.")}</div>` : ""}
         ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
           <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
@@ -2853,7 +2874,7 @@ function wireDetailOverlay(wrap, d) {
   // Tapping the photo itself (not any of the controls above it) opens it
   // full-screen, uncropped - the hero strip only ever shows it letterboxed.
   wrap.querySelector(".dtl-hero")?.addEventListener("click", e => {
-    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge")) return;
+    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .enrich-fab")) return;
     const photos = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
     const url = photos[photoIdx[d.id] || 0];
     if (url) openPhotoLightbox(url);
@@ -3509,15 +3530,51 @@ function openBlankAdd() {
   v.querySelector("#day").onclick = async () => { const id = await mk(); if (!id) return; closeModal(); openAssign(id); };
 }
 
+// Curated cooking sites for the 🔍 "find this recipe online" lookup below.
+// Deliberately routes through a site-restricted Google search rather than
+// each site's own search box - every site's internal search URL format is
+// different (and changes without notice), while `site:domain` search results
+// are consistent and don't need per-site maintenance.
+const RECIPE_SEARCH_SITES = [
+  { name: "AllRecipes", domain: "allrecipes.com" },
+  { name: "Food Network", domain: "foodnetwork.com" },
+  { name: "BBC Good Food", domain: "bbcgoodfood.com" },
+  { name: "Bon Appétit", domain: "bonappetit.com" },
+  { name: "Serious Eats", domain: "seriouseats.com" },
+  { name: "NYT Cooking", domain: "cooking.nytimes.com" },
+  { name: "Epicurious", domain: "epicurious.com" },
+  { name: "Delish", domain: "delish.com" },
+];
+// Lets the user look a recipe up on one of the sites above instead of
+// hunting for a URL themselves - opens a site-restricted Google search in a
+// new tab for whichever site they pick, prefilled with `defaultQuery` (the
+// dish name on Enrich, whatever's already typed in the URL field on Add).
+// They still paste the URL back into the import sheet themselves afterwards -
+// this is a lookup aid, not its own extraction source.
+function openRecipeWebsiteSearch(defaultQuery) {
+  const v = modal(`<h3>🔍 ${T("Find this recipe online", "Найти рецепт в сети")}</h3>
+    <div class="sect">${T("Search term", "Поисковый запрос")}</div>
+    <input id="wsQuery" value="${(defaultQuery || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name...", "Название рецепта...")}" style="width:100%;box-sizing:border-box;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
+    <div class="sect" style="margin-top:14px">${T("Search on", "Искать на")}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">${RECIPE_SEARCH_SITES.map(s => `<button class="mini-btn" data-wssite="${s.domain}" style="text-align:left;width:100%">🌐 ${s.name}</button>`).join("")}</div>`);
+  v.querySelectorAll("[data-wssite]").forEach(btn => btn.addEventListener("click", () => {
+    const q = v.querySelector("#wsQuery").value.trim();
+    if (!q) { v.querySelector("#wsQuery").focus(); return; }
+    const url = `https://www.google.com/search?q=${encodeURIComponent(`site:${btn.dataset.wssite} ${q}`)}`;
+    window.open(url, "_blank", "noopener");
+  }));
+}
+
 // ── Recipe Ingestion Pipeline (SPEC_RECIPE_INGESTION.md) ──
 // One sheet, shared by "Add a dish" (targetRecipeId=null) and the thin-card
 // "Enrich this recipe" button (targetRecipeId set). Layout per map ticket
-// #21's final locked variant: one URL field + 📷 camera + ➕ menu.
+// #21's final locked variant: one URL field + 🔍 site-search + 📷 camera + ➕ menu.
 function openImportSheet(targetRecipeId = null) {
   const isEnrich = Boolean(targetRecipeId);
   const v = modal(`<h3>${isEnrich ? "📸" : "➕"} ${isEnrich ? T("Enrich this recipe", "Обогатить рецепт") : T("Add a dish", "Добавить блюдо")}</h3>
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
       <input id="impUrl" type="url" placeholder="${T("Paste a recipe URL...", "Вставьте ссылку на рецепт...")}" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
+      <button class="filter-icon-btn" id="impSearchBtn" aria-label="${T("Find a recipe on a cooking website", "Найти рецепт на кулинарном сайте")}" style="font-size:16px">🔍</button>
       <button class="filter-icon-btn" id="impCamBtn" aria-label="${T("Photo", "Фото")}" style="font-size:18px">📷</button>
       <input id="impPhoto" type="file" accept="image/*" multiple style="display:none">
       ${isEnrich ? "" : `<div class="filter-dropdown">
@@ -3539,8 +3596,14 @@ function openImportSheet(targetRecipeId = null) {
     statusEl.textContent = msg;
     urlInput.disabled = busy;
     v.querySelector("#impCamBtn").disabled = busy;
+    v.querySelector("#impSearchBtn").disabled = busy;
   };
   urlInput.addEventListener("input", () => setBusy(false));
+
+  v.querySelector("#impSearchBtn").addEventListener("click", () => {
+    const defaultQuery = isEnrich ? dName(dish(targetRecipeId)) : urlInput.value.trim();
+    openRecipeWebsiteSearch(defaultQuery);
+  });
 
   v.querySelector("#impPlusBtn")?.addEventListener("click", (e) => {
     e.stopPropagation();
