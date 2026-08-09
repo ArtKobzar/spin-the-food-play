@@ -617,6 +617,7 @@ function convertQty(qty, unitSlug) {
 function recipeToDish(r) {
   const diff = r.difficulty || 2;
   const dots = "●".repeat(Math.min(3, Math.max(1, diff))).padEnd(3, "○");
+  const cookMinutes = r.cook_time_minutes || r.prep_time_minutes || 45;
   const meals = (r.meal_types && r.meal_types.length) ? r.meal_types : ["dinner"];
   return {
     id: r.id,
@@ -627,8 +628,9 @@ function recipeToDish(r) {
     en: r.title_en || r.title,
     ru: r.title_ru || r.title,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
-    t: r.cook_time_minutes || r.prep_time_minutes || 45,
+    t: cookMinutes,
     d: dots,
+    difficulty: diff,
     // p/protein_type (legacy scalar) intentionally NOT read here anymore - nothing in the
     // ingest/classification pipeline has written it since the pre-pivot cutover, so it was
     // silently defaulting every untagged recipe to "meat". protein_groups[] below is the real,
@@ -2781,8 +2783,16 @@ function detailView(d) {
       ? `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>` : "";
     pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}</div>
       <div style="padding:14px 16px">
-        <div style="font-weight:800;font-size:24px">${dName(d)}</div>
-        <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
+        ${detailEditMode
+          ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${T("Recipe name", "Название рецепта")}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
+          : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>`}
+        <div class="mt" style="margin-top:8px">
+          ${detailEditMode
+            ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${T("min", "мин")}</span>
+              <span id="dtlDiffPicker" style="display:inline-flex;gap:3px;cursor:pointer;margin-right:10px;vertical-align:middle">${[1, 2, 3].map(n => `<span data-diffval="${n}" style="opacity:${n <= detailDraft.difficulty ? "1" : "0.25"};font-size:15px">●</span>`).join("")}</span>
+              <input id="dtlCuisineInput" value="${(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${T("cuisine", "кухня")}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
+            : `⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
+        </div>
         ${d.youtube_url ? `<div style="margin-top:6px"><a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a></div>` : ""}
       </div>
       <div class="plan-toggle">
@@ -2891,6 +2901,10 @@ function wireDetailOverlay(wrap, d) {
         dish_role: d.dish_role, course_category: d.course_category,
         meal_types: new Set(d.meals), techniques: new Set(d.techniques),
         instructions: instructionSteps(d).map(s => ({ ...s })),
+        titleEn: d.en, titleRu: d.ru,
+        cuisine: d.c === "family" ? "" : d.c,
+        difficulty: d.difficulty,
+        cookTimeMinutes: d.t,
       };
     }
     renderDetailOverlay();
@@ -2913,6 +2927,23 @@ function wireDetailOverlay(wrap, d) {
     } else if (key === "techniques") {
       if (detailDraft.techniques.has(v)) detailDraft.techniques.delete(v); else detailDraft.techniques.add(v);
     }
+    renderDetailOverlay();
+  }));
+  wrap.querySelector("#dtlTitleInput")?.addEventListener("input", (e) => {
+    if (!detailDraft) return;
+    if (lang === "ru") detailDraft.titleRu = e.target.value; else detailDraft.titleEn = e.target.value;
+  });
+  wrap.querySelector("#dtlTimeInput")?.addEventListener("input", (e) => {
+    if (!detailDraft) return;
+    detailDraft.cookTimeMinutes = e.target.value === "" ? null : Number(e.target.value);
+  });
+  wrap.querySelector("#dtlCuisineInput")?.addEventListener("input", (e) => {
+    if (!detailDraft) return;
+    detailDraft.cuisine = e.target.value;
+  });
+  wrap.querySelectorAll("#dtlDiffPicker [data-diffval]").forEach(s => s.addEventListener("click", () => {
+    if (!detailDraft) return;
+    detailDraft.difficulty = Number(s.dataset.diffval);
     renderDetailOverlay();
   }));
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
@@ -2982,6 +3013,20 @@ async function saveDetailEdit(d) {
   if (draftTech.join(",") !== d.techniques.slice().sort().join(",")) proposed.techniques = draftTech;
   // dish_role changes must always carry meal_types alongside (server-enforced pairing).
   if ("dish_role" in proposed && !("meal_types" in proposed)) proposed.meal_types = draftMeals;
+
+  // Name/difficulty/time/cuisine - only the current UI language's title side
+  // is touched (same convention as instruction steps, SPEC_RECIPE_I18N.md),
+  // the other side's existing translation is left untouched.
+  const draftTitle = (lang === "ru" ? detailDraft.titleRu : detailDraft.titleEn) || "";
+  const currentTitle = (lang === "ru" ? d.ru : d.en) || "";
+  if (draftTitle.trim() && draftTitle.trim() !== currentTitle.trim()) {
+    if (lang === "ru") proposed.title_ru = draftTitle.trim(); else proposed.title_en = draftTitle.trim();
+  }
+  if (detailDraft.difficulty !== d.difficulty) proposed.difficulty = detailDraft.difficulty;
+  if (detailDraft.cookTimeMinutes && detailDraft.cookTimeMinutes !== d.t) proposed.cook_time_minutes = detailDraft.cookTimeMinutes;
+  const draftCuisine = (detailDraft.cuisine || "").trim().toLowerCase();
+  const currentCuisine = d.c === "family" ? "" : d.c;
+  if (draftCuisine && draftCuisine !== currentCuisine) proposed.cuisine = draftCuisine;
 
   // Bilingual step diffing (SPEC_RECIPE_I18N.md): both text_en and text_ru
   // travel together so an edit in one language never overwrites the
