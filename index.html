@@ -3519,7 +3519,7 @@ function openImportSheet(targetRecipeId = null) {
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
       <input id="impUrl" type="url" placeholder="${T("Paste a recipe URL...", "Вставьте ссылку на рецепт...")}" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
       <button class="filter-icon-btn" id="impCamBtn" aria-label="${T("Photo", "Фото")}" style="font-size:18px">📷</button>
-      <input id="impPhoto" type="file" accept="image/*" capture="environment" multiple style="display:none">
+      <input id="impPhoto" type="file" accept="image/*" multiple style="display:none">
       ${isEnrich ? "" : `<div class="filter-dropdown">
         <button class="filter-icon-btn" id="impPlusBtn" aria-label="${T("More ways to add", "Другие способы добавить")}" style="font-size:20px;font-weight:800">+</button>
         <div class="dropdown-menu" id="impPlusMenu" style="display:none;right:0;left:auto">
