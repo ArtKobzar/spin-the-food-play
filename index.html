@@ -655,6 +655,27 @@ function matchUnitSlug(text) {
   if (aliasSlug && UNITS_BY_SLUG[aliasSlug]) return aliasSlug;
   return null;
 }
+// food.units.name_ru is the full word ("грамм", "миллилитр") - fine for a
+// vocabulary/settings picker, but recipe ingredient lines read much more
+// naturally with the short form ("г", "мл") the same way a recipe card
+// would print it. English keeps the full food.units.name_en as-is (never
+// asked to change) - only Russian gets this short-form override, keyed by
+// slug so it applies uniformly regardless of which legacy/alias unit text
+// resolved to it.
+const UNIT_SHORT_RU = {
+  gram: "г", kilogram: "кг", ounce: "унц.", pound: "фунт",
+  milliliter: "мл", liter: "л", teaspoon: "ч.л.", tablespoon: "ст.л.",
+  cup: "чашка", piece: "шт", celsius: "°C", fahrenheit: "°F",
+};
+// Shared display label for a food.units record - used everywhere a unit is
+// rendered (ingredientLine() below, its edit-mode editor, and the import
+// review dialog) so short-form Russian units stay consistent no matter
+// which code path resolved the record.
+function unitLabel(rec) {
+  if (!rec) return "";
+  if (lang === "ru") return UNIT_SHORT_RU[rec.slug] || rec.name_ru || rec.slug;
+  return rec.name_en || rec.slug;
+}
 // Localizes a food.units slug (canonical, or a legacy/alias form like "kg")
 // for display in the viewer's UI language - shared by the persisted-recipe
 // ingredient list (ingredientLine() below), its edit-mode editor, and the
@@ -663,7 +684,7 @@ function unitDisplay(slug) {
   if (!slug) return "";
   const rec = UNITS_BY_SLUG[matchUnitSlug(slug) || slug];
   if (!rec) return slug;
-  return (lang === "ru" ? rec.name_ru : rec.name_en) || slug;
+  return unitLabel(rec) || slug;
 }
 // Resolves user-typed unit text (either language, a known alias, or the raw
 // slug itself) back to the canonical food.units slug for storage;
@@ -2720,6 +2741,7 @@ let detailTab = "about";    // "about" | "cook"
 let detailEditMode = false; // About tab taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
+let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
 
 const DISH_ROLES = ["main", "side", "component"];
 const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "salad", "dessert"];
@@ -2776,17 +2798,22 @@ function applianceLabel(v) {
 function fmtQty(n) {
   return String(Math.round(n * 100) / 100).replace(/\.0+$/, "");
 }
-function ingredientLine(ing) {
+function ingredientLine(ing, scaleFactor = 1) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
   const name = (lang === "ru" && ing.name_ru) ? ing.name_ru : (ing.name_en || ing.raw || "");
   const note = ing.note ? ` (${ing.note})` : "";
+  // Scaling (2026-08-09): scaleFactor = target servings / recipe.servings,
+  // computed by the caller only when a real (non-null) servings baseline is
+  // known - a purely display-time multiply, same non-destructive pattern as
+  // unit conversion below. Never written back to the stored qty.
+  const scaledQty = Number.isFinite(Number(ing.qty)) ? Number(ing.qty) * scaleFactor : ing.qty;
   // Recipe Unit Conversion (SPEC_RECIPE_I18N.md decision #9/#11/#13):
   // show the viewer's preferred system when a conversion is available;
   // otherwise fall back to the recipe's original qty/unit unconverted.
-  const converted = convertQty(ing.qty, ing.unit);
-  const qty = converted ? fmtQty(converted.qty) : (ing.qty ? String(ing.qty).replace(/\.0+$/, "") : "");
-  const unit = converted ? (lang === "ru" ? converted.unit.name_ru : converted.unit.name_en) : unitDisplay(ing.unit);
+  const converted = convertQty(scaledQty, ing.unit);
+  const qty = converted ? fmtQty(converted.qty) : (scaledQty ? fmtQty(scaledQty) : "");
+  const unit = converted ? unitLabel(converted.unit) : unitDisplay(ing.unit);
   const line = [qty, unit, name].filter(Boolean).join(" ");
   return (line || ing.raw || "") + note;
 }
@@ -2826,7 +2853,7 @@ function instructionSteps(d) {
 
 function openDetail(id) {
   if (!dish(id)) return;
-  detailOpen = id; detailTab = "about"; detailEditMode = false; detailDraft = null; detailSaving = false;
+  detailOpen = id; detailTab = "about"; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   renderDetailOverlay();
 }
 function closeDetail() {
@@ -2874,8 +2901,12 @@ function detailView(d) {
     // Enrich action lives in the hero's bottom-left corner - same spot as the
     // Spin card's version (see .enrich-fab) - not inline in the banner text
     // below, so the action is in the same place no matter how you got here.
-    const enrichBtn = d.card_state === "thin"
-      ? `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>` : "";
+    // Unlike the Spin card's version (thin cards only), the About tab's copy
+    // is available for thick recipes too (2026-08-09) - re-running Enrich
+    // here is the manual way to backfill a fact the original import missed
+    // (e.g. servings) without disturbing already-filled content, which the
+    // enrich-merge gates on the server protect either way.
+    const enrichBtn = `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>`;
     pane = `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}</div>
       <div style="padding:14px 16px">
         ${detailEditMode
@@ -2936,16 +2967,35 @@ function detailView(d) {
       }).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients yet - add them below.", "Ингредиентов пока нет - добавьте ниже.")}</div>`}</div>
         <button class="mini-btn" id="dtlIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>`;
     } else {
+      // Scaling (2026-08-09): only meaningful once the recipe has a
+      // confirmed (non-null) base servings count - food.family_cookbook_recipes.servings
+      // is nullable with no default precisely so "unknown" and "really N"
+      // are distinguishable (see 20260809050000 migration). scaleFactor is a
+      // pure display-time multiplier, never written back.
+      const scaleFactor = (detailScaleTo && d.servings) ? detailScaleTo / d.servings : 1;
       ingHtml = d.ingredients.length
-        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i)}</li>`).join("")}</ul>`
+        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor)}</li>`).join("")}</ul>`
         : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${T("No ingredients recorded for this recipe yet.", "Ингредиенты для этого рецепта пока не записаны.")}</div>`);
     }
 
-    // Serving size (food.family_cookbook_recipes.servings, default 4) - just
-    // captured/shown/edited here, no scaling math yet (2026-08-09 decision).
+    // Serving size (food.family_cookbook_recipes.servings, nullable - a
+    // stored number means "confirmed from the source", 2026-08-09). In
+    // edit mode it's a plain input (sets the recipe's real base count). In
+    // read mode, once a base is known, it doubles as a scaling stepper: +/-
+    // changes detailScaleTo (view-only target, resets whenever the detail
+    // view is reopened or edit mode is entered) and recomputes every
+    // ingredient's displayed qty via scaleFactor above - the stored
+    // ingredients/servings are never touched by this.
     const servingsHtml = detailEditMode
       ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#888;font-weight:400">👥 <input id="dtlServingsInput" type="number" min="1" value="${detailDraft.servings ?? ""}" style="width:44px;border:1px solid #eee;border-radius:8px;padding:3px 5px;font-size:12px"> ${T("servings", "порций")}</span>`
-      : (d.servings ? `<span style="font-size:12px;color:#888;font-weight:400">👥 ${T("Serves", "Порций:")} ${d.servings}</span>` : "");
+      : (d.servings
+          ? `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#888;font-weight:400">👥 ${T("Serves", "Порций")}
+              <button class="dtl-back" id="dtlScaleDown" ${(detailScaleTo || d.servings) <= 1 ? "disabled" : ""} style="width:22px;height:22px;font-size:12px;padding:0">−</button>
+              <b style="color:#333;min-width:14px;text-align:center">${detailScaleTo || d.servings}</b>
+              <button class="dtl-back" id="dtlScaleUp" style="width:22px;height:22px;font-size:12px;padding:0">+</button>
+              ${detailScaleTo && detailScaleTo !== d.servings ? `<button class="dtl-back" id="dtlScaleReset" style="font-size:10px;padding:2px 6px;height:auto">${T("Reset", "Сброс")}</button>` : ""}
+            </span>`
+          : `<span style="font-size:12px;color:#aaa;font-weight:400">👥 ${T("Serving size unknown - tap ✏️ to set it", "Размер порции неизвестен - нажмите ✏️, чтобы указать")}</span>`);
 
     let instrHtml;
     if (detailEditMode) {
@@ -3022,6 +3072,7 @@ function wireDetailOverlay(wrap, d) {
   });
   wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
   wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
+    detailScaleTo = null; // editing always shows/edits the recipe's real base quantities
     if (detailEditMode) { detailEditMode = false; detailDraft = null; }
     else {
       detailEditMode = true;
@@ -3080,6 +3131,20 @@ function wireDetailOverlay(wrap, d) {
     detailDraft.difficulty = Number(s.dataset.diffval);
     renderDetailOverlay();
   }));
+  wrap.querySelector("#dtlScaleUp")?.addEventListener("click", () => {
+    detailScaleTo = (detailScaleTo || d.servings) + 1;
+    renderDetailOverlay();
+  });
+  wrap.querySelector("#dtlScaleDown")?.addEventListener("click", () => {
+    const next = (detailScaleTo || d.servings) - 1;
+    if (next < 1) return;
+    detailScaleTo = next;
+    renderDetailOverlay();
+  });
+  wrap.querySelector("#dtlScaleReset")?.addEventListener("click", () => {
+    detailScaleTo = null;
+    renderDetailOverlay();
+  });
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
   wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
   wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
