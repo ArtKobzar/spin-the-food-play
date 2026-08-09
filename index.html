@@ -2796,7 +2796,10 @@ function applianceLabel(v) {
 // Formats a plain number for display, stripping trailing zeros (matches
 // the previous raw-qty formatting convention).
 function fmtQty(n) {
-  return String(Math.round(n * 100) / 100).replace(/\.0+$/, "");
+  // 1 decimal max (2026-08-09) - scaling/unit conversion can otherwise
+  // produce noisy values like 1.13333...; trailing ".0" is still stripped
+  // so whole numbers print clean.
+  return String(Math.round(n * 10) / 10).replace(/\.0$/, "");
 }
 function ingredientLine(ing, scaleFactor = 1) {
   if (typeof ing === "string") return ing;
