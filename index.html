@@ -592,7 +592,10 @@ function bestTargetSlug(kind, wantMetric, baseVal) {
 // missing - "accept as-is" fallback, same convention as unmatched ingredients.
 function convertQty(qty, unitSlug) {
   const num = Number(qty);
-  const u = unitSlug ? UNITS_BY_SLUG[unitSlug] : null;
+  // matchUnitSlug() resolves legacy/alias unit text (e.g. "kg", "clove")
+  // saved before server-side unit normalization existed - see its own
+  // comment below for why this fallback is needed.
+  const u = unitSlug ? UNITS_BY_SLUG[matchUnitSlug(unitSlug) || unitSlug] : null;
   if (!u || !Number.isFinite(num)) return null;
   const wantMetric = unitsSystem() === "metric";
   const isMetricUnit = METRIC_UNIT_SLUGS.has(u.slug);
@@ -616,26 +619,60 @@ function convertQty(qty, unitSlug) {
   return { qty: roundToIncrement(outVal, target.round_increment), unit: target };
 }
 
-// Localizes a canonical food.units slug (e.g. "tablespoon") for display in the
-// viewer's UI language - shared by the persisted-recipe ingredient list
-// (ingredientLine() below) and the import review dialog (openImportReview()),
-// both of which store/display the same canonical-slug shape.
+// Client-side twin of spin-food-import's/spin-food-translate-recipe's
+// UNIT_ALIASES/matchUnitSlug() (same Deno functions, same table). Needed
+// because recipes saved before that server-side normalization existed (or
+// via a path that predates it) can still carry raw abbreviated/free-text
+// units ("kg", "ml", "clove") in the DB that never match a canonical
+// food.units slug directly - this fallback resolves them the same way the
+// server would, so already-saved recipes localize correctly without a
+// backfill migration.
+const UNIT_ALIASES = {
+  g: "gram", gr: "gram", gram: "gram", grams: "gram", "г": "gram", "гр": "gram", "грамм": "gram", "граммов": "gram", "грамма": "gram",
+  kg: "kilogram", kilo: "kilogram", kilos: "kilogram", kilogram: "kilogram", kilograms: "kilogram", "кг": "kilogram", "килограмм": "kilogram",
+  oz: "ounce", ounce: "ounce", ounces: "ounce", "унция": "ounce", "унции": "ounce",
+  lb: "pound", lbs: "pound", pound: "pound", pounds: "pound", "фунт": "pound", "фунта": "pound",
+  ml: "milliliter", milliliter: "milliliter", milliliters: "milliliter", millilitre: "milliliter", "мл": "milliliter", "миллилитр": "milliliter",
+  l: "liter", liter: "liter", liters: "liter", litre: "liter", litres: "liter", "л": "liter", "литр": "liter",
+  tsp: "teaspoon", teaspoon: "teaspoon", teaspoons: "teaspoon", "ч.л.": "teaspoon", "чайная ложка": "teaspoon", "чайных ложки": "teaspoon", "чайных ложек": "teaspoon",
+  tbsp: "tablespoon", tablespoon: "tablespoon", tablespoons: "tablespoon", "ст.л.": "tablespoon", "столовая ложка": "tablespoon", "столовых ложки": "tablespoon", "столовых ложек": "tablespoon",
+  cup: "cup", cups: "cup", "чашка": "cup", "чашки": "cup", "стакан": "cup", "стакана": "cup",
+  "°c": "celsius", c: "celsius", celsius: "celsius",
+  "°f": "fahrenheit", f: "fahrenheit", fahrenheit: "fahrenheit",
+  pc: "piece", pcs: "piece", piece: "piece", pieces: "piece", clove: "piece", cloves: "piece", "шт": "piece", "шт.": "piece", "штука": "piece", "штуки": "piece", "штук": "piece",
+};
+// Resolves any unit text (canonical slug, either language's name, or a known
+// alias/abbreviation) to the canonical food.units slug, or null if nothing
+// matches.
+function matchUnitSlug(text) {
+  if (!text) return null;
+  const norm = String(text).trim().toLowerCase();
+  if (!norm) return null;
+  if (UNITS_BY_SLUG[norm]) return norm;
+  const byName = UNITS.find(u => (u.name_en || "").toLowerCase() === norm || (u.name_ru || "").toLowerCase() === norm);
+  if (byName) return byName.slug;
+  const aliasSlug = UNIT_ALIASES[norm];
+  if (aliasSlug && UNITS_BY_SLUG[aliasSlug]) return aliasSlug;
+  return null;
+}
+// Localizes a food.units slug (canonical, or a legacy/alias form like "kg")
+// for display in the viewer's UI language - shared by the persisted-recipe
+// ingredient list (ingredientLine() below), its edit-mode editor, and the
+// import review dialog (openImportReview()).
 function unitDisplay(slug) {
   if (!slug) return "";
-  const rec = UNITS_BY_SLUG[slug];
+  const rec = UNITS_BY_SLUG[matchUnitSlug(slug) || slug];
   if (!rec) return slug;
   return (lang === "ru" ? rec.name_ru : rec.name_en) || slug;
 }
-// Resolves user-typed unit text (either language, or the raw slug itself)
-// back to the canonical food.units slug for storage; unrecognized text is
-// kept as free text, same lenient fallback the field always had.
+// Resolves user-typed unit text (either language, a known alias, or the raw
+// slug itself) back to the canonical food.units slug for storage;
+// unrecognized text is kept as free text, same lenient fallback the field
+// always had.
 function unitFromInput(text) {
   const t = (text || "").trim();
   if (!t) return null;
-  if (UNITS_BY_SLUG[t]) return t;
-  const tl = t.toLowerCase();
-  const match = UNITS.find(u => (u.name_en || "").toLowerCase() === tl || (u.name_ru || "").toLowerCase() === tl || (u.slug || "").toLowerCase() === tl);
-  return match ? match.slug : t;
+  return matchUnitSlug(t) || t;
 }
 // Client-side twin of spin-food-import's slugify() (Deno function, same
 // logic) - used when saving a hand-edited ingredient name so ingredient_slug
