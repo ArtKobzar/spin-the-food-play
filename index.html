@@ -639,6 +639,7 @@ function recipeToDish(r) {
     special: [],
     allergens: r.allergen_flags || [],
     photo_url: r.photo_url,
+    youtube_url: r.youtube_url || null,
     // thin/thick eligibility (SPEC_AI_PREFILL.md #3/#4): thin cards stay fully usable
     // everywhere, they just aren't picked by the automatic AI pre-fill and get a
     // nudge badge here to encourage adding ingredients.
@@ -2782,6 +2783,7 @@ function detailView(d) {
       <div style="padding:14px 16px">
         <div style="font-weight:800;font-size:24px">${dName(d)}</div>
         <div class="mt" style="margin-top:6px">⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}</div>
+        ${d.youtube_url ? `<div style="margin-top:6px"><a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a></div>` : ""}
       </div>
       <div class="plan-toggle">
         <div class="ptxt">
@@ -3766,23 +3768,47 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   let titleRu = draft.title_ru ?? null;
   let ingredients = (draft.ingredients || []).map(i => ({ ...i }));
   let instructions = (draft.instructions || []).map(s =>
-    typeof s === "string" ? { text_en: s, text_ru: null } : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null }
+    typeof s === "string"
+      ? { text_en: s, text_ru: null, photo_url: null }
+      : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null, photo_url: s.photo_url ?? null }
   );
+  const youtubeUrl = draft.youtube_url || null;
 
   const ingName = (ing) => (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
   const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
+  // Units are a fixed vocabulary (food.units, loaded once at app init into
+  // UNITS_BY_SLUG) - the draft stores the canonical slug (e.g. "kg"), same
+  // as saved recipes, so display it translated the same way ingredientLine()
+  // does. Typing a known name/slug back in (either language) re-resolves to
+  // the canonical slug; anything unrecognized is kept as free text, same
+  // lenient fallback the field always had.
+  const unitDisplay = (slug) => {
+    if (!slug) return "";
+    const rec = UNITS_BY_SLUG[slug];
+    if (!rec) return slug;
+    return (lang === "ru" ? rec.name_ru : rec.name_en) || slug;
+  };
+  const unitFromInput = (text) => {
+    const t = (text || "").trim();
+    if (!t) return null;
+    if (UNITS_BY_SLUG[t]) return t;
+    const tl = t.toLowerCase();
+    const match = UNITS.find(u => (u.name_en || "").toLowerCase() === tl || (u.name_ru || "").toLowerCase() === tl || (u.slug || "").toLowerCase() === tl);
+    return match ? match.slug : t;
+  };
 
   const render = () => {
     v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
         <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${T("qty", "кол-во")}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <input data-ingf="unit" value="${ing.unit ?? ""}" placeholder="${T("unit", "ед.")}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${T("unit", "ед.")}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="name" value="${ingName(ing).replace(/"/g, "&quot;")}" placeholder="${T("ingredient", "ингредиент")}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No ingredients found - add them manually or edit the photo/link.", "Ингредиенты не найдены - добавьте вручную.")}</div>`;
     v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
         <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
+        ${s.photo_url ? `<img src="${s.photo_url}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
         <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No instructions found - add them manually.", "Инструкции не найдены - добавьте вручную.")}</div>`;
@@ -3792,6 +3818,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   const v = modal(`<h3>👀 ${T("Review before saving", "Проверьте перед сохранением")}</h3>
     <div class="sect">${T("Title", "Название")}</div>
     <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
+    ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a></div>` : ""}
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
     <div id="revIng"></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>
@@ -3811,6 +3838,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
         const f = inp.dataset.ingf;
         if (f === "qty") { ingredients[i].qty = inp.value === "" ? null : Number(inp.value); return; }
         if (f === "name") { if (lang === "ru") ingredients[i].name_ru = inp.value; else ingredients[i].name_en = inp.value; return; }
+        if (f === "unit") { ingredients[i].unit = unitFromInput(inp.value); return; }
         ingredients[i][f] = inp.value;
       }));
     });
@@ -3828,7 +3856,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   render();
 
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
-  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null }); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null, photo_url: null }); render(); };
 
   v.querySelector("#revSave").onclick = async () => {
     const saveBtn = v.querySelector("#revSave");
@@ -3838,9 +3866,10 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       title_ru: (titleRu || "").trim() || null,
       ingredients: ingredients.filter(i => (i.name_en || "").trim() || (i.name_ru || "").trim()),
       instructions: instructions
-        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null }))
+        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null, photo_url: s.photo_url || null }))
         .filter(s => s.text_en || s.text_ru),
       photo_url: draft.photo_url ?? null,
+      youtube_url: youtubeUrl,
     };
     const { data, error } = await invokeWithTimeout("spin-food-import", {
       body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
