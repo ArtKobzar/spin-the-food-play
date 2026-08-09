@@ -3012,25 +3012,36 @@ function detailView(d) {
     let instrHtml;
     if (detailEditMode) {
       const steps = detailDraft.instructions;
+      // Photo lives below the step text (not beside it), same tap-to-expand
+      // as the hero photo (openPhotoLightbox), and - when there isn't one
+      // yet - a dashed-outline "+" tile rather than a small camera icon,
+      // per 2026-08-09 layout request. The file input has no `capture`
+      // attribute (unlike the old version) so mobile browsers show their
+      // native "Take Photo / Choose from Library" chooser, same as every
+      // other photo-upload input in this app (hero photo, import review).
       instrHtml = `<div id="stepList">${steps.map((s, i) => `
-        <div class="step-row" style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px" data-stepidx="${i}">
-          <div style="flex:0 0 26px;font-weight:800;color:#bbb;padding-top:10px;text-align:right">${i + 1}.</div>
-          ${s.photo_url
-            ? `<div style="position:relative;flex:0 0 44px;margin-top:2px"><img src="${s.photo_url}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;display:block">
-                <button class="dtl-back" data-stepphotodel="${i}" title="${T("Remove photo", "Удалить фото")}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;font-size:10px;line-height:1;color:#ef4444;background:#fff;border-radius:50%;padding:0">✕</button></div>`
-            : `<label class="dtl-back" title="${T("Add a photo", "Добавить фото")}" style="flex:0 0 44px;width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;margin-top:2px">📷<input type="file" accept="image/*" capture="environment" data-stepphotoadd="${i}" style="display:none"></label>`}
-          <textarea data-stepinput="${i}" rows="2" style="flex:1;font-size:14px;line-height:1.6;padding:8px 10px;border:1px solid #eee;border-radius:10px;font-family:inherit;resize:vertical">${s.text}</textarea>
-          <div style="display:flex;flex-direction:column;gap:2px">
-            <button class="dtl-back" data-stepup="${i}" ${i === 0 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↑</button>
-            <button class="dtl-back" data-stepdown="${i}" ${i === steps.length - 1 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↓</button>
-            <button class="dtl-back" data-stepdel="${i}" style="width:30px;height:26px;font-size:12px;color:#ef4444">✕</button>
+        <div class="step-row" style="margin-bottom:14px" data-stepidx="${i}">
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <div style="flex:0 0 26px;font-weight:800;color:#bbb;padding-top:10px;text-align:right">${i + 1}.</div>
+            <textarea data-stepinput="${i}" rows="2" style="flex:1;font-size:14px;line-height:1.6;padding:8px 10px;border:1px solid #eee;border-radius:10px;font-family:inherit;resize:vertical">${s.text}</textarea>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <button class="dtl-back" data-stepup="${i}" ${i === 0 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↑</button>
+              <button class="dtl-back" data-stepdown="${i}" ${i === steps.length - 1 ? "disabled" : ""} style="width:30px;height:26px;font-size:12px">↓</button>
+              <button class="dtl-back" data-stepdel="${i}" style="width:30px;height:26px;font-size:12px;color:#ef4444">✕</button>
+            </div>
+          </div>
+          <div style="margin-left:34px;margin-top:8px">
+            ${s.photo_url
+              ? `<div style="position:relative;display:inline-block"><img data-stepphotoview="${s.photo_url.replace(/"/g, "&quot;")}" src="${s.photo_url}" style="width:96px;height:96px;border-radius:10px;object-fit:cover;display:block;cursor:zoom-in">
+                  <button class="dtl-back" data-stepphotodel="${i}" title="${T("Remove photo", "Удалить фото")}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;font-size:10px;line-height:1;color:#ef4444;background:#fff;border-radius:50%;padding:0">✕</button></div>`
+              : `<label title="${T("Add a photo", "Добавить фото")}" style="width:96px;height:96px;border:2px dashed #ddd;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:28px;color:#bbb;cursor:pointer">+<input type="file" accept="image/*" data-stepphotoadd="${i}" style="display:none"></label>`}
           </div>
         </div>`).join("")}</div>
         <button class="mini-btn" id="dtlStepAdd" style="margin-top:4px">+ ${T("Add step", "Добавить шаг")}</button>`;
     } else {
       const steps = instructionSteps(d);
       instrHtml = steps.length
-        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:8px"><div style="display:flex;gap:10px;align-items:flex-start">${s.photo_url ? `<img src="${s.photo_url}" style="flex:0 0 48px;width:48px;height:48px;border-radius:8px;object-fit:cover">` : ""}<div style="flex:1">${s.text}</div></div></li>`).join("")}</ol>`
+        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:14px"><div>${s.text}</div>${s.photo_url ? `<img data-stepphotoview="${s.photo_url.replace(/"/g, "&quot;")}" src="${s.photo_url}" style="margin-top:8px;width:120px;height:120px;border-radius:10px;object-fit:cover;display:block;cursor:zoom-in">` : ""}</li>`).join("")}</ol>`
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
@@ -3229,6 +3240,9 @@ function wireDetailOverlay(wrap, d) {
     step.photo_url = null;
     renderDetailOverlay();
   }));
+  // Step photos (both the read-only Instructions list and the edit-mode
+  // editor) open full-screen the same way the hero photo does.
+  wrap.querySelectorAll("[data-stepphotoview]").forEach(img => img.addEventListener("click", () => openPhotoLightbox(img.dataset.stepphotoview)));
 
   // Ingredients: same add/remove/edit-qty/unit/name pattern as
   // openImportReview's editor. qty/unit/name edits update the draft in
@@ -3972,25 +3986,102 @@ function openRecipeWebsiteSearch(defaultQuery) {
 // the already-cached authSession.access_token, exactly like the existing
 // (working) spin-food-invite call above - no getSession(), no lock, no hang.
 const CLIENT_INVOKE_TIMEOUT_MS = 45_000;
+
+// Bug found 2026-08-09 (follow-up): the same navigator.locks lock also
+// wedges the SDK's silent token refresh path, so autoRefreshToken can go
+// dormant while the local `authSession` still looks valid. Symptom: a review
+// screen open for a while sends its Save request with an expired JWT and
+// the server returns 401 "invalid session" (spin-food-import:478).
+//
+// We fix this the same way we fixed part 3: bypass the SDK entirely, refresh
+// via a raw fetch to /auth/v1/token, and update `authSession` in place. Two
+// entry points below: preemptive (if the local token is within 60s of
+// expiry) and reactive (retry once after a 401 that looks auth-shaped).
+async function refreshAccessTokenRaw() {
+  const rt = authSession?.refresh_token;
+  if (!rt) return false;
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON,
+        "Authorization": "Bearer " + SUPABASE_ANON,
+      },
+      body: JSON.stringify({ refresh_token: rt }),
+    });
+    if (!resp.ok) return false;
+    const body = await resp.json().catch(() => null);
+    if (!body?.access_token) return false;
+    // Mirror the shape supabase-js's onAuthStateChange normally sets so
+    // every other read of authSession.* stays oblivious to the source.
+    authSession = {
+      ...(authSession || {}),
+      access_token: body.access_token,
+      refresh_token: body.refresh_token ?? rt,
+      expires_in: body.expires_in,
+      expires_at: body.expires_at ?? (Math.floor(Date.now() / 1000) + (body.expires_in || 3600)),
+      token_type: body.token_type || "bearer",
+      user: body.user ?? authSession?.user,
+    };
+    return true;
+  } catch {
+    return false;
+  }
+}
+const REFRESH_TIMEOUT_MS = 5_000;
+async function refreshAccessTokenWithTimeout() {
+  return await Promise.race([
+    refreshAccessTokenRaw(),
+    new Promise((resolve) => setTimeout(() => resolve(false), REFRESH_TIMEOUT_MS)),
+  ]);
+}
+async function ensureFreshAccessToken() {
+  const expAt = authSession?.expires_at;
+  if (!expAt) return;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (nowSec >= expAt - 60) await refreshAccessTokenWithTimeout();
+}
+const AUTH_ERROR_HINT_RE = /invalid session|invalid token|jwt|unauthorized|missing bearer/i;
+
 function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
   console.log(`[invoke] -> ${fnName}`, opts?.body);
-  const accessToken = authSession?.access_token;
   const doFetch = (async () => {
-    if (!accessToken) {
-      return { data: null, error: { message: T("Session expired - please sign in again.", "Сессия истекла - войдите снова.") } };
+    // Preemptive refresh: cheap local expiry check, then a bounded raw-fetch
+    // refresh if we're close to expiry. Falls through unchanged if the token
+    // is comfortably in the future.
+    await ensureFreshAccessToken();
+    const send = async () => {
+      const accessToken = authSession?.access_token;
+      if (!accessToken) {
+        return { status: 401, body: { error: T("Session expired - please sign in again.", "Сессия истекла - войдите снова.") } };
+      }
+      try {
+        const resp = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
+          body: JSON.stringify(opts?.body ?? {}),
+        });
+        const body = await resp.json().catch(() => null);
+        return { status: resp.status, body };
+      } catch (e) {
+        return { status: 0, body: null, networkError: e?.message || String(e) };
+      }
+    };
+    let res = await send();
+    // Reactive retry: one refresh + resend on an auth-shaped 401. Covers the
+    // corner where the preemptive check said the token was fine but it
+    // expired mid-flight, or where a server-side session invalidation
+    // happened between the extract and the confirm.
+    if (res.status === 401 && (!res.body?.error || AUTH_ERROR_HINT_RE.test(String(res.body?.error || "")))) {
+      const refreshed = await refreshAccessTokenWithTimeout();
+      if (refreshed) res = await send();
     }
-    try {
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
-        method: "POST",
-        headers: { "Authorization": "Bearer " + accessToken, "Content-Type": "application/json" },
-        body: JSON.stringify(opts?.body ?? {}),
-      });
-      const body = await resp.json().catch(() => null);
-      if (!resp.ok) return { data: null, error: { message: body?.error || `Request failed (${resp.status})` } };
-      return { data: body, error: null };
-    } catch (e) {
-      return { data: null, error: { message: e?.message || String(e) } };
+    if (res.networkError) return { data: null, error: { message: res.networkError } };
+    if (res.status !== 0 && res.status >= 400) {
+      return { data: null, error: { message: res.body?.error || `Request failed (${res.status})` } };
     }
+    return { data: res.body, error: null };
   })();
   const timeoutPromise = new Promise((resolve) => {
     setTimeout(() => resolve({ data: null, error: { message: T("Request timed out - please check your connection and try again.", "Превышено время ожидания - проверьте соединение и попробуйте снова.") } }), timeoutMs);
