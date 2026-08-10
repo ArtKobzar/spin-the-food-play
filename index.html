@@ -4369,6 +4369,27 @@ const DISPLAY_PHOTO_COMPRESS = { maxDim: 2000, quality: 0.85 };
 // Uploads directly to the recipe-import-photos Storage bucket at
 // <family_id>/<uuid>.<ext> - no recipe_id exists yet at this point, unlike
 // uploadRecipePhoto() which uploads into an already-saved recipe's folder.
+//
+// One retry on timeout (2026-08-10, user report: "load failed dur timeout",
+// no import job or Storage object was ever created for that attempt -
+// confirmed via direct DB query, so the request itself stalled somewhere on
+// the way to Storage, not a server-side bug this time). Same reasoning as
+// EXTRACT_DEADLINE_MS's OpenAI retry: a single stalled mobile-network
+// request is common enough that failing the whole flow on the first miss is
+// needlessly harsh, and withTimeout() only abandons waiting on the original
+// upload promise - it doesn't cancel the underlying request - so a retry
+// safely uses a fresh random path each attempt rather than colliding with
+// whatever the first attempt might still be doing in the background.
+async function uploadImportPhotoOnce(file, upload, familyId, ext) {
+  const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await withTimeout(
+    sb.storage.from("recipe-import-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
+    PHOTO_UPLOAD_TIMEOUT_MS,
+    "Photo upload",
+  );
+  if (error) throw error;
+  return path;
+}
 async function uploadImportPhoto(file, onStep = null) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
@@ -4376,19 +4397,21 @@ async function uploadImportPhoto(file, onStep = null) {
   const upload = await compressImageForUpload(file, IMPORT_PHOTO_COMPRESS);
   onStep?.("upload");
   const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
-  const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
-  let upErr;
-  try {
-    ({ error: upErr } = await withTimeout(
-      sb.storage.from("recipe-import-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
-      PHOTO_UPLOAD_TIMEOUT_MS,
-      "Photo upload",
-    ));
-  } catch (e) {
-    toast(T("Upload timed out - check your connection and try again.", "Загрузка не удалась по времени - проверьте соединение и попробуйте снова."));
-    return null;
+  const ATTEMPTS = 2;
+  let path = null;
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    try {
+      path = await uploadImportPhotoOnce(file, upload, familyId, ext);
+      break;
+    } catch (e) {
+      if (attempt < ATTEMPTS) { onStep?.("upload"); continue; }
+      const isTimeout = /timed out/i.test(e?.message || "");
+      toast(isTimeout
+        ? T("Upload timed out twice - check your connection and try again.", "Загрузка не удалась по времени дважды - проверьте соединение и попробуйте снова.")
+        : T("Upload failed: ", "Ошибка загрузки: ") + (e?.message || ""));
+      return null;
+    }
   }
-  if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return null; }
   const { data: pub } = sb.storage.from("recipe-import-photos").getPublicUrl(path);
   return pub?.publicUrl || null;
 }
