@@ -4141,7 +4141,16 @@ function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
 // #21's final locked variant: one URL field + 🔍 site-search + 📷 camera + ➕ menu.
 function openImportSheet(targetRecipeId = null) {
   const isEnrich = Boolean(targetRecipeId);
-  const v = modal(`<h3>${isEnrich ? "📸" : "➕"} ${isEnrich ? T("Enrich this recipe", "Обогатить рецепт") : T("Add a dish", "Добавить блюдо")}</h3>
+  // 2026-08-10: this sheet kicks off a network call (upload, then a
+  // server-side extract that can legitimately take 30-60s for a photo) - a
+  // stray backdrop tap while it's "Analyzing..." used to silently discard
+  // everything with zero feedback, reading exactly like the whole add/enrich
+  // flow had crashed. Same preventBackdropClose + explicit ✕ pattern as the
+  // review sheet below, so the only way out is a deliberate tap.
+  const v = modal(`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h3 style="margin:0">${isEnrich ? "📸" : "➕"} ${isEnrich ? T("Enrich this recipe", "Обогатить рецепт") : T("Add a dish", "Добавить блюдо")}</h3>
+      <button class="mini-btn" id="impCancel">✕ ${T("Cancel", "Отмена")}</button>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
       <input id="impUrl" type="url" placeholder="${T("Paste a recipe URL...", "Вставьте ссылку на рецепт...")}" style="flex:1 1 auto;min-width:0;border:2px solid #e5e7eb;border-radius:12px;padding:10px 12px;font-size:15px">
       <button class="filter-icon-btn" id="impSearchBtn" aria-label="${T("Find a recipe on a cooking website", "Найти рецепт на кулинарном сайте")}" style="font-size:16px">🔍</button>
@@ -4156,7 +4165,9 @@ function openImportSheet(targetRecipeId = null) {
     </div>
     <button class="btn btn-primary" id="impGo" style="width:100%;margin-top:16px;opacity:.4" disabled>${T("Continue", "Продолжить")}</button>
     <div id="impStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px"></div>
-    <div id="impProgressTrack" style="height:4px;background:#eee;border-radius:2px;margin-top:2px;overflow:hidden;display:none"><div id="impProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`);
+    <div id="impProgressTrack" style="height:4px;background:#eee;border-radius:2px;margin-top:2px;overflow:hidden;display:none"><div id="impProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`,
+    { preventBackdropClose: true });
+  v.querySelector("#impCancel").onclick = () => closeModal();
 
   const urlInput = v.querySelector("#impUrl");
   const goBtn = v.querySelector("#impGo");
@@ -4331,14 +4342,34 @@ async function uploadImportPhoto(file, onStep = null) {
   return pub?.publicUrl || null;
 }
 
+// 2026-08-10: spin-food-import's own EXTRACT_DEADLINE_MS is 65s (one OpenAI
+// call plus one timeout-triggered retry, see that function's comment) - the
+// generic CLIENT_INVOKE_TIMEOUT_MS (45s) used to apply here too, so a
+// legitimately-slow-but-successful extract (common for photo/vision calls)
+// would time out client-side while the server kept working and wrote a
+// "ready" job the user never saw pop up (recoverable only via 📥 Imports).
+// Give extract its own timeout comfortably above the server deadline.
+const EXTRACT_CLIENT_TIMEOUT_MS = 75_000;
+
 async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
   const { data, error } = await invokeWithTimeout("spin-food-import", {
     body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId } },
-  });
+  }, EXTRACT_CLIENT_TIMEOUT_MS);
   if (error) { setBusy(false, ""); toast(error.message || T("Something went wrong.", "Что-то пошло не так.")); return; }
   if (!data?.ok) { setBusy(false, ""); toast(data?.error || T("Couldn't read that recipe.", "Не удалось прочитать рецепт.")); return; }
   closeModal();
-  openImportReview(data.draft, data.job_id, targetRecipeId, sourceType);
+  // Defensive: openImportReview renders straight off the server draft with no
+  // further validation - if it ever throws (malformed draft edge case), the
+  // sheet is already closed above, so the whole add/enrich flow would
+  // silently vanish with zero feedback. Never let that happen unnoticed: the
+  // job is already durably saved as "ready" server-side either way, so on
+  // any render failure just point the user at 📥 Imports to review it there.
+  try {
+    openImportReview(data.draft, data.job_id, targetRecipeId, sourceType);
+  } catch (e) {
+    console.error("[openImportReview] render failed", e, data.draft);
+    toast(T("Something went wrong showing the review screen - open it from Imports.", "Не удалось показать экран проверки - откройте его в разделе «Импорт»."));
+  }
 }
 
 // Review-before-save screen, per map decision #18 (allergy-safety driven -
