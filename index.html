@@ -4289,28 +4289,48 @@ function openImportSheet(targetRecipeId = null) {
     const files = Array.from(photoInput.files || []);
     photoInput.value = "";
     if (!files.length) return;
-    // Pipeline is "prepare -> upload" per photo, then one "analyze" step for
-    // the whole batch - each photo gets its own 2 steps in the tracker so
-    // multi-photo picks still visibly progress rather than sitting on one
-    // unchanging message for the whole batch.
-    const totalSteps = files.length * 2 + 1;
-    const photoUrls = [];
-    for (let i = 0; i < files.length; i++) {
-      const label = files.length > 1 ? ` (${i + 1}/${files.length})` : "";
-      const onStep = (phase) => {
-        const step = i * 2 + (phase === "compress" ? 1 : 2);
-        const msg = phase === "compress"
-          ? T("Preparing photo...", "Готовим фото...")
-          : T("Uploading photo...", "Загружаем фото...");
-        setBusy(true, msg + label, step, totalSteps);
-      };
-      onStep("compress");
-      const url = await uploadImportPhoto(files[i], onStep);
-      if (url) photoUrls.push(url);
+    // 2026-08-10: a photo pick vanished near-instantly with no error shown
+    // and, unlike every prior investigation tonight, not even the very
+    // first import_photo_compress breadcrumb landed - meaning whatever
+    // failed did so before uploadImportPhoto() got a chance to log
+    // anything itself. Two additions to close that blind spot: (1) log the
+    // instant the picker hands back files, before any processing, so we
+    // can at least confirm the handler started; (2) wrap the whole body so
+    // an uncaught exception anywhere in this pipeline is never silent -
+    // it's logged with a stack trace AND surfaced as a toast instead of
+    // just leaving the sheet in whatever state it happened to be in.
+    logClientDiagnostic("import_photo_pick_start", {
+      fileCount: files.length,
+      files: files.map(f => ({ size: f.size, type: f.type })),
+    });
+    try {
+      // Pipeline is "prepare -> upload" per photo, then one "analyze" step for
+      // the whole batch - each photo gets its own 2 steps in the tracker so
+      // multi-photo picks still visibly progress rather than sitting on one
+      // unchanging message for the whole batch.
+      const totalSteps = files.length * 2 + 1;
+      const photoUrls = [];
+      for (let i = 0; i < files.length; i++) {
+        const label = files.length > 1 ? ` (${i + 1}/${files.length})` : "";
+        const onStep = (phase) => {
+          const step = i * 2 + (phase === "compress" ? 1 : 2);
+          const msg = phase === "compress"
+            ? T("Preparing photo...", "Готовим фото...")
+            : T("Uploading photo...", "Загружаем фото...");
+          setBusy(true, msg + label, step, totalSteps);
+        };
+        onStep("compress");
+        const url = await uploadImportPhoto(files[i], onStep);
+        if (url) photoUrls.push(url);
+      }
+      if (!photoUrls.length) { setBusy(false); return; }
+      setBusy(true, T("Analyzing your photo...", "Анализируем фото..."), totalSteps - 1, totalSteps);
+      await runImportExtract("photo", { photo_urls: photoUrls }, targetRecipeId, setBusy);
+    } catch (e) {
+      logClientDiagnostic("import_photo_flow_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      setBusy(false, "");
+      toast(T("Something went wrong preparing that photo - try again.", "Что-то пошло не так при подготовке фото - попробуйте снова."));
     }
-    if (!photoUrls.length) { setBusy(false); return; }
-    setBusy(true, T("Analyzing your photo...", "Анализируем фото..."), totalSteps - 1, totalSteps);
-    await runImportExtract("photo", { photo_urls: photoUrls }, targetRecipeId, setBusy);
   });
 
   goBtn.onclick = async () => {
@@ -4351,6 +4371,7 @@ const PHOTO_UPLOAD_TIMEOUT_MS = 45_000;
 
 function checkPhotoUploadSize(file) {
   if (file.size <= MAX_PHOTO_UPLOAD_BYTES) return true;
+  logClientDiagnostic("import_photo_too_large", { size: file.size, type: file.type, max: MAX_PHOTO_UPLOAD_BYTES });
   toast(T("That photo is too large (max 10MB) - try a smaller one.", "Это фото слишком большое (максимум 10МБ) - попробуйте другое."));
   return false;
 }
