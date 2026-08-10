@@ -222,7 +222,12 @@
   .activity .a b { color: #444; }
 
   /* modal */
-  .veil { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; display: flex; align-items: flex-end; }
+  /* 2026-08-11: was z-index 40, below .detail-overlay's 90 - any modal()
+     opened while the recipe detail screen is open (confirmDeleteRecipe,
+     the enrich sheet from the edit-mode "Edit" button, etc.) rendered fully
+     invisible behind it. Bumped above .detail-overlay but below
+     .photo-lightbox (200), which manages its own separate stacking. */
+  .veil { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 150; display: flex; align-items: flex-end; }
   #app { position: relative; }
   .modal { background: #fff; width: 100%; max-width: 480px; margin: 0 auto; border-radius: 24px 24px 0 0; padding: 18px 20px 26px; animation: up .22s ease; max-height: 82vh; overflow-y: auto; }
   @keyframes up { from { transform: translateY(30%); } to { transform: none; } }
@@ -308,8 +313,10 @@
      directly under the ← / → they're explaining. */
   .spin-caption-row { display: flex; justify-content: space-between; padding: 6px 38px 0; font-size: 11px; font-weight: 700; color: #f59e0b; }
 
-  .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 60; max-width: 88%; text-align: center; }
-  .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 70; }
+  /* 2026-08-11: bumped above .veil's new 150 - toasts (e.g. "Save failed")
+     routinely fire while a modal is open and must stay visible on top of it. */
+  .toast { position: fixed; bottom: 88px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 10px 18px; border-radius: 14px; font-size: 13px; z-index: 160; max-width: 88%; text-align: center; }
+  .offline { position: fixed; top: 0; left: 0; right: 0; background: #ef4444; color: #fff; text-align: center; font-size: 12px; padding: 4px; z-index: 170; }
 
   /* recipe detail view - full-screen literal flip, everywhere the Spin card appears (issue #16) */
   .detail-overlay { position: fixed; inset: 0; z-index: 90; background: #fafaf7; overflow-y: auto;
