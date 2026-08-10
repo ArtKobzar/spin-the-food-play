@@ -2541,8 +2541,13 @@ function deck(queryOverride) {
   const q = (queryOverride ?? deckSearch).trim().toLowerCase();
   return deckOrder.map(dish).filter(d => {
     // Components (sauces, batters, marinades) aren't standalone meals - excluded
-    // from the Spin deck per issue #12. They still live in the family cookbook.
-    if (d.dish_role === "component") return false;
+    // from the unfiltered Spin deck per issue #12, so they're never a random
+    // spin result. They still live in the family cookbook and MUST stay
+    // findable by name - this is the only search surface the app has (user
+    // report, 2026-08-10: tagged a mustard recipe as "component", it silently
+    // vanished from search too since this same function backs the search
+    // suggestions box). Only exclude components when there's no active query.
+    if (!q && d.dish_role === "component") return false;
     if (q && !d.en.toLowerCase().includes(q) && !d.ru.toLowerCase().includes(q)) return false;
     return matchesAdvFilters(d, deckAdv);
   });
