@@ -4516,7 +4516,9 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <div id="revInstr"></div>
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${T("Add step", "Добавить шаг")}</button>
     <div id="revTax">${taxHtml()}</div>
-    <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${T("Save", "Сохранить")}</button>`,
+    <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${T("Save", "Сохранить")}</button>
+    <div id="revSaveStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px;text-align:center"></div>
+    <div id="revSaveProgressTrack" style="height:4px;background:#eee;border-radius:2px;overflow:hidden;display:none"><div id="revSaveProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`,
     { preventBackdropClose: true });
   wireTax();
 
@@ -4561,9 +4563,37 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
   v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null, photo_url: null }); render(); };
 
+  // 2026-08-10: save used to be one giant confirm call that also ran
+  // ingredient classification + translation synchronously server-side -
+  // slow enough (sequential per-ingredient LLM calls for a recipe with
+  // several never-seen ingredients) to blow past any client timeout even
+  // though it kept working and saved fine in the background (see
+  // CHANGELOG "fixed the confirm save silently timing out"). Now split
+  // into 3 real, separately-timed steps so the user sees true progress and
+  // never gets a false "failed" while the save actually succeeded:
+  //   1. confirm  - insert/update the recipe row + taxonomy (fast).
+  //   2. ingest classify  - per-ingredient + recipe-level classification.
+  //   3. ingest translate - fills in any still-missing translated side.
+  // Steps 2-3 are best-effort: any failure/timeout there is shown as a
+  // soft warning, never as "save failed" - the recipe from step 1 is real
+  // and already in the cookbook either way.
+  const INGEST_CLIENT_TIMEOUT_MS = 100_000; // server's own deadline per stage is 90s
+  const saveBtn = v.querySelector("#revSave");
+  const saveStatusEl = v.querySelector("#revSaveStatus");
+  const saveProgressTrack = v.querySelector("#revSaveProgressTrack");
+  const saveProgressFill = v.querySelector("#revSaveProgressFill");
+  const cancelBtn = v.querySelector("#revCancel");
+  const SAVE_STEPS = 3;
+  const setSaveProgress = (step, msg) => {
+    saveStatusEl.textContent = msg;
+    saveProgressTrack.style.display = "block";
+    saveProgressFill.style.width = `${Math.round((step / SAVE_STEPS) * 100)}%`;
+  };
   v.querySelector("#revSave").onclick = async () => {
-    const saveBtn = v.querySelector("#revSave");
-    saveBtn.disabled = true; saveBtn.textContent = T("Saving...", "Сохраняем...");
+    saveBtn.disabled = true;
+    cancelBtn.disabled = true; cancelBtn.style.opacity = .4;
+    saveBtn.textContent = "💾 " + T("Saving...", "Сохраняем...");
+    setSaveProgress(0, T("Saving recipe...", "Сохраняем рецепт..."));
     const finalDraft = {
       title_en: (titleEn || "").trim(),
       title_ru: (titleRu || "").trim() || null,
@@ -4588,15 +4618,51 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       body: { source_type: sourceType, action: "confirm", payload: { job_id: jobId, draft: finalDraft, target_recipe_id: targetRecipeId } },
     });
     if (error || !data?.ok) {
+      // Safe to retry from here even after a client-side timeout:
+      // spin-food-import's confirm is idempotent on job_id now - a retry
+      // either re-attempts cleanly or recognizes the job as already
+      // confirmed and hands back the same recipe, never a duplicate.
       toast((error && error.message) || data?.error || T("Save failed.", "Не удалось сохранить."));
       saveBtn.disabled = false; saveBtn.textContent = "💾 " + T("Save", "Сохранить");
+      cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
+      saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
       return;
     }
-    closeModal();
+    const recipeId = data.recipe?.id;
+    const warnings = [];
+    if (recipeId) {
+      setSaveProgress(1, T("AI is classifying ingredients...", "ИИ классифицирует ингредиенты..."));
+      const classifyRes = await invokeWithTimeout("spin-food-import", {
+        body: { source_type: sourceType, action: "ingest", payload: { recipe_id: recipeId, stage: "classify" } },
+      }, INGEST_CLIENT_TIMEOUT_MS);
+      if (classifyRes.error || classifyRes.data?.warning) warnings.push("classify");
+
+      setSaveProgress(2, T("AI is translating...", "ИИ переводит..."));
+      const translateRes = await invokeWithTimeout("spin-food-import", {
+        body: { source_type: sourceType, action: "ingest", payload: { recipe_id: recipeId, stage: "translate" } },
+      }, INGEST_CLIENT_TIMEOUT_MS);
+      if (translateRes.error || translateRes.data?.warning) warnings.push("translate");
+    }
+    setSaveProgress(3, T("Done!", "Готово!"));
+    saveProgressTrack.style.display = "none";
+    saveStatusEl.textContent = warnings.length
+      ? T("Saved - some AI enrichment didn't finish, you can re-open and edit anytime.", "Сохранено - часть обработки ИИ не завершилась, можно отредактировать позже.")
+      : "";
     await loadCatalog();
-    toast(targetRecipeId ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉") : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
     render_();
-    if (data.recipe?.id) openDetail(data.recipe.id);
+    // Save button becomes a pleasant green "Done!" landing spot rather than
+    // auto-navigating away - same "no surprise exits" principle as the
+    // preventBackdropClose guard on this whole modal.
+    saveBtn.disabled = false;
+    saveBtn.style.background = "#22c55e";
+    saveBtn.style.borderColor = "#22c55e";
+    saveBtn.textContent = "✅ " + T("Done!", "Готово!");
+    cancelBtn.style.display = "none";
+    saveBtn.onclick = () => {
+      closeModal();
+      toast(targetRecipeId ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉") : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
+      if (recipeId) openDetail(recipeId);
+    };
   };
 }
 // Alias avoids shadowing the local render() closure above with the app's
