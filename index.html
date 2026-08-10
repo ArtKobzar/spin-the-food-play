@@ -3424,13 +3424,22 @@ async function toggleRecipeActive(d) {
 async function uploadRecipePhoto(dishId, file) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return; }
-  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  if (!checkPhotoUploadSize(file)) return;
+  const upload = await compressImageForUpload(file, DISPLAY_PHOTO_COMPRESS);
+  const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const path = `${familyId}/${dishId}/${crypto.randomUUID()}.${ext}`;
   toast(T("Uploading photo...", "Загружаем фото..."));
-  const { error: upErr } = await sb.storage.from("recipe-photos").upload(path, file, {
-    contentType: file.type || "image/jpeg",
-    upsert: false,
-  });
+  let upErr;
+  try {
+    ({ error: upErr } = await withTimeout(
+      sb.storage.from("recipe-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
+      PHOTO_UPLOAD_TIMEOUT_MS,
+      "Photo upload",
+    ));
+  } catch (e) {
+    toast(T("Upload timed out - check your connection and try again.", "Загрузка не удалась по времени - проверьте соединение и попробуйте снова."));
+    return;
+  }
   if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return; }
   const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
   const photoUrl = pub?.publicUrl;
@@ -3467,13 +3476,22 @@ async function resolvePendingPhoto(dishId, approve) {
 async function uploadStepPhoto(dishId, file) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
-  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  if (!checkPhotoUploadSize(file)) return null;
+  const upload = await compressImageForUpload(file, DISPLAY_PHOTO_COMPRESS);
+  const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const path = `${familyId}/${dishId}/steps/${crypto.randomUUID()}.${ext}`;
   toast(T("Uploading photo...", "Загружаем фото..."));
-  const { error: upErr } = await sb.storage.from("recipe-photos").upload(path, file, {
-    contentType: file.type || "image/jpeg",
-    upsert: false,
-  });
+  let upErr;
+  try {
+    ({ error: upErr } = await withTimeout(
+      sb.storage.from("recipe-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
+      PHOTO_UPLOAD_TIMEOUT_MS,
+      "Photo upload",
+    ));
+  } catch (e) {
+    toast(T("Upload timed out - check your connection and try again.", "Загрузка не удалась по времени - проверьте соединение и попробуйте снова."));
+    return null;
+  }
   if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return null; }
   const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
   if (!pub?.publicUrl) { toast(T("Upload failed - no URL returned.", "Ошибка загрузки - URL не получен.")); return null; }
@@ -4205,18 +4223,79 @@ function openImportSheet(targetRecipeId = null) {
   };
 }
 
+// 2026-08-10: a phone-library photo upload would sometimes just hang on
+// "Uploading photo..." forever with no error and no way out - the
+// storage-js upload() call had no timeout of its own, so a stalled mobile
+// connection (or an oversized file quietly failing to finish) never
+// resolved either way. Two guards added to all three photo-upload helpers
+// below: a client-side size pre-check (fails fast instead of pointlessly
+// attempting an upload the 10 MiB bucket limit will reject anyway) and a
+// hard timeout via the existing withTimeout() so a stalled request always
+// surfaces an error the user can retry from, instead of hanging silently.
+const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
+const PHOTO_UPLOAD_TIMEOUT_MS = 45_000;
+
+function checkPhotoUploadSize(file) {
+  if (file.size <= MAX_PHOTO_UPLOAD_BYTES) return true;
+  toast(T("That photo is too large (max 10MB) - try a smaller one.", "Это фото слишком большое (максимум 10МБ) - попробуйте другое."));
+  return false;
+}
+
+// 2026-08-10 (SPEC_RECIPE_INGESTION.md §10.1): downscale+re-encode a picked
+// photo client-side before it ever hits Storage. Two call sites use two
+// different aggressiveness levels - import photos are OCR input only and
+// never shown to anyone, so they can be compressed hard; recipe/step photos
+// are display images and get a lighter touch. Always falls back to the
+// original File unchanged on any decode failure (chiefly: HEIC/HEIF library
+// photos, which most non-Safari browsers can't decode into a canvas) -
+// compression is a bandwidth optimization, never a hard requirement.
+async function compressImageForUpload(file, { maxDim, quality }) {
+  if (!file.type || !file.type.startsWith("image/")) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (!blob || blob.size === 0) return file;
+    // Re-encoding rarely helps a file that's already small/simple (e.g. a
+    // screenshot) - keep the original in that case rather than risk a
+    // (slightly) larger re-encode.
+    return blob.size < file.size ? blob : file;
+  } catch (e) {
+    console.warn("[stf-upload] compression skipped, using original file:", e);
+    return file;
+  }
+}
+const IMPORT_PHOTO_COMPRESS = { maxDim: 1600, quality: 0.78 };
+const DISPLAY_PHOTO_COMPRESS = { maxDim: 2000, quality: 0.85 };
+
 // Uploads directly to the recipe-import-photos Storage bucket at
 // <family_id>/<uuid>.<ext> - no recipe_id exists yet at this point, unlike
 // uploadRecipePhoto() which uploads into an already-saved recipe's folder.
 async function uploadImportPhoto(file) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
-  const ext = ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  if (!checkPhotoUploadSize(file)) return null;
+  const upload = await compressImageForUpload(file, IMPORT_PHOTO_COMPRESS);
+  const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
-  const { error: upErr } = await sb.storage.from("recipe-import-photos").upload(path, file, {
-    contentType: file.type || "image/jpeg",
-    upsert: false,
-  });
+  let upErr;
+  try {
+    ({ error: upErr } = await withTimeout(
+      sb.storage.from("recipe-import-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
+      PHOTO_UPLOAD_TIMEOUT_MS,
+      "Photo upload",
+    ));
+  } catch (e) {
+    toast(T("Upload timed out - check your connection and try again.", "Загрузка не удалась по времени - проверьте соединение и попробуйте снова."));
+    return null;
+  }
   if (upErr) { toast(T("Upload failed: ", "Ошибка загрузки: ") + upErr.message); return null; }
   const { data: pub } = sb.storage.from("recipe-import-photos").getPublicUrl(path);
   return pub?.publicUrl || null;
