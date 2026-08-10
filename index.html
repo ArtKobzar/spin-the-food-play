@@ -530,6 +530,29 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+// 2026-08-10 (SPEC gap: photo-upload timeouts with zero server-side trace -
+// see food.client_diagnostics migration comment for the full story) - a
+// minimal, best-effort breadcrumb logger for exactly this class of "the
+// browser says it failed but nothing shows up on the server" report.
+// Fire-and-forget on purpose: a logging call must never block or throw into
+// whatever real flow is calling it. Captures navigator.connection where the
+// browser exposes it (mainly Chrome/Android; Safari/iOS does not) since
+// that's the one client-side signal `withTimeout()` alone can never give us.
+function logClientDiagnostic(eventType, details = {}) {
+  try {
+    const conn = navigator.connection || navigator.webkitConnection || navigator.mozConnection;
+    const enriched = {
+      ...details,
+      online: navigator.onLine,
+      visibility: document.visibilityState,
+      network: conn ? { effectiveType: conn.effectiveType, downlinkMbps: conn.downlink, rttMs: conn.rtt, saveData: conn.saveData } : null,
+    };
+    sb.rpc("spin_food_log_client_diagnostic", { p_event_type: eventType, p_details: enriched }).then(null, () => {});
+  } catch (e) {
+    // Never let diagnostics logging itself become a new source of errors.
+  }
+}
+
 const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", other: "🧑" };
 
 function avatarEmoji(role) { return AVATAR_EMOJI[role] || "🧑"; }
@@ -4382,19 +4405,38 @@ const DISPLAY_PHOTO_COMPRESS = { maxDim: 2000, quality: 0.85 };
 // whatever the first attempt might still be doing in the background.
 async function uploadImportPhotoOnce(file, upload, familyId, ext) {
   const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
-  const { error } = await withTimeout(
-    sb.storage.from("recipe-import-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
-    PHOTO_UPLOAD_TIMEOUT_MS,
-    "Photo upload",
-  );
-  if (error) throw error;
-  return path;
+  const t0 = performance.now();
+  try {
+    const { error } = await withTimeout(
+      sb.storage.from("recipe-import-photos").upload(path, upload, { contentType: upload.type || "image/jpeg", upsert: false }),
+      PHOTO_UPLOAD_TIMEOUT_MS,
+      "Photo upload",
+    );
+    if (error) throw error;
+    logClientDiagnostic("import_photo_upload_ok", { elapsedMs: Math.round(performance.now() - t0), uploadBytes: upload.size });
+    return path;
+  } catch (e) {
+    logClientDiagnostic("import_photo_upload_fail", {
+      elapsedMs: Math.round(performance.now() - t0),
+      uploadBytes: upload.size,
+      errorMessage: e?.message || String(e),
+    });
+    throw e;
+  }
 }
 async function uploadImportPhoto(file, onStep = null) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
   if (!checkPhotoUploadSize(file)) return null;
+  const compressT0 = performance.now();
   const upload = await compressImageForUpload(file, IMPORT_PHOTO_COMPRESS);
+  logClientDiagnostic("import_photo_compress", {
+    elapsedMs: Math.round(performance.now() - compressT0),
+    originalBytes: file.size,
+    originalType: file.type,
+    resultBytes: upload.size,
+    fellBackToOriginal: upload === file,
+  });
   onStep?.("upload");
   const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const ATTEMPTS = 2;
