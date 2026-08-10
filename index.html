@@ -1453,6 +1453,13 @@ async function kickLoad() {
 // never disrupts what the user is filling in.
 function shouldDefer() {
   if (modalOpen) return true;
+  // 2026-08-11: the recipe detail view isn't tracked in modalOpen (it's a
+  // separate full-screen overlay, not a modal()), so a background sync tick
+  // while it's open used to be let through unchecked. render() itself never
+  // touches #detailOverlay, but there's no upside to letting remote state
+  // land mid-interaction (e.g. while a photo upload or edit is in flight) -
+  // treat an open detail view the same as a modal.
+  if (detailOpen) return true;
   if (me && game && !game.profiles[me] && ob && ob.step > 0) return true;
   const ae = document.activeElement;
   if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return true;
@@ -2888,9 +2895,18 @@ function instructionsText(d) {
   if (!d.instructions.length) return "";
   return d.instructions.map(s => stepLangText(s, lang)).filter(Boolean).join("\n\n");
 }
+// 2026-08-11: steps used to carry a single photo_url; now they carry
+// photo_urls (an array), so several photos can hang off one step. Every
+// read site funnels through this so legacy single-photo_url data (still
+// sitting in already-saved recipes) keeps rendering unchanged.
+function stepPhotoUrls(s) {
+  if (!s) return [];
+  if (Array.isArray(s.photo_urls)) return s.photo_urls.filter(Boolean);
+  return s.photo_url ? [s.photo_url] : [];
+}
 // Normalizes any instructions shape (old single-blob [{text}], legacy
 // step-array [{step,text,photo_url}], or the current bilingual
-// [{step,text_en,text_ru,photo_url}]) into ordered step objects for
+// [{step,text_en,text_ru,photo_urls}]) into ordered step objects for
 // display/editing. `text` is the current-UI-language display copy;
 // text_en/text_ru are both preserved so an edit to one language doesn't
 // clobber the other's translation (see saveDetailEdit). Renumbering
@@ -2898,12 +2914,12 @@ function instructionsText(d) {
 function instructionSteps(d) {
   if (!Array.isArray(d.instructions) || !d.instructions.length) return [];
   return d.instructions.map(s => typeof s === "string"
-    ? { text: s, text_en: s, text_ru: null, photo_url: null }
+    ? { text: s, text_en: s, text_ru: null, photo_urls: [] }
     : {
         text: stepLangText(s, lang),
         text_en: (s && s.text_en) ?? null,
         text_ru: (s && s.text_ru) ?? null,
-        photo_url: (s && s.photo_url) || null,
+        photo_urls: stepPhotoUrls(s),
       }
   ).filter(s => s.text);
 }
@@ -3074,16 +3090,27 @@ function detailView(d) {
           ${!d.servings ? `<span style="font-size:11px;color:#c99">${T("(guess - tap ✏️ to confirm)", "(предположительно - нажмите ✏️, чтобы указать)")}</span>` : ""}
         </span>`;
 
+    // Step photo tiles: a step can now carry several photos (2026-08-11 -
+    // was one photo_url, now a photo_urls array). Each existing photo is
+    // its own tap-to-expand tile (openPhotoLightbox, same as the hero
+    // photo); a dashed-outline "+" tile always trails the row so more can
+    // be added - in edit mode it's queued into detailDraft and only
+    // persists on "Save changes" (see saveDetailEdit); outside edit mode
+    // (2026-08-11 follow-up) it uploads and saves immediately via
+    // addStepPhotoLive, same one-tap-and-it's-live behavior as the hero
+    // photo's "Add a photo" slide. The file input has no `capture`
+    // attribute so mobile browsers show their native "Take Photo / Choose
+    // from Library" chooser, same as every other photo-upload input here.
+    const stepPhotoTiles = (photos, stepIdx, removable) => `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+      ${photos.map((url, pi) => `<div style="position:relative;display:inline-block">
+          <img data-stepphotoview="${url.replace(/"/g, "&quot;")}" src="${url}" style="width:96px;height:96px;border-radius:10px;object-fit:cover;display:block;cursor:zoom-in">
+          ${removable ? `<button class="dtl-back" data-stepphotodel="${stepIdx}" data-photoidx="${pi}" title="${T("Remove photo", "Удалить фото")}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;font-size:10px;line-height:1;color:#ef4444;background:#fff;border-radius:50%;padding:0">✕</button>` : ""}
+        </div>`).join("")}
+      <label title="${T("Add a photo", "Добавить фото")}" style="width:96px;height:96px;border:2px dashed #ddd;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:28px;color:#bbb;cursor:pointer">+<input type="file" accept="image/*" data-stepphotoadd="${stepIdx}" style="display:none"></label>
+    </div>`;
     let instrHtml;
     if (detailEditMode) {
       const steps = detailDraft.instructions;
-      // Photo lives below the step text (not beside it), same tap-to-expand
-      // as the hero photo (openPhotoLightbox), and - when there isn't one
-      // yet - a dashed-outline "+" tile rather than a small camera icon,
-      // per 2026-08-09 layout request. The file input has no `capture`
-      // attribute (unlike the old version) so mobile browsers show their
-      // native "Take Photo / Choose from Library" chooser, same as every
-      // other photo-upload input in this app (hero photo, import review).
       instrHtml = `<div id="stepList">${steps.map((s, i) => `
         <div class="step-row" style="margin-bottom:14px" data-stepidx="${i}">
           <div style="display:flex;gap:8px;align-items:flex-start">
@@ -3095,18 +3122,13 @@ function detailView(d) {
               <button class="dtl-back" data-stepdel="${i}" style="width:30px;height:26px;font-size:12px;color:#ef4444">✕</button>
             </div>
           </div>
-          <div style="margin-left:34px;margin-top:8px">
-            ${s.photo_url
-              ? `<div style="position:relative;display:inline-block"><img data-stepphotoview="${s.photo_url.replace(/"/g, "&quot;")}" src="${s.photo_url}" style="width:96px;height:96px;border-radius:10px;object-fit:cover;display:block;cursor:zoom-in">
-                  <button class="dtl-back" data-stepphotodel="${i}" title="${T("Remove photo", "Удалить фото")}" style="position:absolute;top:-8px;right:-8px;width:20px;height:20px;font-size:10px;line-height:1;color:#ef4444;background:#fff;border-radius:50%;padding:0">✕</button></div>`
-              : `<label title="${T("Add a photo", "Добавить фото")}" style="width:96px;height:96px;border:2px dashed #ddd;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:28px;color:#bbb;cursor:pointer">+<input type="file" accept="image/*" data-stepphotoadd="${i}" style="display:none"></label>`}
-          </div>
+          <div style="margin-left:34px">${stepPhotoTiles(stepPhotoUrls(s), i, true)}</div>
         </div>`).join("")}</div>
         <button class="mini-btn" id="dtlStepAdd" style="margin-top:4px">+ ${T("Add step", "Добавить шаг")}</button>`;
     } else {
       const steps = instructionSteps(d);
       instrHtml = steps.length
-        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map(s => `<li style="margin-bottom:14px"><div>${s.text}</div>${s.photo_url ? `<img data-stepphotoview="${s.photo_url.replace(/"/g, "&quot;")}" src="${s.photo_url}" style="margin-top:8px;width:120px;height:120px;border-radius:10px;object-fit:cover;display:block;cursor:zoom-in">` : ""}</li>`).join("")}</ol>`
+        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map((s, i) => `<li style="margin-bottom:14px"><div>${s.text}</div>${stepPhotoTiles(s.photo_urls, i, false)}</li>`).join("")}</ol>`
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
@@ -3155,9 +3177,18 @@ function wireDetailOverlay(wrap, d) {
     // uploadRecipePhoto()/resolvePendingPhoto() already re-render this overlay
     // themselves (`if (detailOpen) renderDetailOverlay()`) once the write
     // lands, so nothing further to do here after awaiting them.
-    const file = dtlPhotoFile.files && dtlPhotoFile.files[0];
-    dtlPhotoFile.value = "";
-    if (file) await uploadRecipePhoto(d.id, file);
+    // 2026-08-11: logged end-to-end (pick -> upload call) so a repeat of the
+    // "picked a library photo, confirmed, nothing happened" report leaves a
+    // trail even if it fails silently before any toast would show.
+    logClientDiagnostic("hero_photo_pick", { recipe_id: d.id, edit_mode: detailEditMode, has_file: !!(dtlPhotoFile.files && dtlPhotoFile.files.length) });
+    try {
+      const file = dtlPhotoFile.files && dtlPhotoFile.files[0];
+      dtlPhotoFile.value = "";
+      if (file) await uploadRecipePhoto(d.id, file);
+    } catch (e) {
+      logClientDiagnostic("hero_photo_flow_exception", { recipe_id: d.id, message: e?.message || String(e), stack: e?.stack || null });
+      toast(T("Something went wrong adding that photo - try again.", "Что-то пошло не так при добавлении фото - попробуйте снова."));
+    }
   });
   wrap.querySelector(".dtl-hero [data-papprove]")?.addEventListener("click", () => resolvePendingPhoto(d.id, true));
   wrap.querySelector(".dtl-hero [data-pdecline]")?.addEventListener("click", () => resolvePendingPhoto(d.id, false));
@@ -3273,7 +3304,7 @@ function wireDetailOverlay(wrap, d) {
       text: "",
       text_en: lang === "ru" ? null : "",
       text_ru: lang === "ru" ? "" : null,
-      photo_url: null,
+      photo_urls: [],
     });
     renderDetailOverlay();
   });
@@ -3297,26 +3328,45 @@ function wireDetailOverlay(wrap, d) {
     detailDraft.instructions.splice(i, 1);
     renderDetailOverlay();
   }));
-  // Per-step photo: uploads immediately (so the review can show the result
-  // right away) but only stashes the resulting URL into the draft - it isn't
-  // persisted until "Save changes", exactly like step text edits above. No
-  // new event type needed: it rides along in the same `instructions` array
-  // recipe_edit_proposed already fully replaces.
+  // Per-step photo add: in edit mode it uploads immediately (so the editor
+  // shows the result right away) but only stashes the URL into the draft's
+  // photo_urls array - it isn't persisted until "Save changes", exactly like
+  // step text edits above. Outside edit mode (2026-08-11) the same tile is
+  // always available too (per user request), but there's no draft/Save step
+  // to ride along with, so it goes straight to addStepPhotoLive() which
+  // applies the write immediately (subject to the same owner/pending-review
+  // gate as any other recipe_edit_proposed).
   wrap.querySelectorAll("[data-stepphotoadd]").forEach(inp => inp.addEventListener("change", async () => {
     const idx = Number(inp.dataset.stepphotoadd);
-    const file = inp.files && inp.files[0];
-    inp.value = "";
-    if (!file || !detailDraft?.instructions?.[idx]) return;
-    const url = await uploadStepPhoto(d.id, file);
-    if (!url) return;
-    detailDraft.instructions[idx].photo_url = url;
-    renderDetailOverlay();
+    logClientDiagnostic("step_photo_pick", { recipe_id: d.id, step: idx, edit_mode: detailEditMode, has_file: !!(inp.files && inp.files.length) });
+    try {
+      const file = inp.files && inp.files[0];
+      inp.value = "";
+      if (!file) return;
+      if (detailEditMode) {
+        if (!detailDraft?.instructions?.[idx]) return;
+        const url = await uploadStepPhoto(d.id, file);
+        if (!url) return;
+        const step = detailDraft.instructions[idx];
+        step.photo_urls = [...stepPhotoUrls(step), url];
+        renderDetailOverlay();
+      } else {
+        await addStepPhotoLive(d, idx, file);
+      }
+    } catch (e) {
+      logClientDiagnostic("step_photo_flow_exception", { recipe_id: d.id, step: idx, message: e?.message || String(e), stack: e?.stack || null });
+      toast(T("Something went wrong adding that photo - try again.", "Что-то пошло не так при добавлении фото - попробуйте снова."));
+    }
   }));
+  // Removing a photo is edit-mode only (see stepPhotoTiles' `removable`
+  // flag) - deleting is destructive enough that it stays behind the same
+  // deliberate "enter edit mode first" gate as every other recipe edit.
   wrap.querySelectorAll("[data-stepphotodel]").forEach(b => b.addEventListener("click", () => {
     const i = Number(b.dataset.stepphotodel);
+    const pi = Number(b.dataset.photoidx);
     const step = detailDraft?.instructions?.[i];
     if (!step) return;
-    step.photo_url = null;
+    step.photo_urls = stepPhotoUrls(step).filter((_, idx) => idx !== pi);
     renderDetailOverlay();
   }));
   // Step photos (both the read-only Instructions list and the edit-mode
@@ -3387,12 +3437,12 @@ async function saveDetailEdit(d) {
   // and what actually gets sent - reflects both languages accurately.
   const draftSteps = detailDraft.instructions
     .filter(s => (s.text || "").trim())
-    .map((s, i) => ({ step: i + 1, text_en: s.text_en ?? null, text_ru: s.text_ru ?? null, photo_url: s.photo_url || null }));
+    .map((s, i) => ({ step: i + 1, text_en: s.text_en ?? null, text_ru: s.text_ru ?? null, photo_urls: stepPhotoUrls(s) }));
   const currentSteps = (Array.isArray(d.instructions) ? d.instructions : []).map((s, i) => ({
     step: i + 1,
     text_en: (typeof s === "string" ? null : s?.text_en) ?? null,
     text_ru: (typeof s === "string" ? null : s?.text_ru) ?? null,
-    photo_url: (typeof s === "string" ? null : s?.photo_url) || null,
+    photo_urls: stepPhotoUrls(s),
   }));
   if (JSON.stringify(draftSteps) !== JSON.stringify(currentSteps)) proposed.instructions = draftSteps;
 
@@ -3587,6 +3637,32 @@ async function uploadStepPhoto(dishId, file) {
   const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
   if (!pub?.publicUrl) { toast(T("Upload failed - no URL returned.", "Ошибка загрузки - URL не получен.")); return null; }
   return pub.publicUrl;
+}
+// Adds a step photo outside edit mode (2026-08-11): uploads via
+// uploadStepPhoto(), then reconstructs the full instructions array off
+// instructionSteps(d) (same steps/indices the read view renders) with the
+// new URL appended to the target step's photo_urls, and writes it through
+// the same recipe_edit_proposed event saveDetailEdit() uses - so it lands
+// live for the owning cook or waits for approval otherwise, identically.
+async function addStepPhotoLive(d, stepIndex, file) {
+  const url = await uploadStepPhoto(d.id, file);
+  if (!url) return;
+  const steps = instructionSteps(d).map((s, i) => ({
+    step: i + 1,
+    text_en: s.text_en,
+    text_ru: s.text_ru,
+    photo_urls: i === stepIndex ? [...s.photo_urls, url] : s.photo_urls,
+  }));
+  const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed: { instructions: steps } });
+  if (!ok) return;
+  await loadCatalog();
+  const fresh = dish(d.id);
+  const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
+  toast(wentPending
+    ? T("Photo sent to the family admin for approval.", "Фото отправлено администратору на одобрение.")
+    : T("Photo added!", "Фото добавлено!"));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
 }
 
 function renderWish() {
@@ -4546,8 +4622,8 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   let ingredients = (draft.ingredients || []).map(i => ({ ...i }));
   let instructions = (draft.instructions || []).map(s =>
     typeof s === "string"
-      ? { text_en: s, text_ru: null, photo_url: null }
-      : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null, photo_url: s.photo_url ?? null }
+      ? { text_en: s, text_ru: null, photo_urls: [] }
+      : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null, photo_urls: stepPhotoUrls(s) }
   );
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
@@ -4584,7 +4660,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
         <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
-        ${s.photo_url ? `<img src="${s.photo_url}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
+        ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
         <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No instructions found - add them manually.", "Инструкции не найдены - добавьте вручную.")}</div>`;
@@ -4715,7 +4791,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   render();
 
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
-  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null, photo_url: null }); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null, photo_urls: [] }); render(); };
 
   // 2026-08-10: save used to be one giant confirm call that also ran
   // ingredient classification + translation synchronously server-side -
@@ -4753,7 +4829,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       title_ru: (titleRu || "").trim() || null,
       ingredients: ingredients.filter(i => (i.name_en || "").trim() || (i.name_ru || "").trim()),
       instructions: instructions
-        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null, photo_url: s.photo_url || null }))
+        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null, photo_urls: s.photo_urls || [] }))
         .filter(s => s.text_en || s.text_ru),
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
