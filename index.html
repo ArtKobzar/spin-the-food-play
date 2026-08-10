@@ -186,6 +186,10 @@
   .scard .pdots span, .dtl-hero .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
   .scard .pdots span.on, .dtl-hero .pdots span.on { background: #fff; }
   .scard .photo-pending-badge, .dtl-hero .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
+  /* Top-right "remove this photo" X, approved (non-pending) slides only -
+     pending slides show .photo-pending-badge in the same corner instead,
+     never both at once (see photoSlideHtml). */
+  .scard .photo-remove-btn, .dtl-hero .photo-remove-btn { position: absolute; top: 10px; right: 10px; z-index: 3; width: 28px; height: 28px; border: none; border-radius: 50%; background: rgba(0,0,0,.45); color: #fff; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; }
   .scard .photo-approve-row, .dtl-hero .photo-approve-row { position: absolute; bottom: 12px; left: 12px; z-index: 3; display: flex; gap: 8px; }
   .scard .pbtn, .dtl-hero .pbtn { border: none; border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer; touch-action: manipulation; }
   .scard .pbtn.approve, .dtl-hero .pbtn.approve { background: rgba(5,150,105,.92); color: #fff; }
@@ -2642,11 +2646,18 @@ function photoSlideHtml(d) {
       <button class="pbtn approve" data-papprove="${d.id}">✓ ${T("Approve", "Одобрить")}</button>
       <button class="pbtn decline" data-pdecline="${d.id}">✗ ${T("Decline", "Отклонить")}</button>
     </div>` : "";
+  // Permanent removal (2026-08-11) - top-right X on any approved (non-pending)
+  // slide, everywhere this carousel renders (Spin card + detail hero). Goes
+  // through a confirm dialog (removeRecipePhotoLive) before ever calling the
+  // recipe_photo_removed event, same "no surprise destructive taps" pattern
+  // as confirmDeleteRecipe.
+  const removeBtn = (slide && !slide.pending)
+    ? `<button class="photo-remove-btn" data-premove="${d.id}" data-photourl="${slide.url.replace(/"/g, "&quot;")}" title="${T("Remove this photo", "Удалить это фото")}" aria-label="${T("Remove this photo", "Удалить это фото")}">✕</button>` : "";
   const addSlideHtml = isAddSlide ? `<label class="add-photo-cta" data-addphoto="${d.id}">
       <span class="ic">📷</span><span>${T("Add a photo", "Добавить фото")}</span>
       <input type="file" accept="image/*" data-photofile="${d.id}" style="display:none">
     </label>` : "";
-  return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${pendingBadge}${adminActions}${addSlideHtml}` };
+  return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${pendingBadge}${adminActions}${removeBtn}${addSlideHtml}` };
 }
 // Reliable cross-platform icons for the quick-hide button (see .scard .qhide) -
 // an actual open/shut eyelid drawn in SVG, not the 🙈 monkey emoji, which reads
@@ -2777,6 +2788,11 @@ function wireStack() {
   if (approveBtn) { stopBubble(approveBtn); approveBtn.addEventListener("click", () => resolvePendingPhoto(approveBtn.dataset.papprove, true)); }
   const declineBtn = topCard?.querySelector("[data-pdecline]");
   if (declineBtn) { stopBubble(declineBtn); declineBtn.addEventListener("click", () => resolvePendingPhoto(declineBtn.dataset.pdecline, false)); }
+  const removeBtn = topCard?.querySelector("[data-premove]");
+  if (removeBtn) {
+    stopBubble(removeBtn);
+    removeBtn.addEventListener("click", () => confirmRemovePhoto(() => removeRecipePhotoLive(removeBtn.dataset.premove, removeBtn.dataset.photourl)));
+  }
   if (topCard) {
     let sx=0,dx=0,drag=false;
     topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
@@ -3128,7 +3144,7 @@ function detailView(d) {
     } else {
       const steps = instructionSteps(d);
       instrHtml = steps.length
-        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map((s, i) => `<li style="margin-bottom:14px"><div>${s.text}</div>${stepPhotoTiles(s.photo_urls, i, false)}</li>`).join("")}</ol>`
+        ? `<ol style="padding-left:18px;font-size:14px;line-height:1.9">${steps.map((s, i) => `<li style="margin-bottom:14px"><div>${s.text}</div>${stepPhotoTiles(s.photo_urls, i, true)}</li>`).join("")}</ol>`
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
@@ -3192,10 +3208,12 @@ function wireDetailOverlay(wrap, d) {
   });
   wrap.querySelector(".dtl-hero [data-papprove]")?.addEventListener("click", () => resolvePendingPhoto(d.id, true));
   wrap.querySelector(".dtl-hero [data-pdecline]")?.addEventListener("click", () => resolvePendingPhoto(d.id, false));
+  const dtlPhotoRemove = wrap.querySelector(".dtl-hero [data-premove]");
+  dtlPhotoRemove?.addEventListener("click", () => confirmRemovePhoto(() => removeRecipePhotoLive(dtlPhotoRemove.dataset.premove, dtlPhotoRemove.dataset.photourl)));
   // Tapping the photo itself (not any of the controls above it) opens it
   // full-screen, uncropped - the hero strip only ever shows it letterboxed.
   wrap.querySelector(".dtl-hero")?.addEventListener("click", e => {
-    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .enrich-fab, .qhide")) return;
+    if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .photo-remove-btn, .enrich-fab, .qhide")) return;
     const photos = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
     const url = photos[photoIdx[d.id] || 0];
     if (url) openPhotoLightbox(url);
@@ -3358,16 +3376,25 @@ function wireDetailOverlay(wrap, d) {
       toast(T("Something went wrong adding that photo - try again.", "Что-то пошло не так при добавлении фото - попробуйте снова."));
     }
   }));
-  // Removing a photo is edit-mode only (see stepPhotoTiles' `removable`
-  // flag) - deleting is destructive enough that it stays behind the same
-  // deliberate "enter edit mode first" gate as every other recipe edit.
+  // Removing a step photo (2026-08-11: available in both edit and non-edit
+  // mode, always behind the same confirmRemovePhoto() dialog the hero photo
+  // uses) - in edit mode it only trims the draft's array (persists on "Save
+  // changes", like every other edit-mode change); outside edit mode there's
+  // no draft to trim, so it writes immediately via removeStepPhotoLive().
   wrap.querySelectorAll("[data-stepphotodel]").forEach(b => b.addEventListener("click", () => {
     const i = Number(b.dataset.stepphotodel);
     const pi = Number(b.dataset.photoidx);
-    const step = detailDraft?.instructions?.[i];
-    if (!step) return;
-    step.photo_urls = stepPhotoUrls(step).filter((_, idx) => idx !== pi);
-    renderDetailOverlay();
+    confirmRemovePhoto(async () => {
+      if (detailEditMode) {
+        const step = detailDraft?.instructions?.[i];
+        if (!step) return;
+        step.photo_urls = stepPhotoUrls(step).filter((_, idx) => idx !== pi);
+        renderDetailOverlay();
+      } else {
+        const url = stepPhotoUrls(instructionSteps(d)[i])[pi];
+        if (url) await removeStepPhotoLive(d, i, url);
+      }
+    });
   }));
   // Step photos (both the read-only Instructions list and the edit-mode
   // editor) open full-screen the same way the hero photo does.
@@ -3594,6 +3621,54 @@ async function uploadRecipePhoto(dishId, file) {
   toast(wentLive
     ? T("Photo added!", "Фото добавлено!")
     : T("Photo sent to the family admin for approval.", "Фото отправлено администратору на одобрение."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+// Shared "remove this photo?" confirm dialog (2026-08-11) - same
+// no-surprise-destructive-taps pattern as confirmDeleteRecipe, reused by
+// both the hero carousel's X and every step photo's X.
+function confirmRemovePhoto(onConfirm) {
+  const v = modal(`<h3 style="margin:0 0 4px">🗑 ${T("Remove this photo?", "Удалить это фото?")}</h3>
+    <div style="font-size:14px;color:#666;margin:10px 0 4px">${T("This can't be undone.", "Это действие нельзя отменить.")}</div>
+    <div class="mini-row" style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-ghost" id="rmPhotoCancel" style="flex:1">${T("Cancel", "Отмена")}</button>
+      <button class="btn" id="rmPhotoConfirm" style="flex:1;background:#ef4444;color:#fff;border-color:#ef4444">🗑 ${T("Remove", "Удалить")}</button>
+    </div>`);
+  v.querySelector("#rmPhotoCancel").onclick = () => closeModal();
+  v.querySelector("#rmPhotoConfirm").onclick = async () => {
+    const btn = v.querySelector("#rmPhotoConfirm");
+    btn.disabled = true; btn.textContent = T("Removing...", "Удаляем...");
+    await onConfirm();
+    closeModal();
+  };
+}
+// Permanently drops one URL from the recipe's approved photo_urls gallery
+// (see recipe_photo_removed in the 2026-08-11 migration) - the hero
+// carousel's counterpart to removeStepPhotoLive() below.
+async function removeRecipePhotoLive(dishId, url) {
+  const ok = await applyEvent("recipe_photo_removed", { recipe_id: dishId, photo_url: url });
+  if (!ok) return;
+  await loadCatalog();
+  photoIdx[dishId] = 0;
+  toast(T("Photo removed.", "Фото удалено."));
+  if (tab === "spin") refreshDeck();
+  if (detailOpen) renderDetailOverlay();
+}
+// Permanently removes one step photo outside edit mode (2026-08-11) - the
+// step-photo counterpart to removeRecipePhotoLive() above. Same
+// reconstruct-the-whole-array-and-diff approach as addStepPhotoLive(), just
+// filtering the URL out of the target step instead of appending one.
+async function removeStepPhotoLive(d, stepIndex, url) {
+  const steps = instructionSteps(d).map((s, i) => ({
+    step: i + 1,
+    text_en: s.text_en,
+    text_ru: s.text_ru,
+    photo_urls: i === stepIndex ? s.photo_urls.filter((u) => u !== url) : s.photo_urls,
+  }));
+  const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed: { instructions: steps } });
+  if (!ok) return;
+  await loadCatalog();
+  toast(T("Photo removed.", "Фото удалено."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
