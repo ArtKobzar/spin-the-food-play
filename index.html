@@ -4155,18 +4155,34 @@ function openImportSheet(targetRecipeId = null) {
       </div>`}
     </div>
     <button class="btn btn-primary" id="impGo" style="width:100%;margin-top:16px;opacity:.4" disabled>${T("Continue", "Продолжить")}</button>
-    <div id="impStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px"></div>`);
+    <div id="impStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px"></div>
+    <div id="impProgressTrack" style="height:4px;background:#eee;border-radius:2px;margin-top:2px;overflow:hidden;display:none"><div id="impProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`);
 
   const urlInput = v.querySelector("#impUrl");
   const goBtn = v.querySelector("#impGo");
   const statusEl = v.querySelector("#impStatus");
-  const setBusy = (busy, msg = "") => {
+  const progressTrack = v.querySelector("#impProgressTrack");
+  const progressFill = v.querySelector("#impProgressFill");
+  // 2026-08-10: a bare "Uploading photo..." with no further feedback reads
+  // as a hang on a slow connection - especially now that upload runs after
+  // an invisible client-side compression pass. setBusy() takes an optional
+  // (step, totalSteps) pair so every phase of the photo pipeline (prepare ->
+  // upload -> analyze) gets its own message and visible progress movement,
+  // not just one static "processing" string for the whole duration.
+  const setBusy = (busy, msg = "", step = 0, totalSteps = 0) => {
     goBtn.disabled = busy || !urlInput.value.trim();
     goBtn.style.opacity = goBtn.disabled ? .4 : 1;
     statusEl.textContent = msg;
     urlInput.disabled = busy;
     v.querySelector("#impCamBtn").disabled = busy;
     v.querySelector("#impSearchBtn").disabled = busy;
+    if (busy && totalSteps > 0) {
+      progressTrack.style.display = "block";
+      progressFill.style.width = `${Math.min(100, Math.round((step / totalSteps) * 100))}%`;
+    } else {
+      progressTrack.style.display = "none";
+      progressFill.style.width = "0%";
+    }
   };
   urlInput.addEventListener("input", () => setBusy(false));
 
@@ -4188,14 +4204,27 @@ function openImportSheet(targetRecipeId = null) {
     const files = Array.from(photoInput.files || []);
     photoInput.value = "";
     if (!files.length) return;
-    setBusy(true, T("Uploading photo...", "Загружаем фото..."));
+    // Pipeline is "prepare -> upload" per photo, then one "analyze" step for
+    // the whole batch - each photo gets its own 2 steps in the tracker so
+    // multi-photo picks still visibly progress rather than sitting on one
+    // unchanging message for the whole batch.
+    const totalSteps = files.length * 2 + 1;
     const photoUrls = [];
-    for (const f of files) {
-      const url = await uploadImportPhoto(f);
+    for (let i = 0; i < files.length; i++) {
+      const label = files.length > 1 ? ` (${i + 1}/${files.length})` : "";
+      const onStep = (phase) => {
+        const step = i * 2 + (phase === "compress" ? 1 : 2);
+        const msg = phase === "compress"
+          ? T("Preparing photo...", "Готовим фото...")
+          : T("Uploading photo...", "Загружаем фото...");
+        setBusy(true, msg + label, step, totalSteps);
+      };
+      onStep("compress");
+      const url = await uploadImportPhoto(files[i], onStep);
       if (url) photoUrls.push(url);
     }
     if (!photoUrls.length) { setBusy(false); return; }
-    setBusy(true, T("Reading the recipe...", "Читаем рецепт..."));
+    setBusy(true, T("Analyzing your photo...", "Анализируем фото..."), totalSteps - 1, totalSteps);
     await runImportExtract("photo", { photo_urls: photoUrls }, targetRecipeId, setBusy);
   });
 
@@ -4278,11 +4307,12 @@ const DISPLAY_PHOTO_COMPRESS = { maxDim: 2000, quality: 0.85 };
 // Uploads directly to the recipe-import-photos Storage bucket at
 // <family_id>/<uuid>.<ext> - no recipe_id exists yet at this point, unlike
 // uploadRecipePhoto() which uploads into an already-saved recipe's folder.
-async function uploadImportPhoto(file) {
+async function uploadImportPhoto(file, onStep = null) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(T("Sign in first.", "Сначала войдите.")); return null; }
   if (!checkPhotoUploadSize(file)) return null;
   const upload = await compressImageForUpload(file, IMPORT_PHOTO_COMPRESS);
+  onStep?.("upload");
   const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const path = `${familyId}/${crypto.randomUUID()}.${ext}`;
   let upErr;
