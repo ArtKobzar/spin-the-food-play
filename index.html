@@ -3065,6 +3065,19 @@ function detailView(d) {
         : `<div style="font-size:13px;color:#aaa">${T("No instructions recorded for this recipe yet.", "Инструкции для этого рецепта пока не записаны.")}</div>`;
     }
 
+  // Delete (2026-08-10) - deliberately at the very bottom of the card and
+  // only ever rendered in edit mode, per request: a destructive action
+  // should never be one accidental tap away from the read view, and should
+  // sit past everything else so reaching it is a deliberate scroll, not a
+  // reflex. Soft-delete (recipe_deleted event, see
+  // 20260810030000_food_recipe_soft_delete_v1.sql) - never a hard DB
+  // delete, so this is always safe regardless of the recipe's history.
+  const deleteHtml = detailEditMode
+    ? `<div style="margin-top:28px;padding-top:16px;border-top:1px solid #f0f0f0">
+        <button class="mini-btn reject" id="dtlDelete" style="width:100%">🗑 ${T("Delete recipe", "Удалить рецепт")}</button>
+      </div>`
+    : "";
+
   const pane = `${detailHeaderHtml(d)}
       <div style="padding:6px 16px 20px">
       <div style="margin-bottom:6px">${servingsHtml}</div>
@@ -3073,6 +3086,7 @@ function detailView(d) {
       <div class="sect" style="margin-top:18px">${T("Instructions", "Приготовление")}</div>
       ${instrHtml}
       ${aboutHtml}
+      ${deleteHtml}
     </div>`;
   return `
   <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
@@ -3189,6 +3203,7 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
   wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
   wrap.querySelector("#dtlActiveEye")?.addEventListener("click", () => toggleRecipeActive(d));
+  wrap.querySelector("#dtlDelete")?.addEventListener("click", () => confirmDeleteRecipe(d));
 
   // Step text edits update the draft in place without a full re-render, so
   // the textarea keeps focus/cursor position while typing. Only the
@@ -3414,6 +3429,37 @@ async function toggleRecipeActive(d) {
     : T("Hidden from AI weekly planning. Click the eye icon again to unhide. Stays visible in the Spinner - can be hidden completely in \"Filter\" settings above.", "Скрыто из недельного планирования ИИ. Нажмите на значок глаза ещё раз, чтобы вернуть. Всё ещё видно в Крутке - можно скрыть полностью в настройках «Фильтр» выше."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
+}
+
+// Soft delete (2026-08-10, see 20260810030000_food_recipe_soft_delete_v1.sql) -
+// requires an explicit confirm tap (not just the edit-mode button itself)
+// since this removes the recipe from every family-facing surface (cookbook
+// browse/search, Spin, Wish, Duel). Never a hard DB delete - meal_slots/
+// wishes/duel_proposals reference this recipe with ON DELETE RESTRICT, so a
+// real delete would fail for any recipe that's ever actually been used.
+function confirmDeleteRecipe(d) {
+  const v = modal(`<h3 style="margin:0 0 4px">🗑 ${T("Delete this recipe?", "Удалить этот рецепт?")}</h3>
+    <div style="font-size:14px;color:#666;margin:10px 0 4px">${T(
+      `"${dName(d)}" will disappear from the cookbook, Spin, Wish, and Duel for your whole family. This can't be undone from here.`,
+      `«${dName(d)}» пропадёт из книги рецептов, Крутки, Желаний и Дуэлей для всей семьи. Отменить это отсюда нельзя.`
+    )}</div>
+    <div class="mini-row" style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-ghost" id="delCancel" style="flex:1">${T("Cancel", "Отмена")}</button>
+      <button class="btn" id="delConfirm" style="flex:1;background:#ef4444;color:#fff;border-color:#ef4444">🗑 ${T("Delete", "Удалить")}</button>
+    </div>`);
+  v.querySelector("#delCancel").onclick = () => closeModal();
+  v.querySelector("#delConfirm").onclick = async () => {
+    const btn = v.querySelector("#delConfirm");
+    btn.disabled = true; btn.textContent = T("Deleting...", "Удаляем...");
+    const ok = await applyEvent("recipe_deleted", { recipe_id: d.id });
+    if (!ok) { btn.disabled = false; btn.textContent = "🗑 " + T("Delete", "Удалить"); return; }
+    closeModal();
+    closeDetail();
+    await loadCatalog();
+    toast(T("Recipe deleted.", "Рецепт удалён."));
+    if (tab === "spin") refreshDeck();
+    render_();
+  };
 }
 
 // Uploads to the recipe-photos Storage bucket at <family_id>/<recipe_id>/<uuid>.<ext>
