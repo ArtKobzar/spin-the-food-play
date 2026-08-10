@@ -4722,8 +4722,20 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     saveStatusEl.textContent = warnings.length
       ? T("Saved - some AI enrichment didn't finish, you can re-open and edit anytime.", "Сохранено - часть обработки ИИ не завершилась, можно отредактировать позже.")
       : "";
+    // 2026-08-10 fix: this used to call render_() here, immediately after
+    // loadCatalog() - but the review modal is a DOM child of #app (see
+    // modal()), and render_()/render() does a hard `app.innerHTML = ...`
+    // rewrite. That wiped the still-open modal (and this very Save button)
+    // straight off the page before any of the "turn into a green Done!
+    // button" code below ever got a chance to be seen - user report:
+    // "the addition screen disappeared just like it crashed - no green
+    // done button, no card in spinner." The card *was* saved fine
+    // server-side (loadCatalog() below already refreshes the in-memory
+    // catalog) - only the visible confirmation was destroyed. Only
+    // loadCatalog() (data-only, no DOM touch) happens here now; the actual
+    // re-render is deferred to the Done button's own click, after
+    // closeModal() has cleanly removed the veil first.
     await loadCatalog();
-    render_();
     // Save button becomes a pleasant green "Done!" landing spot rather than
     // auto-navigating away - same "no surprise exits" principle as the
     // preventBackdropClose guard on this whole modal.
@@ -4734,6 +4746,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     cancelBtn.style.display = "none";
     saveBtn.onclick = () => {
       closeModal();
+      render_();
       toast(targetRecipeId ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉") : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
       if (recipeId) openDetail(recipeId);
     };
