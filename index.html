@@ -2821,7 +2821,7 @@ let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
 
 const DISH_ROLES = ["main", "side", "component"];
-const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "salad", "dessert"];
+const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "pickle", "salad", "dessert"];
 // Must match food.techniques (20260801120000_food_ontology_v1.sql) exactly - this is a
 // vocabulary-validation trigger on the server, not a client-side convenience list.
 const TECHNIQUES = [
@@ -2845,7 +2845,8 @@ function courseLabel(v) {
   return ({
     appetizer: T("Appetizer", "Закуска"), cold_starter: T("Cold starter", "Холодная закуска"),
     soup: T("Soup", "Первое"), main_course: T("Main course", "Основное блюдо"),
-    side_dish: T("Side dish", "Гарнир"), salad: T("Salad", "Салат"), dessert: T("Dessert", "Десерт"),
+    side_dish: T("Side dish", "Гарнир"), pickle: T("Pickle / Preserve", "Соленья"),
+    salad: T("Salad", "Салат"), dessert: T("Dessert", "Десерт"),
   })[v] || v;
 }
 function techLabel(v) {
