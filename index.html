@@ -165,8 +165,13 @@
      Only takes effect where an ancestor is display:flex - `.wish-stack`'s
      wrapper (renderWishPicker's plain position:relative div) isn't, so this
      is a no-op there and its own fixed height (below) still wins. */
-  .stack { position: relative; flex: 1 1 auto; min-height: 220px; max-height: 480px; margin: 0 22px; }
-  .spin-stack-outer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .stack { position: relative; flex: 1 1 auto; min-height: 220px; margin: 0 22px; }
+  /* margin-bottom mirrors the ~16px gap already above the card (filter-row's
+     own 8px bottom padding + the (closed) adv-filter-panel wrapper's 8px
+     margin, see renderSpin()) - without it, a max-height card leaves nothing
+     but the fixed nav's own reserved padding between the swipe-tip labels
+     and the nav pill, which reads as touching/overlapping it. */
+  .spin-stack-outer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: 440px; margin-bottom: 16px; }
   .wish-stack { height: 300px; margin: 0; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
@@ -323,8 +328,8 @@
   .swipe-tip {
     position: absolute; bottom: 16px; z-index: 20;
     border: none; cursor: pointer; background: none;
-    width: 43px; height: 43px; box-sizing: border-box;
-    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    width: 60px; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
     font-size: 17px; font-weight: 800; color: #f59e0b;
   }
   .swipe-tip.left { left: 38px; align-items: flex-start; }
@@ -332,10 +337,14 @@
   /* No ✕/🗓 icon glyph anymore, per direct request - the arrow alone (3x
      bigger than before) is the entire hint now. */
   .swipe-tip .tip-arrow { font-size: 27px; font-weight: 800; line-height: 1; opacity: .8; }
-  /* Replaces the old "AI fills the menu" banner above the deck - one caption
-     under each arrow button, same 38px inset so "Next"/"Add to menu" sit
-     directly under the ← / → they're explaining. */
-  .spin-caption-row { display: flex; justify-content: space-between; padding: 6px 38px 0; font-size: 11px; font-weight: 700; color: #f59e0b; }
+  /* 2026-08-11: the "Next"/"Onto menu" caption used to live in its own row
+     below the whole card (`.spin-caption-row`, now removed) - once the card
+     started flex-growing to fill the screen (see `.spin-stack-outer`), that
+     row could land far enough down to collide with or hide behind the fixed
+     bottom nav. Folded the label back into the same button as its arrow
+     (stacked underneath, same flex column) - it's now physically impossible
+     for the label to end up anywhere other than exactly next to its arrow. */
+  .swipe-tip .tip-label { font-size: 10.5px; font-weight: 700; line-height: 1.1; opacity: .85; }
 
   /* 2026-08-11: bumped above .veil's new 150 - toasts (e.g. "Save failed")
      routinely fire while a modal is open and must stay visible on top of it. */
@@ -2723,12 +2732,8 @@ function renderSpin() {
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
     <div class="spin-stack-outer" style="position:relative">
       <div class="stack" id="stack">${stackHtml(deck())}</div>
-      <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-arrow">←</span></button>
-      <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-arrow">→</span></button>
-    </div>
-    <div class="spin-caption-row">
-      <span>${T("Next", "Дальше")}</span>
-      <span>${T("Onto Menu", "В меню")}</span>
+      <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-arrow">←</span><span class="tip-label">${T("Next", "Дальше")}</span></button>
+      <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-arrow">→</span><span class="tip-label">${T("Onto Menu", "В меню")}</span></button>
     </div>`;
 }
 function refreshDeck() {
