@@ -2624,7 +2624,7 @@ const photoIdx = {};
 // pending photo (if any, visible to everyone as a "pending" slide so the
 // family knows something is waiting), then one virtual "add a photo" slide
 // at the very end.
-function photoSlideHtml(d) {
+function photoSlideHtml(d, { allowRemove = false } = {}) {
   const approved = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
   const slides = approved.map(url => ({ url, pending: false }));
   if (d.pending_photo && d.pending_photo.url) slides.push({ url: d.pending_photo.url, pending: true });
@@ -2647,11 +2647,13 @@ function photoSlideHtml(d) {
       <button class="pbtn decline" data-pdecline="${d.id}">✗ ${T("Decline", "Отклонить")}</button>
     </div>` : "";
   // Permanent removal (2026-08-11) - top-right X on any approved (non-pending)
-  // slide, everywhere this carousel renders (Spin card + detail hero). Goes
-  // through a confirm dialog (removeRecipePhotoLive) before ever calling the
-  // recipe_photo_removed event, same "no surprise destructive taps" pattern
-  // as confirmDeleteRecipe.
-  const removeBtn = (slide && !slide.pending)
+  // slide. Edit-mode-only, per follow-up request: allowRemove is passed true
+  // only from detailHeaderHtml() while detailEditMode is on, so the Spin
+  // card's carousel (which always calls this with no options) never shows
+  // it. Goes through a confirm dialog (removeRecipePhotoLive) before ever
+  // calling the recipe_photo_removed event, same "no surprise destructive
+  // taps" pattern as confirmDeleteRecipe.
+  const removeBtn = (allowRemove && slide && !slide.pending)
     ? `<button class="photo-remove-btn" data-premove="${d.id}" data-photourl="${slide.url.replace(/"/g, "&quot;")}" title="${T("Remove this photo", "Удалить это фото")}" aria-label="${T("Remove this photo", "Удалить это фото")}">✕</button>` : "";
   const addSlideHtml = isAddSlide ? `<label class="add-photo-cta" data-addphoto="${d.id}">
       <span class="ic">📷</span><span>${T("Add a photo", "Добавить фото")}</span>
@@ -2788,11 +2790,9 @@ function wireStack() {
   if (approveBtn) { stopBubble(approveBtn); approveBtn.addEventListener("click", () => resolvePendingPhoto(approveBtn.dataset.papprove, true)); }
   const declineBtn = topCard?.querySelector("[data-pdecline]");
   if (declineBtn) { stopBubble(declineBtn); declineBtn.addEventListener("click", () => resolvePendingPhoto(declineBtn.dataset.pdecline, false)); }
-  const removeBtn = topCard?.querySelector("[data-premove]");
-  if (removeBtn) {
-    stopBubble(removeBtn);
-    removeBtn.addEventListener("click", () => confirmRemovePhoto(() => removeRecipePhotoLive(removeBtn.dataset.premove, removeBtn.dataset.photourl)));
-  }
+  // No [data-premove] wiring here (2026-08-11 follow-up): photoSlideHtml()
+  // only renders the remove button when allowRemove is passed, and the Spin
+  // card call site (above) never does - removal is edit-view only.
   if (topCard) {
     let sx=0,dx=0,drag=false;
     topCard.addEventListener("pointerdown", e => { drag=true; sx=e.clientX; topCard.setPointerCapture(e.pointerId); });
@@ -2978,7 +2978,7 @@ function renderDetailOverlay() {
 function detailHeaderHtml(d) {
   const isOwner = !!(d.added_by_member_id && d.added_by_member_id === me);
   const canApprove = !!(d.pending_edit && isOwner);
-  const photo = photoSlideHtml(d);
+  const photo = photoSlideHtml(d, { allowRemove: detailEditMode });
   const enrichBtn = `<button class="enrich-fab" id="dtlEnrichBtn" title="${T("Enrich this recipe", "Обогатить рецепт")}" aria-label="${T("Enrich this recipe", "Обогатить рецепт")}">✨</button>`;
   const eyeBtn = d.is_active
     ? `<button class="qhide" id="dtlActiveEye" ${detailSaving ? "disabled" : ""} title="${T("Hide", "Скрыть")}" aria-label="${T("Hide", "Скрыть")}">${EYE_OPEN_SVG}</button>`
