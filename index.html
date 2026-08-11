@@ -156,7 +156,17 @@
   .search-suggest-item:hover { background: #f8fafc; }
   .search-clear-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border: none; border-radius: 50%; background: #e5e7eb; color: #6b7280; font-size: 12px; line-height: 1; align-items: center; justify-content: center; cursor: pointer; padding: 0; z-index: 5; }
   .search-clear-btn:hover { background: #d1d5db; }
-  .stack { position: relative; height: calc(100vh - 430px); max-height: 400px; min-height: 220px; margin: 0 22px; }
+  /* 2026-08-11: was a fixed calc(100vh - 430px) tuned by eye for one device -
+     left a growing dead gap between the caption row and the bottom nav on
+     taller screens as the surrounding chrome (filter row, quick toggles)
+     shrank over time. `.stack` is now a flex item that fills whatever's
+     actually left over in #app's flex column (see `.spin-stack-outer`
+     below) - no magic constant to re-tune per device/session ever again.
+     Only takes effect where an ancestor is display:flex - `.wish-stack`'s
+     wrapper (renderWishPicker's plain position:relative div) isn't, so this
+     is a no-op there and its own fixed height (below) still wins. */
+  .stack { position: relative; flex: 1 1 auto; min-height: 220px; max-height: 480px; margin: 0 22px; }
+  .spin-stack-outer { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
   .wish-stack { height: 300px; margin: 0; }
   .scard { position: absolute; inset: 0; background: #fff; border-radius: 22px; border: 2px solid #eee; overflow: hidden; box-shadow: 0 10px 26px rgba(0,0,0,.08); touch-action: none; user-select: none; }
   .scard .ph { height: 60%; display: flex; align-items: center; justify-content: center; font-size: 82px; position: relative; background-size: cover; background-position: center; background-repeat: no-repeat; }
@@ -2711,7 +2721,7 @@ function renderSpin() {
     </div>
     ${quickFilterRowHtml("deckAdv", deckAdv)}
     <div style="margin:0 20px 8px">${advFilterPanelHtml("deckAdv", deckAdv, deckPanel.open)}</div>
-    <div style="position:relative">
+    <div class="spin-stack-outer" style="position:relative">
       <div class="stack" id="stack">${stackHtml(deck())}</div>
       <button class="swipe-tip left" id="tipNope" title="${T("Skip this recipe", "Пропустить рецепт")}" aria-label="${T("Skip this recipe", "Пропустить рецепт")}"><span class="tip-arrow">←</span></button>
       <button class="swipe-tip right" id="tipLike" title="${T("Add to the menu", "Добавить в меню")}" aria-label="${T("Add to the menu", "Добавить в меню")}"><span class="tip-arrow">→</span></button>
