@@ -3862,13 +3862,34 @@ function describeEvent(ev) {
   }
 }
 
+// Same 3 stages the standalone YouTube worker actually goes through
+// (spin_the_food/video_worker/worker.py, migration 20260812150000) - a
+// download can genuinely take a couple of minutes for a long video, so a
+// flat "Processing..." label with no movement read as stuck. Same visual
+// language as the existing save-progress bar (revSaveProgressTrack/Fill)
+// elsewhere in this file - amber fill, 4px track - so it reads as the same
+// kind of feedback the user already knows from there (and from the
+// Telegram bot's own edit-in-place stage messages).
+const IMPORT_PROGRESS_STAGES = ["downloading", "transcribing", "extracting"];
+const IMPORT_STAGE_LABEL = {
+  downloading: T("Downloading video...", "Скачивание видео..."),
+  transcribing: T("Transcribing (captions or Whisper)...", "Расшифровка (субтитры или Whisper)..."),
+  extracting: T("AI is extracting the recipe...", "ИИ извлекает рецепт..."),
+};
+
 function describeJob(j) {
   const icon = IMPORT_SOURCE_ICON[j.source_type] || "📥";
   const title = (lang === "ru" ? (j.draft?.title_ru || j.draft?.title_en) : (j.draft?.title_en || j.draft?.title_ru)) || j.draft?.title || j.source_type;
+  if (j.status === "processing") {
+    const stageIdx = IMPORT_PROGRESS_STAGES.indexOf(j.progress_stage);
+    const step = stageIdx >= 0 ? stageIdx + 1 : 1;
+    const progressPct = Math.round((step / IMPORT_PROGRESS_STAGES.length) * 100);
+    const progressLabel = IMPORT_STAGE_LABEL[j.progress_stage] || T("Starting...", "Запуск...");
+    return { icon, text: T("Importing: ", "Импорт: ") + title, progressPct, progressLabel, job: j };
+  }
   let text;
   if (j.status === "failed") text = T("Recipe import failed", "Импорт рецепта не удался") + (j.error ? ": " + j.error : "");
   else if (j.status === "ready") text = T("Recipe import ready to review: ", "Импорт рецепта готов к проверке: ") + title;
-  else if (j.status === "processing") text = T("Recipe import in progress: ", "Импорт рецепта обрабатывается: ") + title;
   else text = T("Recipe import queued: ", "Импорт рецепта в очереди: ") + title;
   return { icon, text, job: j };
 }
@@ -3890,8 +3911,17 @@ function renderFeed() {
   let h = `<div class="screen-title"><h2>${T("Family activity", "Семейная лента")}</h2><div class="sub">${T("Everything the family does, live - including recipe imports.", "Всё, что делает семья, вживую - включая импорт рецептов.")}</div></div><div class="activity">`;
   if (!familyFeed.length) h += `<div class="hint">${T("Nothing yet.", "Пока пусто.")}</div>`;
   familyFeed.forEach((f, i) => {
-    const clickable = f.kind === "job";
-    h += `<div class="a"${clickable ? ` data-feedjob="${i}" style="cursor:pointer"` : ""}><b>${f.icon}</b> ${f.text} · ${ago(f.ts)}</div>`;
+    // Only ready-to-review or completed import rows actually do anything on
+    // tap - a still-processing row (below) shows a live progress bar
+    // instead, nothing to click yet.
+    const j = f.job;
+    const clickable = f.kind === "job" && j && ((j.status === "ready" && !j.result_recipe_id) || j.result_recipe_id);
+    const bar = f.progressPct !== undefined ? `
+      <div style="font-size:11px;color:#999;margin-top:3px">${f.progressLabel}</div>
+      <div style="height:4px;background:#eee;border-radius:2px;overflow:hidden;margin-top:3px">
+        <div style="height:100%;width:${f.progressPct}%;background:var(--amber,#f59e0b);transition:width .3s ease"></div>
+      </div>` : "";
+    h += `<div class="a"${clickable ? ` data-feedjob="${i}" style="cursor:pointer"` : ""}><b>${f.icon}</b> ${f.text} · ${ago(f.ts)}${bar}</div>`;
   });
   return h + `</div>`;
 }
