@@ -1436,7 +1436,7 @@ async function load() {
   loadError = null;
   try {
     await withTimeout((async () => {
-      await Promise.all([loadCatalog(), loadUnits()]);
+      await Promise.all([loadCatalog(), loadUnits(), loadFamilyFeed()]);
       const snap = await ensureActivePlan();
       game = snapshotToGame(snap);
       if (!game.profiles) game.profiles = {};
@@ -1584,9 +1584,9 @@ function subscribe() {
       schema: "food",
       table: "events",
       filter: "family_id=eq." + membership.family_id,
-    }, () => { pullLatest(); })
-    // Import job completion nudge (SPEC_RECIPE_INGESTION.md #33) - a toast on
-    // top of the Family-section list, never the only place a result lives.
+    }, () => { pullLatest(); loadFamilyFeed(); })
+    // Import job status nudge - a toast on top of the Family-tab feed entry
+    // (added by loadFamilyFeed(), not the only place a result lives).
     // UPDATE-only: INSERT fires immediately on job creation (queued/ready),
     // which would toast on every extract() call, not just completions.
     .on("postgres_changes", {
@@ -1595,9 +1595,10 @@ function subscribe() {
       table: "recipe_import_jobs",
       filter: "family_id=eq." + membership.family_id,
     }, (payload) => {
+      loadFamilyFeed();
       const job = payload.new;
       if (job.source_type === "youtube" && job.status === "ready") {
-        stickyToast(T("Your YouTube recipe is ready to review! Check Settings → Recipe imports.", "Рецепт из YouTube готов к проверке! Настройки → Импортированные рецепты."));
+        stickyToast(T("Your YouTube recipe is ready to review! Check the Family tab.", "Рецепт из YouTube готов к проверке! Смотри вкладку «Семья»."));
       } else if (job.source_type === "youtube" && job.status === "failed") {
         stickyToast(T("Couldn't extract a recipe from that video.", "Не удалось получить рецепт из этого видео."));
       }
@@ -3799,15 +3800,98 @@ function renderDuel() {
 }
 function votedInDuel() { return game.duel.proposals.some(p => p.votes.includes(me)); }
 
+// Family activity feed - server-backed (2026-08-12 fix). Merges the real
+// event log (food.events, via spin_food_list_family_events) with recipe
+// import job status (food.recipe_import_jobs, via the existing
+// spin_food_list_import_jobs) into one timestamp-sorted list. Previously
+// this tab read game.activity, a purely local/ephemeral array populated
+// only by this device's own in-app actions in the current session - other
+// family members' actions, anything from before the session started, and
+// every import job (queued/processing/ready/failed, all source types) were
+// invisible here. No separate "history" button/modal anymore - import
+// events are just entries in this same list, like everything else.
+let familyFeed = [];
+const IMPORT_SOURCE_ICON = { url: "🔗", photo: "📷", youtube: "▶️", document: "📄" };
+
+function describeEvent(ev) {
+  const p = ev.payload || {};
+  const actor = ev.actor_member_id ? mem(ev.actor_member_id) : null;
+  const who = actor ? mName(actor) : "🤖 AI";
+  const dishName = id => { const d = dish(id); return d ? dName(d) : T("a recipe", "рецепт"); };
+  const meal = p.meal_type ? MEALS.find(m => m.k === p.meal_type) : null;
+  const when = (p.day !== undefined && meal) ? `${dayN(p.day)} ${mealN(meal)}` : "";
+  switch (ev.event_type) {
+    case "slot_filled": {
+      const cookName = p.cook_member_id ? mName(mem(p.cook_member_id)) : "?";
+      return { icon: "🍽️", text: `${who} ${T("added", "добавил(а)")} ${dishName(p.recipe_id)} ${T("for", "на")} ${when} (${cookName})` };
+    }
+    case "slot_proposal_created":
+      return { icon: "🔄", text: `${who} ${T("proposed swapping in", "предложил(а) заменить на")} ${dishName((p.proposal||{}).recipe_id)} ${T("for", "на")} ${when}` };
+    case "slot_proposal_accepted":
+      return { icon: "✅", text: `${who} ${T("accepted a swap for", "принял(а) замену на")} ${when}` };
+    case "slot_proposal_rejected":
+      return { icon: "❌", text: `${who} ${T("rejected a swap for", "отклонил(а) замену на")} ${when}` };
+    case "slot_accepted":
+      return { icon: "✅", text: `${who} ${T("accepted cooking", "согласился(-лась) готовить")} ${when}` };
+    case "slot_declined":
+      return { icon: "🙅", text: `${who} ${T("declined cooking", "отказался(-лась) готовить")} ${when}` };
+    case "slot_reassigned":
+      return { icon: "👉", text: `${who} ${T("reassigned", "переназначил(а)")} ${when} ${T("to", "на")} ${p.cook_member_id ? mName(mem(p.cook_member_id)) : "?"}` };
+    case "wish_created":
+      return { icon: "✨", text: `${who} ${T("wished for", "загадал(а)")} ${dishName(p.recipe_id)}` };
+    case "wish_voted":
+      return { icon: "👍", text: `${who} ${T("voted for a wish", "проголосовал(а) за желание")}` };
+    case "wish_granted":
+      return { icon: "🎉", text: `${who} ${T("granted a wish", "исполнил(а) желание")}` };
+    case "recipe_active_set":
+      return { icon: p.is_active ? "📖" : "🙈", text: `${who} ${p.is_active ? T("restored", "восстановил(а)") : T("hid", "скрыл(а)")} ${dishName(p.recipe_id)} ${p.is_active ? T("to", "в") : T("from", "из")} ${T("the cookbook", "книгу рецептов")}` };
+    case "recipe_deleted":
+      return { icon: "🗑️", text: `${who} ${T("deleted a recipe", "удалил(а) рецепт")}` };
+    case "recipe_edit_proposed":
+      return { icon: "✏️", text: `${who} ${T("edited", "отредактировал(а)")} ${dishName(p.recipe_id)}` };
+    case "recipe_photo_added":
+      return { icon: "📷", text: `${who} ${T("added a photo to", "добавил(а) фото к")} ${dishName(p.recipe_id)}` };
+    case "member_profile_updated":
+      return { icon: "🙋", text: `${who} ${T("updated their cooking profile", "обновил(а) кулинарный профиль")}` };
+    case "week_confirmed":
+      return { icon: "🔒", text: `${who} ${T("confirmed the week", "подтвердил(а) неделю")}` };
+    case "week_unlocked":
+      return { icon: "🔓", text: `${who} ${T("reopened the menu", "открыл(а) меню заново")}` };
+    default:
+      return { icon: "•", text: `${who} — ${ev.event_type}` };
+  }
+}
+
+function describeJob(j) {
+  const icon = IMPORT_SOURCE_ICON[j.source_type] || "📥";
+  const title = (lang === "ru" ? (j.draft?.title_ru || j.draft?.title_en) : (j.draft?.title_en || j.draft?.title_ru)) || j.draft?.title || j.source_type;
+  let text;
+  if (j.status === "failed") text = T("Recipe import failed", "Импорт рецепта не удался") + (j.error ? ": " + j.error : "");
+  else if (j.status === "ready") text = T("Recipe import ready to review: ", "Импорт рецепта готов к проверке: ") + title;
+  else if (j.status === "processing") text = T("Recipe import in progress: ", "Импорт рецепта обрабатывается: ") + title;
+  else text = T("Recipe import queued: ", "Импорт рецепта в очереди: ") + title;
+  return { icon, text, job: j };
+}
+
+async function loadFamilyFeed() {
+  const [{ data: events, error: ee }, { data: jobs, error: je }] = await Promise.all([
+    sb.rpc("spin_food_list_family_events", { p_limit: 60 }),
+    sb.rpc("spin_food_list_import_jobs", { p_limit: 30 }),
+  ]);
+  if (ee) console.error("[stf-data] family events:", ee);
+  if (je) console.error("[stf-data] import jobs:", je);
+  const evEntries = (events || []).map(ev => ({ ts: new Date(ev.created_at).getTime(), kind: "event", ...describeEvent(ev) }));
+  const jobEntries = (jobs || []).map(j => ({ ts: new Date(j.updated_at || j.created_at).getTime(), kind: "job", ...describeJob(j) }));
+  familyFeed = [...evEntries, ...jobEntries].sort((a, b) => b.ts - a.ts).slice(0, 80);
+  if (tab === "feed" && !modalOpen) render();
+}
+
 function renderFeed() {
-  let h = `<div class="screen-title"><h2>${T("Family activity", "Семейная лента")}</h2><div class="sub">${T("Who did what, live.", "Кто что сделал, вживую.")}</div></div>
-    <div style="margin:0 16px 12px">
-      <button class="btn btn-ghost" id="importHistBtnFeed" style="width:100%">📥 ${T("Recipe imports", "Импортированные рецепты")}</button>
-    </div>
-    <div class="activity">`;
-  game.activity.forEach(a => {
-    const who = a.who === "ai" ? "🤖 AI" : `${mem(a.who).em} ${mName(mem(a.who))}`;
-    h += `<div class="a"><b>${who}</b> — ${a.text.replace(new RegExp("^"+(mem(a.who)?.en||"")+" "), "")} · ${ago(a.ts)}</div>`;
+  let h = `<div class="screen-title"><h2>${T("Family activity", "Семейная лента")}</h2><div class="sub">${T("Everything the family does, live - including recipe imports.", "Всё, что делает семья, вживую - включая импорт рецептов.")}</div></div><div class="activity">`;
+  if (!familyFeed.length) h += `<div class="hint">${T("Nothing yet.", "Пока пусто.")}</div>`;
+  familyFeed.forEach((f, i) => {
+    const clickable = f.kind === "job";
+    h += `<div class="a"${clickable ? ` data-feedjob="${i}" style="cursor:pointer"` : ""}><b>${f.icon}</b> ${f.text} · ${ago(f.ts)}</div>`;
   });
   return h + `</div>`;
 }
@@ -3823,15 +3907,26 @@ function nav() {
 
 // ── wiring ──
 function wire() {
-  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => {
+    tab = b.dataset.tab; render();
+    // Lazy-refresh as a safety net (realtime already nudges this on every
+    // real change) so the feed is never stale just because a socket drop
+    // was missed - cheap, only fires on actually switching to the tab.
+    if (tab === "feed") loadFamilyFeed();
+  });
   const pill = document.getElementById("mePill");
   // The "me" pill now opens Settings (which is where sign-out + invite live).
   // The old member-switcher is gone: identity is bound to the auth session.
   if (pill) pill.onclick = openSettings;
   const settings = document.getElementById("settingsBtn");
   if (settings) settings.onclick = openSettings;
-  const importHistBtnFeed = document.getElementById("importHistBtnFeed");
-  if (importHistBtnFeed) importHistBtnFeed.onclick = openImportHistory;
+  document.querySelectorAll("[data-feedjob]").forEach(el => el.onclick = () => {
+    const f = familyFeed[+el.dataset.feedjob];
+    const j = f && f.job;
+    if (!j) return;
+    if (j.status === "ready" && !j.result_recipe_id) openImportReview(j.draft, j.id, j.target_recipe_id, j.source_type);
+    else if (j.result_recipe_id) openDetail(j.result_recipe_id);
+  });
 
   // menu
   document.getElementById("confirm") && (document.getElementById("confirm").onclick = () => {
@@ -5006,39 +5101,6 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
 // Alias avoids shadowing the local render() closure above with the app's
 // top-level render() while keeping the call obviously "re-render the app".
 function render_() { render(); }
-
-// Family-section ingestion-events list (SPEC_RECIPE_INGESTION.md #33/§3.1) -
-// every source's attempts, not just YouTube's. The durable, authoritative
-// place to find and review an import even if a completion toast is missed.
-async function openImportHistory() {
-  const v = modal(`<h3>📥 ${T("Recipe imports", "Импортированные рецепты")}</h3><div id="impHistList" style="font-size:13px;color:#999">${T("Loading...", "Загрузка...")}</div>`);
-  const { data, error } = await sb.rpc("spin_food_list_import_jobs", { p_limit: 30 });
-  const listEl = v.querySelector("#impHistList");
-  if (error) { listEl.textContent = error.message; return; }
-  const jobs = data || [];
-  if (!jobs.length) { listEl.textContent = T("No imports yet - tap ➕ or Enrich on a Thin Card to start one.", "Импортов пока нет - нажмите ➕ или «Обогатить» на тонкой карточке."); return; }
-  const sourceIcon = { url: "🔗", photo: "📷", youtube: "▶️", document: "📄" };
-  const statusLabel = {
-    queued: T("Queued", "В очереди"), processing: T("Processing...", "Обрабатывается..."),
-    ready: T("Ready to review", "Готово к проверке"), failed: T("Failed", "Не удалось"),
-  };
-  listEl.innerHTML = jobs.map(j => `
-    <div class="card" style="padding:10px 12px;margin-bottom:8px" data-jobid="${j.id}">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <div>${sourceIcon[j.source_type] || "📥"} ${(lang === "ru" ? (j.draft?.title_ru || j.draft?.title_en) : (j.draft?.title_en || j.draft?.title_ru)) || j.draft?.title || j.error || j.source_type}</div>
-        <div style="font-size:11px;color:${j.status === "failed" ? "#ef4444" : "#888"}">${statusLabel[j.status] || j.status}</div>
-      </div>
-      ${(j.status === "ready" && !j.result_recipe_id) ? `<button class="mini-btn" data-jobreview="${j.id}" style="margin-top:6px">👀 ${T("Review", "Проверить")}</button>` : ""}
-      ${j.result_recipe_id ? `<button class="mini-btn" data-jobopen="${j.result_recipe_id}" style="margin-top:6px">📖 ${T("Open recipe", "Открыть рецепт")}</button>` : ""}
-    </div>`).join("");
-  v.querySelectorAll("[data-jobreview]").forEach(btn => btn.addEventListener("click", () => {
-    const job = jobs.find(j => j.id === btn.dataset.jobreview);
-    if (!job) return;
-    closeModal();
-    openImportReview(job.draft, job.id, job.target_recipe_id, job.source_type);
-  }));
-  v.querySelectorAll("[data-jobopen]").forEach(btn => btn.addEventListener("click", () => { closeModal(); openDetail(btn.dataset.jobopen); }));
-}
 
 function toast(msg) {
   document.querySelectorAll(".toast").forEach(t=>t.remove());
