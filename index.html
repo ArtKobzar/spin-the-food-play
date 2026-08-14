@@ -789,6 +789,11 @@ function recipeToDish(r) {
     // "Source" link (linksHtml()).
     photo_source_url: r.photo_source_url || null,
     youtube_url: r.youtube_url || null,
+    // T6 (wayfinder map #45): source creator attribution, populated only
+    // for YouTube imports (via oEmbed at import time) - shown alongside
+    // the "Watch video" link.
+    source_author_name: r.source_author_name || null,
+    source_author_url: r.source_author_url || null,
     // thin/thick eligibility (SPEC_AI_PREFILL.md #3/#4): thin cards stay fully usable
     // everywhere, they just aren't picked by the automatic AI pre-fill and get a
     // nudge badge here to encourage adding ingredients.
@@ -3010,7 +3015,10 @@ function detailHeaderHtml(d) {
             <input id="dtlCuisineInput" value="${(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${T("cuisine", "кухня")}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
           : `⏱ ${d.t} ${T("min", "мин")} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${T("by", "от")} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
       </div>
-      ${d.youtube_url ? `<div style="margin-top:6px"><a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a></div>` : ""}
+      ${d.youtube_url ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a>
+        ${d.source_author_name ? `<span style="font-size:12px;color:#999">${T("by", "от")} ${d.source_author_url ? `<a href="${d.source_author_url}" target="_blank" rel="noopener" style="color:#999;text-decoration:underline">${d.source_author_name}</a>` : d.source_author_name}</span>` : ""}
+      </div>` : ""}
     </div>
     <div style="padding:0 16px">
       ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${T("Thin Card - tap ✨ to add ingredients.", "Тонкая карточка - нажмите ✨, чтобы добавить ингредиенты.")}</div>` : ""}
@@ -4978,7 +4986,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <div id="revHero">${heroHtml()}</div>
     <div class="sect">${T("Title", "Название")}</div>
     <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
-    ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a></div>` : ""}
+    ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a>${draft.source_author_name ? ` <span style="color:#999">· ${T("by", "от")} ${draft.source_author_name}</span>` : ""}</div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${T("Serves", "Порций")} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
@@ -5085,6 +5093,12 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       prep_time_minutes: draft.prep_time_minutes ?? null,
       cook_time_minutes: draft.cook_time_minutes ?? null,
       total_time_minutes: draft.total_time_minutes ?? null,
+      // T6 (wayfinder map #45): creator attribution - only ever populated
+      // by the YouTube worker (oEmbed), but forwarded unconditionally like
+      // every other draft field so it isn't silently dropped the way T2's
+      // timing/difficulty fields were before that gap was caught live.
+      source_author_name: draft.source_author_name ?? null,
+      source_author_url: draft.source_author_url ?? null,
       taxonomy: taxonomy ? {
         cuisine: (taxonomy.cuisine || "").trim().toLowerCase() || null,
         dish_role: taxonomy.dish_role || "main",
