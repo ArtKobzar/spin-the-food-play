@@ -4848,6 +4848,16 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
+  // Detected data-quality issues (2026-08-14 follow-up) - the YouTube
+  // worker's _detect_dq_issues() flags real extraction failure patterns
+  // (a stray numeric "unit" from a mis-parsed quantity range, a
+  // duplicate ingredient, a line with nothing captured at all) as
+  // human-readable warnings, so the user knows exactly what to
+  // double-check here instead of unknowingly saving garbled data.
+  // Review-only - never sent back on save (see finalDraft below), since
+  // there's no matching column on the saved recipe and a stale warning
+  // on an already-corrected recipe would be actively misleading.
+  const dqIssues = draft.dq_issues || [];
   // Taxonomy proposal (2026-08-09 follow-up) - server only attaches this when
   // the draft has ingredients/instructions to classify from (see
   // buildTaxonomyProposal in spin-food-import). Null means "nothing to show",
@@ -4885,6 +4895,17 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${T("No instructions found - add them manually.", "Инструкции не найдены - добавьте вручную.")}</div>`;
     wireRows();
+  };
+
+  const dqIssuesHtml = () => {
+    if (!dqIssues.length) return "";
+    return `
+      <div style="margin-top:10px;padding:10px 12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:10px">
+        <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">⚠️ ${T("Possible data issues found - please double-check:", "Возможны неточности - проверьте:")}</div>
+        <ul style="margin:0;padding-left:18px;font-size:12px;color:#92400e">
+          ${dqIssues.map(msg => `<li style="margin-bottom:2px">${msg}</li>`).join("")}
+        </ul>
+      </div>`;
   };
 
   // Recipe-details chip section - same vocab/labels/chip look as the About
@@ -4959,6 +4980,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
     ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a></div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${T("Serves", "Порций")} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
+    ${dqIssuesHtml()}
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
     <div id="revIng"></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${T("Add ingredient", "Добавить ингредиент")}</button>
