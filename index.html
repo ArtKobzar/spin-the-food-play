@@ -789,11 +789,13 @@ function recipeToDish(r) {
     // "Source" link (linksHtml()).
     photo_source_url: r.photo_source_url || null,
     youtube_url: r.youtube_url || null,
-    // T6 (wayfinder map #45): source creator attribution, populated only
-    // for YouTube imports (via oEmbed at import time) - shown alongside
+    // T6 (wayfinder map #45, renamed per map #34's SPEC_CREATOR_MECHANIC.md -
+    // docs/DECISION_LOG.md 2026-08-14): source creator attribution, populated
+    // only for YouTube imports (via oEmbed at import time) - shown alongside
     // the "Watch video" link.
-    source_author_name: r.source_author_name || null,
-    source_author_url: r.source_author_url || null,
+    creator_name: r.creator_name || null,
+    creator_handle: r.creator_handle || null,
+    source_url: r.source_url || null,
     // thin/thick eligibility (SPEC_AI_PREFILL.md #3/#4): thin cards stay fully usable
     // everywhere, they just aren't picked by the automatic AI pre-fill and get a
     // nudge badge here to encourage adding ingredients.
@@ -3017,7 +3019,7 @@ function detailHeaderHtml(d) {
       </div>
       ${d.youtube_url ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${T("Watch video", "Смотреть видео")}</a>
-        ${d.source_author_name ? `<span style="font-size:12px;color:#999">${T("by", "от")} ${d.source_author_url ? `<a href="${d.source_author_url}" target="_blank" rel="noopener" style="color:#999;text-decoration:underline">${d.source_author_name}</a>` : d.source_author_name}</span>` : ""}
+        ${d.creator_name ? `<span style="font-size:12px;color:#999">${T("by", "от")} ${d.source_url ? `<a href="${d.source_url}" target="_blank" rel="noopener" style="color:#999;text-decoration:underline">${d.creator_name}</a>` : d.creator_name}</span>` : ""}
       </div>` : ""}
     </div>
     <div style="padding:0 16px">
@@ -4986,7 +4988,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     <div id="revHero">${heroHtml()}</div>
     <div class="sect">${T("Title", "Название")}</div>
     <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
-    ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a>${draft.source_author_name ? ` <span style="color:#999">· ${T("by", "от")} ${draft.source_author_name}</span>` : ""}</div>` : ""}
+    ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${T("Video found - will be linked on the recipe", "Найдено видео - будет привязано к рецепту")}</a>${draft.creator_name ? ` <span style="color:#999">· ${T("by", "от")} ${draft.creator_name}</span>` : ""}</div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${T("Serves", "Порций")} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
     <div class="sect">${T("Ingredients", "Ингредиенты")}</div>
@@ -5097,8 +5099,10 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       // by the YouTube worker (oEmbed), but forwarded unconditionally like
       // every other draft field so it isn't silently dropped the way T2's
       // timing/difficulty fields were before that gap was caught live.
-      source_author_name: draft.source_author_name ?? null,
-      source_author_url: draft.source_author_url ?? null,
+      creator_name: draft.creator_name ?? null,
+      creator_handle: draft.creator_handle ?? null,
+      source_url: draft.source_url ?? null,
+      source_video_id: draft.source_video_id ?? null,
       taxonomy: taxonomy ? {
         cuisine: (taxonomy.cuisine || "").trim().toLowerCase() || null,
         dish_role: taxonomy.dish_role || "main",
