@@ -5054,6 +5054,15 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
+      // 2026-08-14: draft.prep_time_minutes/cook_time_minutes/total_time_minutes
+      // (T2, map #45) were being extracted correctly server-side but silently
+      // dropped here - finalDraft never carried them, so the server's own
+      // acceptance of these fields was unreachable from a real save. Caught
+      // live: a real Dutch import extracted cook_time_minutes=25 but saved
+      // with it null.
+      prep_time_minutes: draft.prep_time_minutes ?? null,
+      cook_time_minutes: draft.cook_time_minutes ?? null,
+      total_time_minutes: draft.total_time_minutes ?? null,
       taxonomy: taxonomy ? {
         cuisine: (taxonomy.cuisine || "").trim().toLowerCase() || null,
         dish_role: taxonomy.dish_role || "main",
@@ -5061,6 +5070,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
         meal_types: [...taxonomy.meal_types],
         techniques: [...taxonomy.techniques],
         required_appliances: [...taxonomy.required_appliances],
+        difficulty: taxonomy.difficulty ?? null,
         reasoning: taxonomy.reasoning,
       } : null,
     };
@@ -5111,7 +5121,22 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     // loadCatalog() (data-only, no DOM touch) happens here now; the actual
     // re-render is deferred to the Done button's own click, after
     // closeModal() has cleanly removed the veil first.
-    await loadCatalog();
+    //
+    // 2026-08-14: loadCatalog() calls sb.rpc() directly - the raw
+    // supabase-js client method, not the invokeWithTimeout() raw-fetch
+    // bypass every other call in this handler already uses specifically
+    // because sb.*'s own session/token handling can wedge on a stuck
+    // cross-tab navigator.locks mutex (see invokeWithTimeout's own header
+    // comment). Caught live: a real save hung forever right here, with the
+    // recipe already fully saved server-side (confirm + classify + translate
+    // all completed) but the button stuck on "Saving..." because this one
+    // unguarded await never resolved. Bounded with the same race-a-timeout
+    // pattern as invokeWithTimeout - a stale catalog for one refresh cycle
+    // is a much smaller cost than a permanently stuck save button.
+    await Promise.race([
+      loadCatalog(),
+      new Promise((resolve) => setTimeout(resolve, 15_000)),
+    ]);
     // Save button becomes a pleasant green "Done!" landing spot rather than
     // auto-navigating away - same "no surprise exits" principle as the
     // preventBackdropClose guard on this whole modal.
