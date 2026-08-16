@@ -1589,12 +1589,40 @@ window.addEventListener("online", clearOfflineBanner);
 // never care) - the handful of call sites that DO care read this right
 // after their own applyEvent() call, before any other await can race it.
 let lastForkInfo = null;
+// 2026-08-16: several Kobzar smoke-test reports this session ("planned slots
+// disappeared", "friday dinner still shows the wrong recipe") turned out to
+// share one shape - the mutation left literally zero trace anywhere: no
+// food.events row, no toast, nothing in food.client_diagnostics (that logger
+// only ever covered photo uploads, a near-identical 2026-08-10 incident).
+// Every server-side repro of the exact same RPC call succeeded in under a
+// second, so this is a client/network-layer failure the server can never
+// see on its own. Two changes close that gap: (1) withTimeout() so a
+// promise that never settles can't leave an action in permanent silent
+// limbo, always resolving to a definite success/failure within 20s; (2) a
+// diagnostic breadcrumb on every attempt/outcome, so the *next* occurrence
+// leaves a paper trail in food.client_diagnostics instead of requiring
+// hours of DB archaeology to even confirm nothing happened.
 async function applyEvent(eventType, payload) {
-  const { data, error } = await sb.rpc("spin_food_apply_event", {
-    p_event_type: eventType,
-    p_payload: payload,
-  });
+  logClientDiagnostic("apply_event_start", { event_type: eventType });
+  let data, error;
+  try {
+    ({ data, error } = await withTimeout(
+      sb.rpc("spin_food_apply_event", { p_event_type: eventType, p_payload: payload }),
+      20000,
+      "Sync"
+    ));
+  } catch (e) {
+    logClientDiagnostic("apply_event_exception", { event_type: eventType, message: e?.message || String(e) });
+    if (!navigator.onLine) {
+      showOfflineBanner();
+    } else {
+      toast(T("Sync error: ", "Ошибка синхронизации: ") + (e?.message || String(e)));
+    }
+    lastForkInfo = null;
+    return false;
+  }
   if (error) {
+    logClientDiagnostic("apply_event_error", { event_type: eventType, message: error?.message || String(error) });
     // navigator.onLine is the only case that actually means "offline" - any
     // other RPC failure (validation, permissions, a real server error) is a
     // distinct problem and showing the same "you're offline" banner for it is
@@ -1610,6 +1638,7 @@ async function applyEvent(eventType, payload) {
     return false;
   }
   clearOfflineBanner();
+  logClientDiagnostic("apply_event_ok", { event_type: eventType, seq: data?.seq ?? null });
   const forkedId = data?.payload?._forked_recipe_id;
   lastForkInfo = forkedId ? { from: data.payload._forked_from_recipe_id, to: forkedId } : null;
   return true;
