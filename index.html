@@ -1559,10 +1559,35 @@ function applyRemoteFromSnapshot(snap) {
   render();
 }
 
+// True if the snapshot names a recipe id our local DISHES cache has never
+// heard of - e.g. someone else's device just forked a recipe (T6 "make it
+// mine" edit) or finished a fresh YouTube import, and the fork/import landed
+// in food.meal_slots/wishes/duel_proposals before our periodic poll's
+// loadCatalog() caught up. Left unresolved, dishOr()'s UNKNOWN_DISH fallback
+// renders a generic "a recipe"/"рецепт" placeholder in the menu forever
+// instead of the real title, until something else happens to trigger a
+// catalog refresh (2026-08-16, Kobzar smoke test: forked Tiramisu showed as
+// a bare "рецепт" placeholder in the Friday dinner proposal).
+function snapshotHasUnknownDish(snap) {
+  const known = new Set(DISHES.map(d => d.id));
+  for (const s of (snap.slots || [])) {
+    if (s.recipe_id && !known.has(s.recipe_id)) return true;
+    if (s.proposal?.recipe_id && !known.has(s.proposal.recipe_id)) return true;
+  }
+  for (const w of (snap.wishes || [])) {
+    if (w.recipe_id && !known.has(w.recipe_id)) return true;
+  }
+  for (const p of (snap.duel?.proposals || [])) {
+    if (p.recipe_id && !known.has(p.recipe_id)) return true;
+  }
+  return false;
+}
+
 async function pullLatest() {
   const { data: snap, error } = await sb.rpc("spin_food_snapshot");
   if (!error && snap) {
     clearOfflineBanner();
+    if (snapshotHasUnknownDish(snap)) await loadCatalog();
     applyRemoteFromSnapshot(snap);
   } else if (error && !navigator.onLine) {
     showOfflineBanner();
