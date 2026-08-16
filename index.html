@@ -1035,6 +1035,17 @@ const MEALS = [
 ];
 const mealN = m => (lang === "ru" ? m.nru : m.n);
 const dish = id => DISHES.find(d => d.id === id);
+// Fallback used only for building display text/labels - never for existence
+// checks (openDetail still relies on dish(id) itself being undefined for an
+// unknown id). A stale/not-yet-refreshed local DISHES cache (e.g. right after
+// a fresh YouTube import or an edit-triggered auto-fork, before the next
+// loadCatalog() lands) used to throw uncaught on `dish(id).em` mid-template-
+// literal, silently aborting whatever action was in progress before it ever
+// reached the RPC call or the innerHTML swap - e.g. planning a just-imported
+// recipe into a slot, or even just re-rendering the menu (2026-08-16, Kobzar
+// smoke test: "planned slots disappeared", no error toast, zero server writes).
+const UNKNOWN_DISH = { id: null, em: "🍽️", en: "a recipe", ru: "рецепт", special: [] };
+const dishOr = id => dish(id) || UNKNOWN_DISH;
 const mem = id => {
   const row = FAMILY.find(m => m.id === id);
   if (row) return row;
@@ -1686,7 +1697,7 @@ function joinPresence() {
 
 function assignToSlot(day, mealKey, dishId, cook) {
   const cur = game.week[day][mealKey];
-  const d = dish(dishId);
+  const d = dishOr(dishId);
   // Session B: slot_filled's server-side assert is now grant-aware
   // (assert_recipe_accessible_to_family), so platform/chef-granted
   // recipes can be planned directly - no client-side guard needed.
@@ -1711,10 +1722,10 @@ function assignToSlot(day, mealKey, dishId, cook) {
 }
 function acceptCook(day, mealKey) {
   game.week[day][mealKey].accepted = true;
-  commitAndSync(`${mem(me).en} accepted cooking ${dish(game.week[day][mealKey].dish).em} on ${DAYS[day]}`, "slot_accepted", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} accepted cooking ${dishOr(game.week[day][mealKey].dish).em} on ${DAYS[day]}`, "slot_accepted", slotPayload(day, mealKey));
 }
 function declineCook(day, mealKey) {
-  const d = dish(game.week[day][mealKey].dish);
+  const d = dishOr(game.week[day][mealKey].dish);
   game.week[day][mealKey] = null;
   commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`, "slot_declined", slotPayload(day, mealKey));
   toast(T("Declined - the meal was removed", "Отклонено - блюдо убрано из меню"));
@@ -1723,7 +1734,7 @@ function reassignCook(day, mealKey, newCook) {
   const s = game.week[day][mealKey];
   s.cook = newCook; s.accepted = false; s.by = me; s.viaAi = false;
   commitAndSync(
-    `${mem(me).en} reassigned ${dish(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`,
+    `${mem(me).en} reassigned ${dishOr(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`,
     "slot_reassigned",
     slotPayload(day, mealKey, { cook_member_id: newCook, assigned_by_member_id: me })
   );
@@ -1732,11 +1743,11 @@ function reassignCook(day, mealKey, newCook) {
 function acceptProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal;
   game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, viaAi: !!p.viaAi, accepted: p.cook === p.by };
-  commitAndSync(`${mem(me).en} accepted the swap to ${dish(p.dish).em} on ${DAYS[day]}`, "slot_proposal_accepted", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} accepted the swap to ${dishOr(p.dish).em} on ${DAYS[day]}`, "slot_proposal_accepted", slotPayload(day, mealKey));
 }
 function rejectProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal; delete s.proposal;
-  commitAndSync(`${mem(me).en} rejected the ${dish(p.dish).em} swap for ${DAYS[day]}`, "slot_proposal_rejected", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} rejected the ${dishOr(p.dish).em} swap for ${DAYS[day]}`, "slot_proposal_rejected", slotPayload(day, mealKey));
 }
 function clearSlot(day, mealKey) {
   game.week[day][mealKey] = null;
@@ -2601,7 +2612,7 @@ function renderMenu() {
     MEALS.forEach(m => {
       const s = dayW[m.k];
       const hasDish = !!(s && s.dish);
-      const crown = hasDish && specials(dish(s.dish)).has(s.cook) ? ' <span class="crown-em">👑</span>' : "";
+      const crown = hasDish && specials(dishOr(s.dish)).has(s.cook) ? ' <span class="crown-em">👑</span>' : "";
       const awaiting = hasDish && !s.accepted && !s.leftover;
       // SPEC_AI_PREFILL.md #19: the scheduled AI pre-fill leaves a machine-readable
       // reason whenever it had to override a Day Rule or couldn't fill a slot at
@@ -2616,7 +2627,7 @@ function renderMenu() {
       // this same [data-openrecipe] container.
       h += `<div class="slot ${awaiting ? "awaiting" : ""}"><div class="slot-ico">${m.ic}</div><div class="slot-main"${hasDish ? ` data-openrecipe="${s.dish}"` : ""}${hasDish ? ` style="cursor:pointer"` : ""}>`;
       if (hasDish) {
-        h += `<div class="slot-dish">${dName(dish(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
+        h += `<div class="slot-dish">${dName(dishOr(s.dish))}${crown}${s.leftover ? " ♻️" : ""}</div>
           <div class="slot-cook">${s.leftover ? T("already cooked - day 2 of the pot", "уже готово - второй день кастрюли")
             : `${mem(s.cook).em} ${mName(mem(s.cook))} ${T("cooks", "готовит")}${crown ? " · " + T("their special", "фирменное") : ""} · ${T("suggested by", "предложил(а)")} ${assignerLabel(s.by, s.viaAi)}`}</div>`;
         if (awaiting) {
@@ -2630,7 +2641,7 @@ function renderMenu() {
           const p = s.proposal;
           const iMade = p.by === me && !p.viaAi;
           const proposerLabel = assignerLabel(p.by, p.viaAi);
-          h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dName(dish(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
+          h += `<div class="prop">🔄 ${proposerLabel} ${T("suggests", "предлагает")} <b>${dName(dishOr(p.dish))}</b> (${T("cooks", "готовит")} ${mName(mem(p.cook))})
             ${iMade
               ? `<div class="slot-cook" style="margin-top:4px">⏳ ${T("waiting for the family to accept your swap", "ждём, пока семья примет твою замену")}</div>`
               : `<div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ ${T("Accept", "Принять")}</button>
@@ -3928,11 +3939,11 @@ function renderWish() {
   if (!game.wishes.length) h += `<div class="hint">${T("No wishes yet. Tap below to make one.", "Желаний пока нет. Нажми ниже, чтобы загадать.")}</div>`;
   game.wishes.forEach((w, i) => {
     const by = mem(w.by), commit = w.committed ? mem(w.committed) : null;
-    const title = w.kind === "dish" ? `${dish(w.dish).em} ${dName(dish(w.dish))}` : w.kind === "cuisine" ? `🌍 ${w.cuisine} ${T("night", "вечер")}` : "🎁 " + T("Cook's choice", "Выбор повара");
+    const title = w.kind === "dish" ? `${dishOr(w.dish).em} ${dName(dishOr(w.dish))}` : w.kind === "cuisine" ? `🌍 ${w.cuisine} ${T("night", "вечер")}` : "🎁 " + T("Cook's choice", "Выбор повара");
     const want = w.wishCook === "any" ? T("anyone", "кто угодно") : `${mName(mem(w.wishCook))} ${mem(w.wishCook).em}`;
     const iVoted = w.votes.includes(me);
     h += `<div class="card ${commit ? "granted" : ""}"><div class="wish-head">
-      <div class="wish-dish">${w.kind==="dish"?dish(w.dish).em:w.kind==="cuisine"?"🌍":"🎁"}</div>
+      <div class="wish-dish">${w.kind==="dish"?dishOr(w.dish).em:w.kind==="cuisine"?"🌍":"🎁"}</div>
       <div><div class="wish-title">${title}</div><div class="wish-by">${by.em} ${mName(by)} ${T("wishes · from", "загадал(а) · от")} ${want} · ${dayN(w.day)} ${MEALS.find(m=>m.k===w.meal)?.ic || ""}</div></div></div>
       <div class="dots">${w.votes.map(v => `<div class="dot">${mem(v).em}</div>`).join("")} ${w.votes.length} ${T("votes", "голосов")}</div>`;
     if (commit) h += `<div class="status ok">✅ ${mName(commit)} ${commit.em} ${T("takes it - added to the menu · +5 hero pts", "берёт - добавлено в меню · +5 очков героя")}</div>`;
@@ -3956,12 +3967,12 @@ function renderDuel() {
     const chef = mem(p.chef), win = winner === p, iVoted = p.votes.includes(me);
     h += `<div class="duel ${iVoted?"voted":""} ${win?"win":""}" ${d.open&&!votedInDuel()?`data-duel="${i}"`:""}>
       ${win?`<div style="position:absolute;top:-10px;right:14px;font-size:22px">👑</div>`:""}
-      <div style="display:flex;gap:10px;align-items:center"><div style="font-size:28px">${dish(p.dish).em}</div>
-      <div><div style="font-weight:700">${dName(dish(p.dish))}</div><div style="font-size:12px;color:#777">${chef.em} ${mName(chef)} ${T("cooks this", "будет готовить")}</div></div></div>
+      <div style="display:flex;gap:10px;align-items:center"><div style="font-size:28px">${dishOr(p.dish).em}</div>
+      <div><div style="font-weight:700">${dName(dishOr(p.dish))}</div><div style="font-size:12px;color:#777">${chef.em} ${mName(chef)} ${T("cooks this", "будет готовить")}</div></div></div>
       <div class="pitch">"${p.pitch}"</div>
       <div class="dots">${p.votes.map(v=>`<div class="dot">${mem(v).em}</div>`).join("")}</div></div>`;
   });
-  if (!d.open && winner) h += `<div class="banner">👑 ${dName(dish(winner.dish))} ${T("wins -", "побеждает -")} ${T("cooks", "готовит")} ${mName(mem(winner.chef))}</div>`;
+  if (!d.open && winner) h += `<div class="banner">👑 ${dName(dishOr(winner.dish))} ${T("wins -", "побеждает -")} ${T("cooks", "готовит")} ${mName(mem(winner.chef))}</div>`;
   else if (votedInDuel()) h += `<div class="hint">${T("Your vote is in. Waiting for the rest of the family...", "Твой голос принят. Ждём остальных...")}</div>`;
   else h += `<div class="hint">${T("Tap a dish to vote.", "Нажми на блюдо, чтобы проголосовать.")}</div>`;
   return h;
@@ -4281,7 +4292,7 @@ function openAssign(dishId) {
     return;
   }
   let selDay = null, selMeal = "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
-  const v = modal(`<h3>${dish(dishId).em} ${dName(dish(dishId))} → ${T("the menu", "в меню")}</h3>
+  const v = modal(`<h3>${dishOr(dishId).em} ${dName(dishOr(dishId))} → ${T("the menu", "в меню")}</h3>
     <div class="sect">${T("Which day?", "Какой день?")}</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
     <div class="sect">${T("Which meal?", "Какой приём?")}</div><div class="chips-wrap" id="M">${MEALS.map(m=>`<div class="chip ${m.k===selMeal?"on":""}" data-m="${m.k}">${m.ic} ${mealN(m)}</div>`).join("")}</div>
     <div class="sect">${T("Who should cook it?", "Кто должен готовить?")}</div><div class="chips-wrap" id="C">${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip ${m.id===selCook?"on":""}" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
@@ -4749,7 +4760,7 @@ function openImportSheet(targetRecipeId = null) {
   urlInput.addEventListener("input", () => setBusy(false));
 
   v.querySelector("#impSearchBtn").addEventListener("click", () => {
-    const defaultQuery = isEnrich ? dName(dish(targetRecipeId)) : urlInput.value.trim();
+    const defaultQuery = isEnrich ? dName(dishOr(targetRecipeId)) : urlInput.value.trim();
     openRecipeWebsiteSearch(defaultQuery);
   });
 
@@ -5388,6 +5399,24 @@ function stickyToast(msg) {
   const timer = setTimeout(() => t.remove(), 15000);
   t.addEventListener("click", () => { clearTimeout(timer); t.remove(); });
 }
+
+// A synchronous exception thrown inside a click handler (e.g. building an
+// activity-log string off a stale/missing dish() lookup) used to fail
+// completely silently: no toast, no visible sign anything happened, and -
+// critically - whatever mutation the user just triggered never even reached
+// the RPC call, so nothing landed in food.events or food.meal_slots either
+// (Kobzar smoke test, 2026-08-16: "planned slots disappeared", zero server
+// writes, no error shown). Individual crash sites are hardened via dishOr(),
+// but this net catches the *next* one - anything uncaught surfaces as a
+// visible toast instead of vanishing invisibly.
+window.addEventListener("error", (e) => {
+  console.error("[stf-uncaught]", e.error || e.message);
+  toast(T("Something went wrong - please try that again", "Что-то пошло не так - попробуйте ещё раз"));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[stf-uncaught-promise]", e.reason);
+  toast(T("Something went wrong - please try that again", "Что-то пошло не так - попробуйте ещё раз"));
+});
 
 // ── boot ──
 // Auth-first: check for an existing session (or a magic-link callback in the
