@@ -763,6 +763,12 @@ function recipeToDish(r) {
   const meals = (r.meal_types && r.meal_types.length) ? r.meal_types : ["dinner"];
   return {
     id: r.id,
+    // T3+T6 (Session A): grant-aware loadCatalog can now surface recipes
+    // the family does NOT own (family_id is null on platform recipes,
+    // for example). Preserved on the dish object so the client can guard
+    // planning actions until Session B lands the apply_event auto-fork
+    // that lets these plan/edit natively.
+    family_id: r.family_id ?? null,
     em: r.photo_url ? "🖼" : "🍽",
     // Translated title (SPEC_RECIPE_I18N.md) - falls back to the legacy
     // single-language title while a recipe hasn't been through the
@@ -846,7 +852,22 @@ function shuffled(arr) {
   return a;
 }
 async function loadCatalog() {
-  const { data: recipes, error: re } = await sb.rpc("spin_food_list_family_cookbook", { p_limit: 500, p_offset: 0 });
+  // Grant-aware binder: family's own cookbook UNION every cookbook the
+  // family has an active grant on (STF Global platform, chef personal
+  // if a chef is engaged). See spin_food_list_recipes_for_family in
+  // 20260815120100_food_multi_tenancy_public_wrappers.sql.
+  //
+  // Before Session A this called spin_food_list_family_cookbook, which is
+  // family-scoped only and does NOT surface platform recipes - which
+  // meant a fresh YouTube import (now routed to the platform cookbook
+  // per T6 SPEC_CREATOR_MECHANIC.md) would not show up in the Spin deck,
+  // Menu picker or cookbook browse. This swap fixes that regression as
+  // part of the platform-routing change.
+  //
+  // Return shape is identical (setof food.family_cookbook_recipes) - a
+  // drop-in for recipeToDish. p_family_id defaults to the caller's
+  // family, so we omit it here.
+  const { data: recipes, error: re } = await sb.rpc("spin_food_list_recipes_for_family", { p_limit: 500, p_offset: 0 });
   if (re) console.error("[stf-data] cookbook:", re);
   DISHES = (recipes || []).map(recipeToDish);
   // Keep whatever relative order the user is already mid-swipe through
@@ -1405,9 +1426,14 @@ function aiPopulateWeek() {
   const cooks = cookIds.length ? cookIds : FAMILY.map(m => m.id);
   const events = [];
   if (!cooks.length) return { overwrittenCount: 0, events };
-  const bf = DISHES.filter(d => d.meals.includes("breakfast"));
-  const soups = DISHES.filter(d => d.soup);
-  const mains = DISHES.filter(d => d.meals.includes("dinner"));
+  // Session A stopgap: exclude non-family-owned recipes from AI fill
+  // candidates - slot_filled on a platform recipe would raw-error server
+  // side (assert_recipe_in_family). Session B removes this filter once
+  // the assert is grant-aware.
+  const plannable = DISHES.filter(d => d.family_id !== null);
+  const bf = plannable.filter(d => d.meals.includes("breakfast"));
+  const soups = plannable.filter(d => d.soup);
+  const mains = plannable.filter(d => d.meals.includes("dinner"));
   let si = 0;
   const overwritten = [];
   const fillOrPropose = (day, mealKey, dishId, cook, isLeftover = false) => {
@@ -1594,8 +1620,20 @@ function subscribe() {
     }, () => { pullLatest(); loadFamilyFeed(); })
     // Import job status nudge - a toast on top of the Family-tab feed entry
     // (added by loadFamilyFeed(), not the only place a result lives).
-    // UPDATE-only: INSERT fires immediately on job creation (queued/ready),
-    // which would toast on every extract() call, not just completions.
+    // INSERT: dedup-at-extract inserts status=ready + result_recipe_id with no
+    // draft (never queued for the worker) - was silent before 2026-08-16.
+    .on("postgres_changes", {
+      event: "INSERT",
+      schema: "food",
+      table: "recipe_import_jobs",
+      filter: "family_id=eq." + membership.family_id,
+    }, (payload) => {
+      loadFamilyFeed();
+      const job = payload.new;
+      if (job.source_type === "youtube" && job.status === "ready" && job.result_recipe_id && !job.draft) {
+        notifyDuplicateYoutubeImport(job.result_recipe_id);
+      }
+    })
     .on("postgres_changes", {
       event: "UPDATE",
       schema: "food",
@@ -1605,7 +1643,11 @@ function subscribe() {
       loadFamilyFeed();
       const job = payload.new;
       if (job.source_type === "youtube" && job.status === "ready") {
-        stickyToast(T("Your YouTube recipe is ready to review! Check the Family tab.", "Рецепт из YouTube готов к проверке! Смотри вкладку «Семья»."));
+        if (job.result_recipe_id && !job.draft) {
+          notifyDuplicateYoutubeImport(job.result_recipe_id);
+        } else {
+          stickyToast(T("Your YouTube recipe is ready to review! Check the Family tab.", "Рецепт из YouTube готов к проверке! Смотри вкладку «Семья»."));
+        }
       } else if (job.source_type === "youtube" && job.status === "failed") {
         stickyToast(T("Couldn't extract a recipe from that video.", "Не удалось получить рецепт из этого видео."));
       }
@@ -1634,6 +1676,20 @@ function joinPresence() {
 function assignToSlot(day, mealKey, dishId, cook) {
   const cur = game.week[day][mealKey];
   const d = dish(dishId);
+  // Session A stopgap: the empty-slot path emits slot_filled, whose
+  // server-side assert_recipe_in_family will reject any recipe the
+  // family doesn't own (platform / chef-granted). Session B replaces
+  // that check with a grant-aware assert. Until then, guard the client
+  // with a friendly toast rather than letting the RPC raw-error. The
+  // proposal path (occupied slot below) is unaffected because
+  // slot_proposal_created/accepted deliberately skip the assertion.
+  if (d && d.family_id === null && !(cur && cur.dish)) {
+    toast(T(
+      "Planning shared recipes lands in the next update. For now, this one is view-only.",
+      "Планирование общих рецептов появится в следующем обновлении. Пока только для просмотра.",
+    ));
+    return;
+  }
   if (cur && cur.dish) {
     game.week[day][mealKey].proposal = { dish: dishId, cook, by: me };
     commitAndSync(
@@ -2611,6 +2667,51 @@ function availableCuisines() {
   return [...new Set(DISHES.map(d => d.c).filter(c => c && c !== "family"))].sort();
 }
 let deckOrder = DISHES.map(d => d.id);
+// Name search across the whole binder catalog, ignoring active Spin filters.
+// Filters still apply to the swipe deck itself - see deck() - but the search
+// box and its dropdown should find any recipe the family can see (including
+// STF Global platform grants), then clear whatever filter is hiding it.
+function recipesMatchingName(q) {
+  const ql = q.trim().toLowerCase();
+  if (!ql) return [];
+  return DISHES.filter(d => d.en.toLowerCase().includes(ql) || d.ru.toLowerCase().includes(ql));
+}
+function promoteRecipeInDeck(recipeId) {
+  if (!recipeId) return;
+  deckOrder = [recipeId, ...deckOrder.filter(id => id !== recipeId)];
+}
+function clearDeckFiltersBlocking(d) {
+  if (!d) return false;
+  let changed = false;
+  if (deckAdv.meal.size && !d.meals.some(m => deckAdv.meal.has(m))) { deckAdv.meal.clear(); changed = true; }
+  if (deckAdv.proteins.size && !dishProteinGroups(d).some(g => deckAdv.proteins.has(g))) { deckAdv.proteins.clear(); changed = true; }
+  if (deckAdv.cuisines.size && !deckAdv.cuisines.has(d.c)) { deckAdv.cuisines.clear(); changed = true; }
+  if (deckAdv.time.size && !deckAdv.time.has(timeBucket(d))) { deckAdv.time.clear(); changed = true; }
+  if (deckAdv.diff.size && !deckAdv.diff.has(diffKey(d))) { deckAdv.diff.clear(); changed = true; }
+  if (deckAdv.diets.size && ![...deckAdv.diets].every(k => d.diet_compatible_with.includes(k))) { deckAdv.diets.clear(); changed = true; }
+  if (deckAdv.soupOnly && !d.soup) { deckAdv.soupOnly = false; changed = true; }
+  if (deckAdv.grillOnly && !dishIsGrilled(d)) { deckAdv.grillOnly = false; changed = true; }
+  if (deckAdv.vegOnly && !dishIsVeg(d)) { deckAdv.vegOnly = false; changed = true; }
+  return changed;
+}
+function focusRecipeInSpin(recipeId, { showDetail = false } = {}) {
+  const d = dish(recipeId);
+  if (!d) return;
+  promoteRecipeInDeck(recipeId);
+  clearDeckFiltersBlocking(d);
+  deckSearch = "";
+  tab = "spin";
+  render_();
+  if (showDetail) openDetail(recipeId);
+}
+let lastDedupToastAt = 0;
+function notifyDuplicateYoutubeImport(recipeId) {
+  if (!recipeId) return;
+  if (Date.now() - lastDedupToastAt < 4000) return;
+  lastDedupToastAt = Date.now();
+  stickyToast(T("Already in your library - duplicate skipped.", "Уже в вашей библиотеке - дубликат пропущен."));
+  loadCatalog().then(() => focusRecipeInSpin(recipeId, { showDetail: true }));
+}
 // `queryOverride` lets the search-suggestions box compute matches for a query that
 // hasn't been committed to `deckSearch` yet, without duplicating this filter logic.
 function deck(queryOverride) {
@@ -2692,7 +2793,22 @@ function photoSlideHtml(d, { allowRemove = false } = {}) {
 const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const EYE_CLOSED_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c3-4 7-6 10-6s7 2 10 6"/></svg>`;
 function stackHtml(dk) {
-  if (!dk.length) return `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
+  if (!dk.length) {
+    const q = deckSearch.trim();
+    if (q) {
+      const named = recipesMatchingName(q);
+      const blocked = named.filter(d => !matchesAdvFilters(d, deckAdv));
+      if (named.length && blocked.length === named.length) {
+        const d = named[0];
+        const mealHint = d.meals.length ? d.meals.join("/") : "other";
+        return `<div style="text-align:center;color:#888;padding:24px 18px;font-size:14px;line-height:1.45">
+          ${T(`"${dName(d)}" is in your library but hidden by active filters (${mealHint}).`, `"${dName(d)}" в библиотеке, но скрыт активными фильтрами (${mealHint}).`)}
+          <button class="mini-btn" data-showrecipe="${d.id}" style="margin-top:10px">${T("Show recipe", "Показать рецепт")}</button>
+        </div>`;
+      }
+    }
+    return `<div style="text-align:center;color:#aaa;padding-top:120px">${T("No dishes match", "Нет блюд под фильтр")}</div>`;
+  }
   let s = "";
   dk.slice(0, 3).reverse().forEach((d, i, arr) => {
     const top = i === arr.length - 1, dep = arr.length - 1 - i;
@@ -2749,6 +2865,8 @@ function refreshDeck() {
   wireStack();
 }
 function wireStack() {
+  const showBtn = document.querySelector("#stack [data-showrecipe]");
+  if (showBtn) showBtn.onclick = () => focusRecipeInSpin(showBtn.dataset.showrecipe);
   const topCard = document.querySelector(".scard.top");
   const fly = dir => {
     if (!topCard) return;
@@ -4007,12 +4125,8 @@ function wire() {
   if (document.getElementById("deckAdvToggle")) wireFilterToggle(app, "deckAdv", deckPanel);
   if (document.getElementById("deckAdvMeal")) wireAdvFilterPanel(app, "deckAdv", deckAdv, refreshDeck);
   wireSearchClear(app, "deckSearch", () => deckSearch, () => { deckSearch = ""; refreshDeck(); });
-  wireSearchSuggest(app, "deckSearch", "deckAdv", q => deck(q), id => {
-    const idx = deckOrder.indexOf(id);
-    if (idx > 0) { deckOrder.splice(idx, 1); deckOrder.unshift(id); }
-    deckSearch = "";
-    if (deckSearchEl) deckSearchEl.value = "";
-    refreshDeck();
+  wireSearchSuggest(app, "deckSearch", "deckAdv", q => recipesMatchingName(q), id => {
+    focusRecipeInSpin(id);
   });
   wireStack();
 
@@ -4661,6 +4775,14 @@ function openImportSheet(targetRecipeId = null) {
     if (!url) return;
     // YouTube auto-detect (map #20/#21) - no separate tab, the URL field
     // itself routes here. Async per #33: queue and close, no spinner wait.
+    //
+    // Session A (T6 dedup): the server now runs an upfront lookup by
+    // source_video_id against the platform cookbook. On a cache hit the
+    // response comes back with dedup:true + recipe_id pointing at the
+    // existing platform recipe, and we short-circuit the whole "wait for
+    // the worker" flow - the recipe is already in the family's binder
+    // via their standing platform grant, so we just refresh loadCatalog
+    // and open the detail.
     if (/(?:youtube\.com|youtu\.be)/i.test(url)) {
       setBusy(true, T("Queuing your video...", "Ставим видео в очередь..."));
       const { data, error } = await invokeWithTimeout("spin-food-import", {
@@ -4672,7 +4794,14 @@ function openImportSheet(targetRecipeId = null) {
         return;
       }
       closeModal();
-      toast(T("Got it! We'll notify you when your recipe is ready to review.", "Принято! Уведомим, когда рецепт будет готов к проверке."));
+      if (data.dedup && data.recipe_id) {
+        lastDedupToastAt = Date.now();
+        stickyToast(T("Already in your library - duplicate skipped.", "Уже в вашей библиотеке - дубликат пропущен."));
+        await loadCatalog();
+        focusRecipeInSpin(data.recipe_id, { showDetail: true });
+      } else {
+        toast(T("Got it! We'll notify you when your recipe is ready to review.", "Принято! Уведомим, когда рецепт будет готов к проверке."));
+      }
       return;
     }
     setBusy(true, T("Reading the recipe...", "Читаем рецепт..."));
@@ -5187,8 +5316,14 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     cancelBtn.style.display = "none";
     saveBtn.onclick = () => {
       closeModal();
+      promoteRecipeInDeck(recipeId);
       render_();
-      toast(targetRecipeId ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉") : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
+      const savedPlatform = data.recipe && data.recipe.family_id == null;
+      toast(targetRecipeId
+        ? T("Recipe enriched! 🎉", "Рецепт обогащён! 🎉")
+        : savedPlatform
+          ? T("Saved to STF Global - find it in Spin anytime.", "Сохранено в STF Global - найдите в Крутке.")
+          : T("Saved to the Family Cookbook 📖", "Сохранено в семейную книгу рецептов 📖"));
       if (recipeId) openDetail(recipeId);
     };
   };
