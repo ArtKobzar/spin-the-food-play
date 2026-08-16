@@ -3146,7 +3146,7 @@ function detailHeaderHtml(d) {
       ${canApprove ? `<div class="dtl-banner edit">✏️ ${T("Someone proposed an edit to this recipe.", "Кто-то предложил изменение этого рецепта.")}
         <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${T("Approve", "Принять")}</button>
         <button class="mini-btn reject" id="dtlDecline">🍴 ${T("Decline (fork instead)", "Отклонить (создать копию)")}</button></div></div>` : ""}
-      ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("This recipe is a fork of another one.", "Этот рецепт - копия другого рецепта.")}</div>` : ""}
+      ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${T("Your family's copy of the original recipe.", "Копия оригинального рецепта для вашей семьи.")}</div>` : ""}
     </div>`;
 }
 // Author/source/video, as small buttons rather than a prominent block - the
