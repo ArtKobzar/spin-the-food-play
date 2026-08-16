@@ -1426,11 +1426,9 @@ function aiPopulateWeek() {
   const cooks = cookIds.length ? cookIds : FAMILY.map(m => m.id);
   const events = [];
   if (!cooks.length) return { overwrittenCount: 0, events };
-  // Session A stopgap: exclude non-family-owned recipes from AI fill
-  // candidates - slot_filled on a platform recipe would raw-error server
-  // side (assert_recipe_in_family). Session B removes this filter once
-  // the assert is grant-aware.
-  const plannable = DISHES.filter(d => d.family_id !== null);
+  // Session B: slot_filled is now grant-aware server-side (assert_recipe_accessible_to_family),
+  // so platform/chef-granted recipes are safe to plan directly - no fork, no filter needed.
+  const plannable = DISHES;
   const bf = plannable.filter(d => d.meals.includes("breakfast"));
   const soups = plannable.filter(d => d.soup);
   const mains = plannable.filter(d => d.meals.includes("dinner"));
@@ -1570,8 +1568,18 @@ function clearOfflineBanner() {
 }
 window.addEventListener("online", clearOfflineBanner);
 
+// Session B (T6 auto-fork): recipe_edit_proposed / recipe_photo_added /
+// recipe_photo_removed can trigger a server-side auto-fork of a
+// platform/chef-granted recipe into the family's own cookbook (the "make
+// it mine" moment - see 20260816090000 migration). When that happens,
+// food.apply_event echoes _forked_from_recipe_id/_forked_recipe_id back
+// on the event payload. Stashed here rather than threaded through every
+// applyEvent() call site's return value (13 call sites, most of which
+// never care) - the handful of call sites that DO care read this right
+// after their own applyEvent() call, before any other await can race it.
+let lastForkInfo = null;
 async function applyEvent(eventType, payload) {
-  const { error } = await sb.rpc("spin_food_apply_event", {
+  const { data, error } = await sb.rpc("spin_food_apply_event", {
     p_event_type: eventType,
     p_payload: payload,
   });
@@ -1587,9 +1595,12 @@ async function applyEvent(eventType, payload) {
     } else {
       toast(T("Sync error: ", "Ошибка синхронизации: ") + error.message);
     }
+    lastForkInfo = null;
     return false;
   }
   clearOfflineBanner();
+  const forkedId = data?.payload?._forked_recipe_id;
+  lastForkInfo = forkedId ? { from: data.payload._forked_from_recipe_id, to: forkedId } : null;
   return true;
 }
 
@@ -1676,20 +1687,9 @@ function joinPresence() {
 function assignToSlot(day, mealKey, dishId, cook) {
   const cur = game.week[day][mealKey];
   const d = dish(dishId);
-  // Session A stopgap: the empty-slot path emits slot_filled, whose
-  // server-side assert_recipe_in_family will reject any recipe the
-  // family doesn't own (platform / chef-granted). Session B replaces
-  // that check with a grant-aware assert. Until then, guard the client
-  // with a friendly toast rather than letting the RPC raw-error. The
-  // proposal path (occupied slot below) is unaffected because
-  // slot_proposal_created/accepted deliberately skip the assertion.
-  if (d && d.family_id === null && !(cur && cur.dish)) {
-    toast(T(
-      "Planning shared recipes lands in the next update. For now, this one is view-only.",
-      "Планирование общих рецептов появится в следующем обновлении. Пока только для просмотра.",
-    ));
-    return;
-  }
+  // Session B: slot_filled's server-side assert is now grant-aware
+  // (assert_recipe_accessible_to_family), so platform/chef-granted
+  // recipes can be planned directly - no client-side guard needed.
   if (cur && cur.dish) {
     game.week[day][mealKey].proposal = { dish: dishId, cook, by: me };
     commitAndSync(
@@ -3654,11 +3654,21 @@ async function saveDetailEdit(d) {
   const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed });
   detailSaving = false;
   if (!ok) { renderDetailOverlay(); return; }
+  const forked = lastForkInfo;
   await loadCatalog();
-  const fresh = dish(d.id);
+  const editedId = forked ? forked.to : d.id;
+  const fresh = dish(editedId);
   const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
   detailEditMode = false; detailDraft = null;
-  toast(wentPending
+  if (forked) {
+    // "Make it mine": redirect the open detail view (and any active Spin
+    // card) from the shared platform/chef recipe to the family's own fork.
+    if (detailOpen === forked.from) detailOpen = forked.to;
+    promoteRecipeInDeck(forked.to);
+  }
+  toast(forked
+    ? T("Saved to your cookbook - this is now your own copy.", "Сохранено в вашей книге рецептов - теперь это ваша собственная копия.")
+    : wentPending
     ? T("Edit sent - waiting for the owning cook to approve.", "Изменение отправлено - ждём подтверждения от повара.")
     : T("Recipe updated.", "Рецепт обновлён."));
   if (tab === "spin") refreshDeck();
@@ -3757,11 +3767,19 @@ async function uploadRecipePhoto(dishId, file) {
   if (!photoUrl) { toast(T("Upload failed - no URL returned.", "Ошибка загрузки - URL не получен.")); return; }
   const ok = await applyEvent("recipe_photo_added", { recipe_id: dishId, photo_url: photoUrl });
   if (!ok) return;
+  const forked = lastForkInfo;
   await loadCatalog();
-  const d = dish(dishId);
+  const targetId = forked ? forked.to : dishId;
+  if (forked) {
+    if (detailOpen === forked.from) detailOpen = forked.to;
+    promoteRecipeInDeck(forked.to);
+  }
+  const d = dish(targetId);
   const wentLive = Boolean(d && d.photo_urls.includes(photoUrl));
-  photoIdx[dishId] = wentLive ? Math.max(0, d.photo_urls.length - 1) : 0;
-  toast(wentLive
+  photoIdx[targetId] = wentLive ? Math.max(0, d.photo_urls.length - 1) : 0;
+  toast(forked
+    ? T("Photo added to your own copy of this recipe.", "Фото добавлено в вашу собственную копию рецепта.")
+    : wentLive
     ? T("Photo added!", "Фото добавлено!")
     : T("Photo sent to the family admin for approval.", "Фото отправлено администратору на одобрение."));
   if (tab === "spin") refreshDeck();
@@ -3791,9 +3809,16 @@ function confirmRemovePhoto(onConfirm) {
 async function removeRecipePhotoLive(dishId, url) {
   const ok = await applyEvent("recipe_photo_removed", { recipe_id: dishId, photo_url: url });
   if (!ok) return;
+  const forked = lastForkInfo;
   await loadCatalog();
-  photoIdx[dishId] = 0;
-  toast(T("Photo removed.", "Фото удалено."));
+  if (forked) {
+    if (detailOpen === forked.from) detailOpen = forked.to;
+    promoteRecipeInDeck(forked.to);
+  }
+  photoIdx[forked ? forked.to : dishId] = 0;
+  toast(forked
+    ? T("Removed on your own copy of this recipe.", "Удалено в вашей собственной копии рецепта.")
+    : T("Photo removed.", "Фото удалено."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
@@ -3810,8 +3835,15 @@ async function removeStepPhotoLive(d, stepIndex, url) {
   }));
   const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed: { instructions: steps } });
   if (!ok) return;
+  const forked = lastForkInfo;
   await loadCatalog();
-  toast(T("Photo removed.", "Фото удалено."));
+  if (forked) {
+    if (detailOpen === forked.from) detailOpen = forked.to;
+    promoteRecipeInDeck(forked.to);
+  }
+  toast(forked
+    ? T("Removed on your own copy of this recipe.", "Удалено в вашей собственной копии рецепта.")
+    : T("Photo removed.", "Фото удалено."));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
@@ -3873,10 +3905,18 @@ async function addStepPhotoLive(d, stepIndex, file) {
   }));
   const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed: { instructions: steps } });
   if (!ok) return;
+  const forked = lastForkInfo;
   await loadCatalog();
-  const fresh = dish(d.id);
+  const editedId = forked ? forked.to : d.id;
+  if (forked) {
+    if (detailOpen === forked.from) detailOpen = forked.to;
+    promoteRecipeInDeck(forked.to);
+  }
+  const fresh = dish(editedId);
   const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
-  toast(wentPending
+  toast(forked
+    ? T("Photo added to your own copy of this recipe.", "Фото добавлено в вашу собственную копию рецепта.")
+    : wentPending
     ? T("Photo sent to the family admin for approval.", "Фото отправлено администратору на одобрение.")
     : T("Photo added!", "Фото добавлено!"));
   if (tab === "spin") refreshDeck();
