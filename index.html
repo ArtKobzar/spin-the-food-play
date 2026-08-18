@@ -899,35 +899,58 @@ async function loadCatalog() {
 
 function snapshotToGame(snap) {
   const week = emptyWeek();
-  for (const s of (snap.slots || [])) {
-    // A blank slot can still carry an ai_note (§19: "no safe recipe" / "no
-    // qualified cook") - keep it as a note-only stub so renderMenu can badge it,
-    // instead of skipping it entirely like a slot nobody has ever looked at.
-    if (!s.recipe_id && !s.proposal) {
-      if (s.ai_note) week[s.day_of_week][s.meal_type] = { dish: null, aiNote: s.ai_note };
+  // Meal-grain refactor (2026-08-18): the server now returns a nested `meals`
+  // array with 1..N `dishes` per meal instead of the flat `slots` array. The
+  // legacy client model is still "one recipe per meal cell", so we collapse
+  // each meal down to its "primary" dish (first main_course by course_role;
+  // else the first dish by sort_order) and expose only that in game.week.
+  // Additional dishes (starters, sides, desserts) are ignored until the
+  // Sprint 4 multi-dish UI lands. The `game.mealIds` parallel map remembers
+  // the meal_id + primary dish_id for every cell so event emissions can
+  // target the right server row - even for cells the UI shows as "empty".
+  const mealIds = { 0:{}, 1:{}, 2:{}, 3:{}, 4:{}, 5:{}, 6:{} };
+  const pickPrimary = (dishes) => {
+    if (!dishes || !dishes.length) return null;
+    const main = dishes.find(d => d.course_role === "main_course");
+    if (main) return main;
+    return [...dishes].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+  };
+  for (const m of (snap.meals || [])) {
+    const primary = pickPrimary(m.dishes);
+    if (!primary) continue; // meal with no dishes (should not happen post-cascade)
+    mealIds[m.day_of_week][m.meal_type] = {
+      mealId: m.id,
+      primaryDishId: primary.id,
+    };
+    // A blank primary dish can still carry an ai_note (§19: "no safe recipe" /
+    // "no qualified cook") - keep it as a note-only stub so renderMenu can
+    // badge it, instead of skipping it entirely.
+    if (!primary.recipe_id && !primary.proposal) {
+      const note = primary.ai_note || m.ai_note || null;
+      if (note) week[m.day_of_week][m.meal_type] = { dish: null, aiNote: note };
       continue;
     }
     const slot = {
-      dish: s.recipe_id,
-      cook: s.cook_member_id,
-      by: s.assigned_by_member_id,
-      viaAi: s.assigned_via === "ai",
-      accepted: !!s.accepted_at,
-      leftover: !!s.is_leftover,
-      // SPEC_AI_PREFILL.md #19: set only when the scheduled AI pre-fill had to
-      // override a Day Rule or leave the slot's original pick short - cleared by
-      // the server the moment a human touches the slot (food.apply_event).
-      aiNote: s.ai_note || null,
+      dish: primary.recipe_id,
+      cook: primary.cook_member_id,
+      by: primary.assigned_by_member_id,
+      viaAi: primary.assigned_via === "ai",
+      accepted: !!primary.accepted_at,
+      leftover: !!primary.is_leftover,
+      // SPEC_AI_PREFILL.md #19: set only when scheduled AI pre-fill had to
+      // override a Day Rule or leave the slot's original pick short - cleared
+      // by the server the moment a human touches the dish (food.apply_event).
+      aiNote: primary.ai_note || null,
     };
-    if (s.proposal) {
+    if (primary.proposal) {
       slot.proposal = {
-        dish: s.proposal.recipe_id,
-        cook: s.proposal.cook_member_id,
-        by: s.proposal.assigned_by_member_id,
-        viaAi: s.proposal.assigned_via === "ai",
+        dish: primary.proposal.recipe_id,
+        cook: primary.proposal.cook_member_id,
+        by: primary.proposal.assigned_by_member_id,
+        viaAi: primary.proposal.assigned_via === "ai",
       };
     }
-    week[s.day_of_week][s.meal_type] = slot;
+    week[m.day_of_week][m.meal_type] = slot;
   }
   const wishes = (snap.wishes || []).map(w => ({
     id: w.id,
@@ -977,6 +1000,7 @@ function snapshotToGame(snap) {
   }
   return {
     week,
+    mealIds,
     locked: snap.plan?.status === "confirmed",
     wishes,
     duel,
@@ -1003,10 +1027,21 @@ function nextMondayIso() {
 }
 
 async function ensureActivePlan() {
+  // Weekly-cycle refactor (2026-08-18): active_plan_id has been retired
+  // server-side. spin_food_snapshot's JIT hook (food.fire_pending_milestones)
+  // already ensures the current + next week plans exist before returning,
+  // so we no longer have to conditionally create anything - the "current
+  // plan" is always the plan matching snap.current_week_start_date, which
+  // is snap.plan.id in the new shape. The legacy client keeps operating on
+  // ONE plan at a time (the current-week plan); the next-week plan is
+  // ignored here until Sprint 4 lands the two-mode Menu tab.
   let { data: snap, error } = await sb.rpc("spin_food_snapshot");
   if (error) throw error;
-  if (!snap?.active_plan_id) {
-    const weekStart = nextMondayIso();
+  const currentPlanId = snap?.plan?.id;
+  if (!currentPlanId) {
+    // Defensive: JIT hook should have created this. If it didn't, fall back
+    // to explicit create_plan for the current-week Monday.
+    const weekStart = snap?.current_week_start_date || nextMondayIso();
     const { data: created, error: ce } = await sb.rpc("spin_food_create_plan", {
       p_week_start_date: weekStart,
       p_set_active: true,
@@ -1016,13 +1051,28 @@ async function ensureActivePlan() {
     if (!activePlanId) throw new Error("create_plan returned no plan_id");
     ({ data: snap } = await sb.rpc("spin_food_snapshot"));
   } else {
-    activePlanId = snap.active_plan_id;
+    activePlanId = currentPlanId;
   }
   return snap;
 }
 
 function slotPayload(day, mealKey, extra = {}) {
-  return { plan_id: activePlanId, day, meal_type: mealKey, ...extra };
+  // Meal-grain refactor (2026-08-18): dish_* server events target a specific
+  // dish_id (+ meal_id) rather than the retired (plan, day, meal_type) tuple.
+  // We still pass day/meal_type for observability in the event log, but the
+  // authoritative routing is via dish_id/meal_id from game.mealIds - looked
+  // up here so every emission call site stays unchanged.
+  const meta = game?.mealIds?.[day]?.[mealKey];
+  const base = {
+    plan_id: activePlanId,
+    day,
+    meal_type: mealKey,
+  };
+  if (meta) {
+    base.meal_id = meta.mealId;
+    base.dish_id = meta.primaryDishId;
+  }
+  return { ...base, ...extra };
 }
 
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -1411,7 +1461,12 @@ let online = new Set();
 function emptyWeek() { return DAYS.map(() => ({ breakfast: null, lunch: null, dinner: null })); }
 function seedGame() {
   return {
-    week: emptyWeek(), locked: false, wishes: [], profiles: {}, dayRules: [],
+    week: emptyWeek(),
+    // Meal-grain refactor (2026-08-18): mealIds is the parallel meal_id +
+    // primary dish_id lookup for event routing. Empty in seedGame (offline
+    // demo state); populated by snapshotToGame once we have a real snapshot.
+    mealIds: { 0:{}, 1:{}, 2:{}, 3:{}, 4:{}, 5:{}, 6:{} },
+    locked: false, wishes: [], profiles: {}, dayRules: [],
     duel: { open: true, proposals: [
       { dish: "borscht", chef: "gran", pitch: "Real borscht takes love. And I have beets.", votes: ["mom"] },
       { dish: "ramen",   chef: "dad",  pitch: "Friday deserves broth that took 6 hours.", votes: [] },
@@ -1450,10 +1505,10 @@ function aiPopulateWeek() {
     if (cur && cur.dish && !cur.viaAi) {
       game.week[day][mealKey].proposal = { dish: dishId, cook, by: me, viaAi: true };
       overwritten.push(1);
-      events.push(["slot_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai" } })]);
+      events.push(["dish_proposal_created", slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai" } })]);
     } else {
       game.week[day][mealKey] = { dish: dishId, cook, by: me, viaAi: true, accepted: false, leftover: isLeftover };
-      events.push(["slot_filled", slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai", is_leftover: isLeftover })]);
+      events.push(["dish_assigned", slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me, assigned_via: "ai", is_leftover: isLeftover })]);
     }
   };
   for (let i = 0; i < 7; i++) {
@@ -1570,10 +1625,20 @@ function applyRemoteFromSnapshot(snap) {
 // a bare "рецепт" placeholder in the Friday dinner proposal).
 function snapshotHasUnknownDish(snap) {
   const known = new Set(DISHES.map(d => d.id));
-  for (const s of (snap.slots || [])) {
-    if (s.recipe_id && !known.has(s.recipe_id)) return true;
-    if (s.proposal?.recipe_id && !known.has(s.proposal.recipe_id)) return true;
-  }
+  // Meal-grain refactor (2026-08-18): walk meals[].dishes[] instead of slots.
+  // Also scan next_meals so a recipe planned into next week (Sprint 4 preview)
+  // still triggers a catalog refresh.
+  const scanMeals = (meals) => {
+    for (const m of (meals || [])) {
+      for (const d of (m.dishes || [])) {
+        if (d.recipe_id && !known.has(d.recipe_id)) return true;
+        if (d.proposal?.recipe_id && !known.has(d.proposal.recipe_id)) return true;
+      }
+    }
+    return false;
+  };
+  if (scanMeals(snap.meals)) return true;
+  if (scanMeals(snap.next_meals)) return true;
   for (const w of (snap.wishes || [])) {
     if (w.recipe_id && !known.has(w.recipe_id)) return true;
   }
@@ -1759,7 +1824,7 @@ function assignToSlot(day, mealKey, dishId, cook) {
     game.week[day][mealKey].proposal = { dish: dishId, cook, by: me };
     commitAndSync(
       `${mem(me).en} proposed ${d.em} ${d.en} for ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`,
-      "slot_proposal_created",
+      "dish_proposal_created",
       slotPayload(day, mealKey, { proposal: { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me } })
     );
     toast(T("Sent to the menu - family votes 🔔", "Отправлено в меню - семья решает 🔔"));
@@ -1768,7 +1833,7 @@ function assignToSlot(day, mealKey, dishId, cook) {
     const who = cook === me ? "" : ` - ${mem(cook).en} must accept`;
     commitAndSync(
       `${mem(me).en} added ${d.em} ${d.en} to ${DAYS[day]}${who}`,
-      "slot_filled",
+      "dish_assigned",
       slotPayload(day, mealKey, { recipe_id: dishId, cook_member_id: cook, assigned_by_member_id: me })
     );
     toast(cook === me ? T("Added and you're cooking it ✅", "Добавлено - и готовишь ты ✅") : T("Added - ", "Добавлено - ") + mName(mem(cook)) + T(" pinged to accept 🔔", " получил(а) пинг 🔔"));
@@ -1776,12 +1841,12 @@ function assignToSlot(day, mealKey, dishId, cook) {
 }
 function acceptCook(day, mealKey) {
   game.week[day][mealKey].accepted = true;
-  commitAndSync(`${mem(me).en} accepted cooking ${dishOr(game.week[day][mealKey].dish).em} on ${DAYS[day]}`, "slot_accepted", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} accepted cooking ${dishOr(game.week[day][mealKey].dish).em} on ${DAYS[day]}`, "dish_cook_accepted", slotPayload(day, mealKey));
 }
 function declineCook(day, mealKey) {
   const d = dishOr(game.week[day][mealKey].dish);
   game.week[day][mealKey] = null;
-  commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`, "slot_declined", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} declined to cook ${d.em} ${d.en} on ${DAYS[day]}`, "dish_cook_declined", slotPayload(day, mealKey));
   toast(T("Declined - the meal was removed", "Отклонено - блюдо убрано из меню"));
 }
 function reassignCook(day, mealKey, newCook) {
@@ -1789,7 +1854,7 @@ function reassignCook(day, mealKey, newCook) {
   s.cook = newCook; s.accepted = false; s.by = me; s.viaAi = false;
   commitAndSync(
     `${mem(me).en} reassigned ${dishOr(s.dish).em} on ${DAYS[day]} to ${mem(newCook).en}`,
-    "slot_reassigned",
+    "dish_cook_reassigned",
     slotPayload(day, mealKey, { cook_member_id: newCook, assigned_by_member_id: me })
   );
   toast(T("Sent - ", "Отправлено - ") + mName(mem(newCook)) + T(" must accept, decline, or reassign", " должен принять, отклонить или передать дальше"));
@@ -1797,15 +1862,15 @@ function reassignCook(day, mealKey, newCook) {
 function acceptProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal;
   game.week[day][mealKey] = { dish: p.dish, cook: p.cook, by: p.by, viaAi: !!p.viaAi, accepted: p.cook === p.by };
-  commitAndSync(`${mem(me).en} accepted the swap to ${dishOr(p.dish).em} on ${DAYS[day]}`, "slot_proposal_accepted", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} accepted the swap to ${dishOr(p.dish).em} on ${DAYS[day]}`, "dish_proposal_accepted", slotPayload(day, mealKey));
 }
 function rejectProposal(day, mealKey) {
   const s = game.week[day][mealKey]; const p = s.proposal; delete s.proposal;
-  commitAndSync(`${mem(me).en} rejected the ${dishOr(p.dish).em} swap for ${DAYS[day]}`, "slot_proposal_rejected", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} rejected the ${dishOr(p.dish).em} swap for ${DAYS[day]}`, "dish_proposal_rejected", slotPayload(day, mealKey));
 }
 function clearSlot(day, mealKey) {
   game.week[day][mealKey] = null;
-  commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`, "slot_cleared", slotPayload(day, mealKey));
+  commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`, "dish_cleared", slotPayload(day, mealKey));
 }
 
 // ── render ──
@@ -4054,21 +4119,21 @@ function describeEvent(ev) {
   const meal = p.meal_type ? MEALS.find(m => m.k === p.meal_type) : null;
   const when = (p.day !== undefined && meal) ? `${dayN(p.day)} ${mealN(meal)}` : "";
   switch (ev.event_type) {
-    case "slot_filled": {
+    case "dish_assigned": {
       const cookName = p.cook_member_id ? mName(mem(p.cook_member_id)) : "?";
       return { icon: "🍽️", text: `${who} ${T("added", "добавил(а)")} ${dishName(p.recipe_id)} ${T("for", "на")} ${when} (${cookName})` };
     }
-    case "slot_proposal_created":
+    case "dish_proposal_created":
       return { icon: "🔄", text: `${who} ${T("proposed swapping in", "предложил(а) заменить на")} ${dishName((p.proposal||{}).recipe_id)} ${T("for", "на")} ${when}` };
-    case "slot_proposal_accepted":
+    case "dish_proposal_accepted":
       return { icon: "✅", text: `${who} ${T("accepted a swap for", "принял(а) замену на")} ${when}` };
-    case "slot_proposal_rejected":
+    case "dish_proposal_rejected":
       return { icon: "❌", text: `${who} ${T("rejected a swap for", "отклонил(а) замену на")} ${when}` };
-    case "slot_accepted":
+    case "dish_cook_accepted":
       return { icon: "✅", text: `${who} ${T("accepted cooking", "согласился(-лась) готовить")} ${when}` };
-    case "slot_declined":
+    case "dish_cook_declined":
       return { icon: "🙅", text: `${who} ${T("declined cooking", "отказался(-лась) готовить")} ${when}` };
-    case "slot_reassigned":
+    case "dish_cook_reassigned":
       return { icon: "👉", text: `${who} ${T("reassigned", "переназначил(а)")} ${when} ${T("to", "на")} ${p.cook_member_id ? mName(mem(p.cook_member_id)) : "?"}` };
     case "wish_created":
       return { icon: "✨", text: `${who} ${T("wished for", "загадал(а)")} ${dishName(p.recipe_id)}` };
@@ -4088,7 +4153,7 @@ function describeEvent(ev) {
       return { icon: "🙋", text: `${who} ${T("updated their cooking profile", "обновил(а) кулинарный профиль")}` };
     case "week_confirmed":
       return { icon: "🔒", text: `${who} ${T("confirmed the week", "подтвердил(а) неделю")}` };
-    case "week_unlocked":
+    case "week_unconfirmed":
       return { icon: "🔓", text: `${who} ${T("reopened the menu", "открыл(а) меню заново")}` };
     default:
       return { icon: "•", text: `${who} — ${ev.event_type}` };
@@ -4199,7 +4264,7 @@ function wire() {
   });
   document.getElementById("unlock") && (document.getElementById("unlock").onclick = () => {
     game.locked = false;
-    commitAndSync(`${mem(me).en} reopened the menu`, "week_unlocked", { plan_id: activePlanId });
+    commitAndSync(`${mem(me).en} reopened the menu`, "week_unconfirmed", { plan_id: activePlanId });
   });
   const aiBtn = document.getElementById("aiFill");
   if (aiBtn) aiBtn.onclick = openAiFill;
