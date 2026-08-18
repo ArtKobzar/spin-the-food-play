@@ -84,6 +84,8 @@
   .chip { background: #fff; border: 1.5px solid #e5e7eb; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; user-select: none; }
   .chip.on { border-color: var(--amber); background: var(--amber-tint); font-weight: 600; }
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chips-wrap.stack { flex-direction: column; }
+  .chips-wrap.stack .chip { width: 100%; box-sizing: border-box; text-align: center; }
   .banner { margin: 12px 18px; padding: 13px 15px; border-radius: 16px; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 700; font-size: 14px; text-align: center; }
 
   /* AI fill CTA - the big glaring button at the top of an empty menu */
@@ -999,6 +1001,7 @@ function snapshotToGame(snap) {
       top3: m.eater_profile?.top3 || "",
       eatGrid: m.eater_profile?.eatGrid || {},
       avail: m.cook_profile?.avail || [],
+      courses: m.cook_profile?.courses || [],
       cookGrid: m.cook_profile?.cookGrid || {},
       techniques: m.cook_profile?.techniques || [],
       appliances: m.cook_profile?.appliances || [],
@@ -2628,7 +2631,24 @@ function openDayRules() {
 
 // ── onboarding (registration gate - every member passes it once) ──
 let ob = null;
-function obReset() { ob = { step: 0, isCook: null, avail: [], cookGrid: {}, techniques: [], appliances: [], top3: "", allergies: [], eatGrid: {} }; }
+function obReset() { ob = { step: 0, isCook: null, avail: [], courses: [], cookGrid: {}, techniques: [], appliances: [], top3: "", allergies: [], eatGrid: {} }; }
+
+// Plural, onboarding-only labels for food.course_role/course_category
+// (shared vocabulary with courseLabel(), which stays singular for recipe
+// tagging elsewhere - this screen asks "what kinds of dishes", so plural
+// reads more naturally: "Starters" not "Starter").
+function obCourseLabel(v) {
+  return ({
+    appetizer: T("Starters", "Закуски"),
+    cold_starter: T("Cold starters", "Холодные закуски"),
+    soup: T("Soups", "Первые / Супы"),
+    main_course: T("Main courses", "Основные блюда"),
+    side_dish: T("Side dishes", "Гарниры"),
+    salad: T("Salads", "Салаты"),
+    dessert: T("Desserts", "Десерты"),
+    pickle: T("Pickles & preserves", "Соленья"),
+  })[v] || v;
+}
 // Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
 // declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
 const OB_ALG = [
@@ -2758,14 +2778,19 @@ function renderOnboard() {
       <div class="ob-note">${mem(me).em} ${t("Hi", "Привет")}, ${mName(mem(me))}!
         <a href="#" id="notMe" style="color:var(--amber-d);font-weight:600;margin-left:6px">${t("Not you? Switch", "Это не ты? Сменить")}</a></div>`;
   } else if (cur === "avail") {
-    inner = `<div class="ob-q">${t("Which meals can you cook?", "Какие приёмы пищи можешь готовить?")}</div>
-      <div class="chips-wrap">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
-      <button class="btn btn-primary ob-next" id="obNext" ${ob.avail.length ? "" : `disabled style="opacity:.4"`}>${t("Next", "Дальше")}</button>`;
+    inner = `<div class="ob-q">${t("Which meals can you cook?", "В какое время ты можешь готовить?")}</div>
+      <div class="chips-wrap stack">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
+      <div class="ob-q" style="margin-top:22px">${t("What courses can you cook?", "Какие блюда ты умеешь готовить?")}</div>
+      <div class="chips-wrap">
+        <div class="chip ${ob.courses.length === COURSE_CATEGORIES.length ? "on" : ""}" data-course-all>${t("All", "Всё")}</div>
+        ${COURSE_CATEGORIES.map(c => `<div class="chip ${ob.courses.includes(c) ? "on" : ""}" data-course="${c}">${obCourseLabel(c)}</div>`).join("")}
+      </div>
+      <button class="btn btn-primary ob-next" id="obNext" style="margin-top:22px${ob.avail.length ? "" : ";opacity:.4"}" ${ob.avail.length ? "" : "disabled"}>${t("Next", "Дальше")}</button>`;
   } else if (cur === "cookweek") {
     const chosen = obCookSlotsOn();
     const cls = chosen.length === 1 ? "one" : chosen.length === 2 ? "two" : "";
     inner = `<div class="ob-q">${t("Your cooking week", "Твоя неделя готовки")}</div>
-      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap or drag across cells to free slots. Tap a day or meal icon to clear a whole row or column.", "Мы назначили тебе все приёмы, что ты умеешь. Нажми или проведи по ячейкам, чтобы освободить слоты. Нажми на день или иконку приёма — чтобы очистить всю строку или столбец.")}</div>
+      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap or drag across cells to free slots. Tap a day or meal icon to clear a whole row or column.", "Мы назначили тебе все, что ты можешь. Нажми или проведи по ячейкам, чтобы их освободить. Нажми на день или иконку приёма пищи - чтобы очистить всю строку или столбец сразу.")}</div>
       <div class="mealgrid ${cls}"><div></div>${chosen.map(m => {
         const allOn = DAYS.every((_, di) => obCookCellOn(di, m.k));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-cw-col="${m.k}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
@@ -2782,10 +2807,16 @@ function renderOnboard() {
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else if (cur === "kit") {
     inner = `<div class="ob-q">${t("Your kitchen skills", "Твои кулинарные навыки")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Which techniques can you cook with? Pick as many as apply.", "Какими техниками готовки ты владеешь? Выбери все подходящие.")}</div>
-      <div class="chips-wrap" style="margin-bottom:14px">${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Which appliances do you have and use?", "Какая техника есть у тебя дома и используется?")}</div>
-      <div class="chips-wrap">${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("What can you do? Pick your skills.", "Что ты умеешь? Выбери все подходящие навыки.")}</div>
+      <div class="chips-wrap" style="margin-bottom:14px">
+        <div class="chip ${ob.techniques.length === TECHNIQUES.length ? "on" : ""}" data-tech-all>${t("All", "Всё")}</div>
+        ${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}
+      </div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which appliances do you have and you can use?", "Какая техника у тебя есть и ты умеешь пользоваться?")}</div>
+      <div class="chips-wrap">
+        <div class="chip ${ob.appliances.length === APPLIANCES.length ? "on" : ""}" data-appl-all>${t("All", "Всё")}</div>
+        ${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}
+      </div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else if (cur === "top3") {
     inner = `<div class="ob-q">${t("Your top-3 dishes to cook for your loved ones", "Твои топ-3 блюда для любимых")}</div>
@@ -2815,6 +2846,7 @@ function renderOnboard() {
     inner = `<div class="ob-q">🎉 ${t("Profile ready!", "Профиль готов!")}</div>
       <div class="ob-sum">
         ${ob.isCook ? `👨‍🍳 ${t("Cook", "Повар")}: ${ob.avail.map(k => MEALS.find(m => m.k === k).ic).join(" ")}<br>
+        🍽️ ${t("Courses", "Блюда")}: ${ob.courses.length ? ob.courses.length : t("none picked", "не выбрано")}<br>
         🔧 ${t("Techniques", "Техники")}: ${ob.techniques.length ? ob.techniques.length : t("none picked", "не выбрано")}<br>
         🍳 ${t("Appliances", "Техника на кухне")}: ${ob.appliances.length ? ob.appliances.length : t("none picked", "не выбрано")}<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
         ⚠️ ${ob.allergies.length ? ob.allergies.join(", ") : t("no allergies", "без аллергий")}
@@ -2840,6 +2872,16 @@ function renderOnboard() {
     ob.avail = ob.avail.includes(k) ? ob.avail.filter(x => x !== k) : [...ob.avail, k];
     render();
   });
+  app.querySelectorAll("[data-course]").forEach(b => b.onclick = () => {
+    const k = b.dataset.course;
+    ob.courses = ob.courses.includes(k) ? ob.courses.filter(x => x !== k) : [...ob.courses, k];
+    render();
+  });
+  const courseAll = document.querySelector("[data-course-all]");
+  if (courseAll) courseAll.onclick = () => {
+    ob.courses = ob.courses.length === COURSE_CATEGORIES.length ? [] : [...COURSE_CATEGORIES];
+    render();
+  };
   app.querySelectorAll("[data-cw-row]").forEach(b => b.onclick = () => { obToggleCookRow(+b.dataset.cwRow); render(); });
   app.querySelectorAll("[data-cw-col]").forEach(b => b.onclick = () => { obToggleCookCol(b.dataset.cwCol); render(); });
   if (cur === "cookweek") {
@@ -2858,11 +2900,21 @@ function renderOnboard() {
     ob.techniques = ob.techniques.includes(k) ? ob.techniques.filter(x => x !== k) : [...ob.techniques, k];
     render();
   });
+  const techAll = document.querySelector("[data-tech-all]");
+  if (techAll) techAll.onclick = () => {
+    ob.techniques = ob.techniques.length === TECHNIQUES.length ? [] : [...TECHNIQUES];
+    render();
+  };
   app.querySelectorAll("[data-appl]").forEach(b => b.onclick = () => {
     const k = b.dataset.appl;
     ob.appliances = ob.appliances.includes(k) ? ob.appliances.filter(x => x !== k) : [...ob.appliances, k];
     render();
   });
+  const applAll = document.querySelector("[data-appl-all]");
+  if (applAll) applAll.onclick = () => {
+    ob.appliances = ob.appliances.length === APPLIANCES.length ? [] : [...APPLIANCES];
+    render();
+  };
   app.querySelectorAll("[data-al]").forEach(b => b.onclick = () => {
     const k = b.dataset.al;
     if (k === "none") ob.allergies = ["none"];
@@ -2892,7 +2944,7 @@ function renderOnboard() {
   };
   const done = document.getElementById("obDone");
   if (done) done.onclick = async () => {
-    const profile = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
+    const profile = { lang, isCook: ob.isCook, avail: ob.avail, courses: ob.courses, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
     const profilePayload = {
       is_cook: !!ob.isCook,
       // "none" is a client-only sentinel (picking it just clears any other chips -
@@ -2912,7 +2964,7 @@ function renderOnboard() {
       // cook can actually make - a controlled-vocabulary multiselect against the
       // same food.techniques/food.appliances taxonomy recipes are tagged with is
       // directly comparable and opens the door to skill/equipment-aware AI-fill).
-      cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {}, techniques: ob.techniques || [], appliances: ob.appliances || [] },
+      cook_profile: { avail: ob.avail || [], courses: ob.courses || [], cookGrid: ob.cookGrid || {}, techniques: ob.techniques || [], appliances: ob.appliances || [] },
     };
     // 2026-08-18 fix: don't mark the wizard "done" (clearing `ob`, setting
     // game.profiles[me]) until the server actually confirms the write. The
@@ -3317,18 +3369,28 @@ const DISH_ROLES = ["main", "side", "component"];
 const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "pickle", "salad", "dessert"];
 // Must match food.techniques (20260801120000_food_ontology_v1.sql) exactly - this is a
 // vocabulary-validation trigger on the server, not a client-side convenience list.
+// Trimmed + reordered per 2026-08-18 taxonomy review (docs/CHANGELOG.md):
+// dropped griddled/toasted/simmered/sauteed as too granular to be useful
+// onboarding chips; "raw" moved to front. This only changes which
+// techniques are OFFERED as new picks - techLabel() below still has every
+// original key so any pre-existing recipe/profile tagged with a dropped
+// technique (food.techniques' DB-side vocabulary is unchanged) still
+// displays correctly, it just can't be picked again going forward.
 const TECHNIQUES = [
-  "baked_roasted", "broiled_grilled", "griddled", "air_fried", "toasted", "cooked_by_microwave",
-  "boiled", "simmered", "steamed", "braised_stewed", "sauteed", "pan_fried", "deep_fried",
-  "sous_vide_cooked", "raw",
+  "raw", "baked_roasted", "broiled_grilled", "air_fried", "cooked_by_microwave",
+  "boiled", "steamed", "braised_stewed", "pan_fried", "deep_fried", "sous_vide_cooked",
 ];
 // Must match food.appliances (20260801120000_food_ontology_v1.sql) exactly, minus
 // the "raw" row - that one means "no appliance needed" on a recipe, which isn't a
 // meaningful answer to "which appliances do you own/use" on a member's profile.
+// Reordered most-common -> least-common per 2026-08-18 taxonomy review
+// (docs/CHANGELOG.md); this is a judgment call on typical household
+// ownership, not a hard data source - flagged for sign-off. bread_maker
+// dropped entirely (checked first: zero recipes/profiles referenced it).
 const APPLIANCES = [
-  "stovetop_pan", "wok", "oven", "air_fryer", "deep_fryer", "grill_bbq",
-  "slow_cooker", "pressure_cooker", "sous_vide", "microwave", "bread_maker",
-  "blender_food_processor",
+  "stovetop_pan", "oven", "microwave", "blender_food_processor",
+  "slow_cooker", "pressure_cooker", "grill_bbq", "wok",
+  "air_fryer", "deep_fryer", "sous_vide",
 ];
 
 function dishRoleLabel(v) {
@@ -3344,7 +3406,7 @@ function courseLabel(v) {
 }
 function techLabel(v) {
   return ({
-    baked_roasted: T("Baked / roasted", "Запечённое"), broiled_grilled: T("Broiled / grilled", "Жареное на гриле"),
+    baked_roasted: T("Baked / roasted", "Запечённое"), broiled_grilled: T("Grilled", "Гриль"),
     griddled: T("Griddled", "Обжаренное на плите"), air_fried: T("Air fried", "Аэрогриль"),
     toasted: T("Toasted", "Тостированное"), cooked_by_microwave: T("Microwaved", "Готовка в микроволновке"),
     boiled: T("Boiled", "Варёное"), simmered: T("Simmered", "Тушённое на слабом огне"),
@@ -3356,7 +3418,7 @@ function techLabel(v) {
 }
 function applianceLabel(v) {
   return ({
-    stovetop_pan: T("Stovetop pan", "Сковорода на плите"), wok: T("Wok", "Вок"),
+    stovetop_pan: T("Stove / Hob", "Плита"), wok: T("Wok", "Вок"),
     oven: T("Oven", "Духовка"), air_fryer: T("Air fryer", "Аэрогриль"),
     deep_fryer: T("Deep fryer", "Фритюрница"), grill_bbq: T("Grill / BBQ", "Гриль / BBQ"),
     slow_cooker: T("Slow cooker", "Мультиварка"), pressure_cooker: T("Pressure cooker", "Скороварка"),
