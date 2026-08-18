@@ -3016,9 +3016,13 @@ function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell,
   });
 }
 function obSteps() {
-  const base = ob.isCook === false ? ["cookq", "allergies", "eat"] : ["cookq", "avail", "cookweek", "kit", "top3", "allergies", "eat"];
+  const base = ob.isCook === false ? ["cookq", "allergies", "eat"] : ["cookq", "avail", "cookweek", "kit", "allergies", "eat"];
   const ownerSteps = ob.needsOwnerSetup ? ["mealshape", "timezone", "dayrules"] : [];
-  return [...base, ...ownerSteps, "done"];
+  // "Top-3 dishes" moved to the very last input step, right before the
+  // celebration screen (user feedback, 2026-08-18) - was previously
+  // sandwiched between "kit" and "allergies".
+  const top3Step = ob.isCook === false ? [] : ["top3"];
+  return [...base, ...ownerSteps, ...top3Step, "done"];
 }
 function renderOnboard() {
   if (!ob) obReset();
