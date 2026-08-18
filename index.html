@@ -2152,12 +2152,27 @@ function renderInvitationOnboarding(preset = null) {
     if (acceptBtn.disabled) return;
     acceptBtn.disabled = true; acceptBtn.textContent = T("Joining...", "Присоединяемся...");
     note.textContent = ""; note.style.color = "#888";
-    const { data, error } = await sb.rpc("spin_food_accept_invitation", {
-      p_token: inviteTokenInUrl,
-      p_avatar_role: selRole,
-      p_display_name: nameInput.value.trim(),
-      p_other_label: selRole === "other" ? otherInput.value.trim() : null,
-    });
+    // See the create-household handler's matching comment (2026-08-18): the
+    // call itself, not just the post-success bootstrap, needs a ceiling and
+    // a catch, or a stuck/never-resolving request leaves this button frozen
+    // on "Присоединяемся..." forever with no way to retry.
+    let joinResult;
+    try {
+      joinResult = await withTimeout(sb.rpc("spin_food_accept_invitation", {
+        p_token: inviteTokenInUrl,
+        p_avatar_role: selRole,
+        p_display_name: nameInput.value.trim(),
+        p_other_label: selRole === "other" ? otherInput.value.trim() : null,
+      }), 15000, "Accept invitation");
+    } catch (e) {
+      logClientDiagnostic("accept_invitation_call_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      note.textContent = T("Couldn't reach the server - check your connection and try again.", "Не удалось связаться с сервером - проверь соединение и попробуй снова.");
+      note.style.color = "#ef4444";
+      acceptBtn.disabled = false;
+      acceptBtn.textContent = T("Try again →", "Попробовать снова →");
+      return;
+    }
+    const { data, error } = joinResult;
     if (error) {
       note.textContent = T("Couldn't join: ", "Не удалось присоединиться: ") + error.message;
       note.style.color = "#ef4444";
@@ -2169,17 +2184,30 @@ function renderInvitationOnboarding(preset = null) {
     const url = new URL(location.href);
     url.searchParams.delete("invite");
     history.replaceState({}, "", url.toString());
-    await refreshMembership();
-    // Load game state + start realtime now that we know the family.
-    if (me === null) me = membership.member_id;
-    // If they already picked a device language before sign-in, stamp it for this member.
-    if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
-    joinPresence();
-    await load();
-    subscribe();
-    startSyncWatchers();
-    render();
-    toast("Welcome to the family kitchen 🍲");
+    // The account row is already committed server-side at this point - any
+    // failure below is purely in the client's post-join bootstrap, not a
+    // failed join. Caught so it can't leave the button stuck on "Joining..."
+    // forever with no feedback (2026-08-18: same class of bug as the create-
+    // household hang below - see its comment for the full story).
+    try {
+      await refreshMembership();
+      if (me === null) me = membership.member_id;
+      // If they already picked a device language before sign-in, stamp it for this member.
+      if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
+      joinPresence();
+      await load();
+      subscribe();
+      startSyncWatchers();
+      render();
+      toast("Welcome to the family kitchen 🍲");
+    } catch (e) {
+      logClientDiagnostic("accept_invitation_post_join_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      note.textContent = T("Joined, but couldn't finish loading - tap to retry.", "Присоединился(-лась), но не удалось загрузить - нажми, чтобы повторить.");
+      note.style.color = "#ef4444";
+      acceptBtn.disabled = false;
+      acceptBtn.textContent = T("Retry →", "Повторить →");
+      acceptBtn.onclick = async () => { await refreshMembership(); if (me === null) me = membership?.member_id; joinPresence(); await load(); subscribe(); startSyncWatchers(); render(); };
+    }
   };
 }
 
@@ -2293,31 +2321,76 @@ function renderCreateHouseholdOnboarding(preset = null) {
     if (createBtn.disabled) return;
     createBtn.disabled = true; createBtn.textContent = T("Creating...", "Создаём...");
     note.textContent = ""; note.style.color = "#888";
-    const { data, error } = await sb.rpc("spin_food_create_family", {
-      p_household_name: nameHouseholdInput.value.trim(),
-      p_avatar_role: selRole,
-      p_display_name: nameInput.value.trim(),
-      p_other_label: selRole === "other" ? otherInput.value.trim() : null,
-    });
+    // 2026-08-18: two separate real attempts (both with non-ASCII names) left
+    // the button frozen on "Создаём..." forever with ZERO trace anywhere - no
+    // family row, no client_diagnostics row, not even a clean SQL error for
+    // the second attempt (which should have hit the "already belongs to a
+    // family" guard and returned fast). That rules out "server rejected it
+    // and the client mishandled the error" - the RPC call itself never
+    // resolved into either branch. Root cause unconfirmed (client-side crash
+    // before the call even fired vs. a genuinely stuck network request), but
+    // either way the ENTIRE handler - including the initial call, not just
+    // the post-success bootstrap - needs a hard ceiling and a catch-all, or
+    // this is unrecoverable without a page reload. withTimeout() forces a
+    // resolution either way; the outer try/catch guarantees the button is
+    // never left stuck silently again, regardless of which line failed.
+    let createResult;
+    try {
+      createResult = await withTimeout(sb.rpc("spin_food_create_family", {
+        p_household_name: nameHouseholdInput.value.trim(),
+        p_avatar_role: selRole,
+        p_display_name: nameInput.value.trim(),
+        p_other_label: selRole === "other" ? otherInput.value.trim() : null,
+      }), 15000, "Create family");
+    } catch (e) {
+      logClientDiagnostic("create_family_call_exception", { message: e?.message || String(e), stack: e?.stack || null, household_name_len: nameHouseholdInput.value.trim().length });
+      note.textContent = T("Couldn't reach the server - check your connection and try again.", "Не удалось связаться с сервером - проверь соединение и попробуй снова.");
+      note.style.color = "#ef4444";
+      createBtn.disabled = false;
+      createBtn.textContent = T("Try again →", "Попробовать снова →");
+      return;
+    }
+    const { data, error } = createResult;
     if (error) {
       const taken = /already taken/i.test(error.message);
+      const already = /already belongs/i.test(error.message);
       note.textContent = (taken
         ? T("That household name is taken - try another.", "Это имя уже занято - попробуй другое.")
+        : already
+        ? T("This account already has a family - reload the page.", "У этого аккаунта уже есть семья - перезагрузи страницу.")
         : T("Couldn't create the family kitchen: ", "Не удалось создать семейную кухню: ") + error.message);
       note.style.color = "#ef4444";
       createBtn.disabled = false;
       createBtn.textContent = T("Try again →", "Попробовать снова →");
       return;
     }
-    await refreshMembership();
-    if (me === null) me = membership.member_id;
-    if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
-    joinPresence();
-    await load();
-    subscribe();
-    startSyncWatchers();
-    render();
-    toast(T("Your family kitchen is ready 🍲", "Твоя семейная кухня готова 🍲"));
+    // The family+owner row is already committed server-side at this point
+    // (confirmed 2026-08-18: a family created via this RPC shows up in the DB
+    // even when the button below appears to "hang" forever). Everything from
+    // here on is client-side bootstrap with no local error handling, so ANY
+    // exception (a stale/null membership, a realtime subscribe hiccup, etc.)
+    // used to be swallowed by the page's global unhandledrejection handler -
+    // which shows a toast but has no idea which button to re-enable - leaving
+    // "Создаём..." on screen forever with no way to proceed or retry. Wrapped
+    // so a failure here is always recoverable instead of looking like a hang.
+    try {
+      await refreshMembership();
+      if (me === null) me = membership.member_id;
+      if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
+      joinPresence();
+      await load();
+      subscribe();
+      startSyncWatchers();
+      render();
+      toast(T("Your family kitchen is ready 🍲", "Твоя семейная кухня готова 🍲"));
+    } catch (e) {
+      logClientDiagnostic("create_family_post_create_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      note.textContent = T("Kitchen created, but couldn't finish loading - tap to retry.", "Кухня создана, но не удалось загрузить - нажми, чтобы повторить.");
+      note.style.color = "#ef4444";
+      createBtn.disabled = false;
+      createBtn.textContent = T("Retry →", "Повторить →");
+      createBtn.onclick = async () => { await refreshMembership(); if (me === null) me = membership?.member_id; joinPresence(); await load(); subscribe(); startSyncWatchers(); render(); };
+    }
   };
 }
 
