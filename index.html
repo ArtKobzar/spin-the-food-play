@@ -416,32 +416,34 @@ function stfDel(key) {
   try { localStorage.removeItem(key); } catch (e) { /* noop */ }
 }
 
-// Family key is the shared "room". It must survive a lost ?family= param
-// (installed PWAs open at start_url "." with no query), so once seen it is
-// remembered on the device. Otherwise members silently split into separate kitchens.
-function resolveFamilyKey() {
-  const q = new URLSearchParams(location.search).get("family");
-  if (q) { stfSet("stf_family", q); return q; }
-  return stfGet("stf_family") || "kobzar-demo";
-}
-const FAMILY_KEY = resolveFamilyKey();
-
-// ── auth + membership (Week 1 cutover) ─────────────────────────────
-// Every family member now signs in via Supabase Auth magic link. After sign-in,
-// spin_food_my_membership() returns the caller's food.family_members row.
-// The old hardcoded FAMILY picker is now the invitation-onboarding step for
-// invitees; existing members skip straight to the app.
+// ── auth + membership ────────────────────────────────────────────
+// Every family member signs in via Supabase Auth magic link. After sign-in,
+// spin_food_my_membership() returns the caller's food.family_members row. A
+// signed-in user with no membership either accepts an invitation (?invite=
+// token in the URL) or founds a brand-new household - see
+// renderInvitationOnboarding().
 let authSession = null;   // Supabase Auth session (null before sign-in)
 let membership = null;    // { member_id, family_id, family_name, avatar_role, other_label, display_name, is_owner, is_cook, ... } or null
 
-// Week 1 backward-compat map: the game engine uses "mom"/"dad"/"gran"/"kid" as
-// slot ids everywhere (game state, wishes, activity feed, presence). The new
-// avatar_role enum has 6 values (mom, dad, grandpa, grandma, kid, other).
-// Grandpa/grandma collapse to "gran"; "other" falls back to "dad" for Week 1.
-// Week 3 rewires the FAMILY array to real DB rows and retires this map.
-const AVATAR_TO_LEGACY = {
-  mom: "mom", dad: "dad", grandpa: "gran", grandma: "gran", kid: "kid", other: "dad",
-};
+// Shared by both the "join via invite" and "found a new household" onboarding
+// screens - picking a family role is common to both.
+const AVATAR_CHOICES = [
+  { r: "mom", em: "👩", en: "Mom", ru: "Мама" },
+  { r: "dad", em: "👨", en: "Dad", ru: "Папа" },
+  { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка" },
+  { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка" },
+  { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
+  { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
+];
+
+// Household name rules (locked 2026-08-18, see
+// supabase/migrations/20260818150000_food_household_name_v1.sql): 3-20
+// characters, letters (any script) and digits only, unique across all
+// families (case-insensitive). \p{L}/\p{N} are Unicode-aware in JS regex,
+// unlike Postgres's locale-dependent [:alpha:] - so this precise charset
+// check lives here; the server only re-checks length plus a defensive
+// blocklist of whitespace/HTML-special characters.
+const HOUSEHOLD_NAME_RE = /^[\p{L}\p{N}]{3,20}$/u;
 
 // When a real membership arrives, override the hardcoded FAMILY slot's display
 // name (and is_cook flag if we have it) so the topbar/pill/menu show real names
@@ -1452,7 +1454,6 @@ function wireAdvFilterPanel(root, idPrefix, f, onChange) {
 // ── shared state ──
 let game = null;      // { week, wishes, duel, activity, locked }
 let me = localStorage.getItem("stf_me") || null;
-let previousMe = null; // set when leaving the app to the member picker, so a back arrow can restore the session
 let tab = "menu";
 let modalOpen = false;
 let pendingRemote = null;
@@ -1819,7 +1820,11 @@ function startSyncWatchers() {
 }
 let presenceChan;
 function joinPresence() {
-  presenceChan = sb.channel("presence-" + FAMILY_KEY, { config: { presence: { key: me } } });
+  // Keyed by family_id (a real UUID, always unique) rather than any
+  // user-typed string - see docs/DECISION_LOG.md 2026-08-18 (retired the old
+  // FAMILY_KEY/"kobzar-demo" default, which every un-invited new signup
+  // silently shared, cross-contaminating presence between families).
+  presenceChan = sb.channel("presence-" + membership.family_id, { config: { presence: { key: me } } });
   presenceChan.on("presence", { event: "sync" }, () => {
     online = new Set(Object.values(presenceChan.presenceState()).flat().map(p => p.who));
     if (!modalOpen) render();
@@ -2056,28 +2061,9 @@ function renderSignInGate() {
 function renderInvitationOnboarding(preset = null) {
   const email = authSession?.user?.email || "";
   if (!inviteTokenInUrl) {
-    app.innerHTML = `<div class="gate">
-      <h1>🍲 Spin the Food</h1>
-      <p>${T("Signed in as", "Вошёл(-ла) как")} <b>${email}</b><br>${T("but you're not in a family kitchen yet.", "но ты пока не в семейной кухне.")}</p>
-      <p style="color:#888;font-size:14px;line-height:1.5">
-        ${T("Ask the family owner to send you an invitation from Settings → Invite family member.", "Попроси владельца семьи отправить приглашение через Настройки → Пригласить члена семьи.")}
-      </p>
-      <button class="btn btn-ghost" id="signoutBtn" style="width:100%">${T("Sign out", "Выйти")}</button>
-    </div>`;
-    document.getElementById("signoutBtn").onclick = async () => {
-      await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
-    };
-    return;
+    return renderCreateHouseholdOnboarding(preset);
   }
   // Have a token. Pick language/units, avatar + name, then submit.
-  const AVATAR_CHOICES = [
-    { r: "mom", em: "👩", en: "Mom", ru: "Мама" },
-    { r: "dad", em: "👨", en: "Dad", ru: "Папа" },
-    { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка" },
-    { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка" },
-    { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
-    { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
-  ];
   let selRole = preset?.selRole ?? null;
   app.innerHTML = `<div class="ob">
     <h2 style="font-size:22px;margin-bottom:6px">🍲 ${T("Welcome to the family kitchen", "Добро пожаловать в семейную кухню")}</h2>
@@ -2197,6 +2183,144 @@ function renderInvitationOnboarding(preset = null) {
   };
 }
 
+// Founding a brand-new household: caller is signed in, has no membership,
+// and arrived with no ?invite= token. Fixes the 2026-08-18 gap where this
+// case was a dead end ("ask the owner to invite you") with no way to
+// actually create the first family - see
+// supabase/migrations/20260818150000_food_household_name_v1.sql and
+// docs/DECISION_LOG.md.
+function renderCreateHouseholdOnboarding(preset = null) {
+  const email = authSession?.user?.email || "";
+  let selRole = preset?.selRole ?? null;
+  app.innerHTML = `<div class="ob">
+    <h2 style="font-size:22px;margin-bottom:6px">🍲 ${T("Welcome to Spin the Food", "Добро пожаловать в Spin the Food")}</h2>
+    <div style="color:#666;font-size:14px;margin-bottom:18px">
+      ${T("Signed in as", "Вошёл(-ла) как")} <b>${email}</b>. ${T("Let's set up your family kitchen.", "Давай создадим твою семейную кухню.")}
+    </div>
+    <div class="sect">${T("Name your household", "Назови свою семью")}</div>
+    <div style="font-size:12px;color:#999;margin-bottom:6px">
+      ${T("3-20 characters, letters and numbers only. This name is unique - it's how your household is identified.", "3-20 символов, только буквы и цифры. Это имя уникально - по нему определяется твоя семья.")}
+    </div>
+    <input id="householdNameInput" placeholder="${T("e.g. Kobzars", "напр. Кобзари")}" maxlength="20" value="${(preset?.householdName ?? "").replace(/"/g, "&quot;")}"
+      style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    <div id="householdNameNote" style="font-size:12px;margin-top:4px;min-height:16px"></div>
+    <div class="sect" style="margin-top:14px">${T("Language", "Язык")}</div>
+    <div class="chips-wrap" id="obLangWrap">
+      <div class="chip ${lang === "en" ? "on" : ""}" data-ol="en">🇬🇧 English</div>
+      <div class="chip ${lang === "ru" ? "on" : ""}" data-ol="ru">🇷🇺 Русский</div>
+    </div>
+    <div class="sect" style="margin-top:10px">${T("Units", "Единицы измерения")}</div>
+    <div class="chips-wrap" id="obUnitsWrap">
+      <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${T("Metric (g, ml, °C)", "Метрическая (г, мл, °C)")}</div>
+      <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${T("Imperial (oz, cups, °F)", "Имперская (унции, чашки, °F)")}</div>
+    </div>
+    <div class="sect" style="margin-top:14px">${T("Your role", "Твоя роль")}</div>
+    <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${T(c.en, c.ru)}</div>
+    `).join("")}</div>
+    <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
+      <div class="sect">${T("What should we call this role?", "Как назвать эту роль?")}</div>
+      <input id="otherLabelInput" placeholder="${T("e.g. Uncle, Nanny, Roommate", "напр. Дядя, Няня, Сосед")}" maxlength="30" value="${preset?.otherLabel ?? ""}"
+        style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    </div>
+    <div class="sect" style="margin-top:14px">${T("Your display name", "Твоё имя")}</div>
+    <input id="displayNameInput" placeholder="${T("How the family will see your name", "Как семья будет видеть твоё имя")}" maxlength="40" value="${preset?.displayName ?? ""}"
+      style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    <button class="btn btn-primary" id="createBtn" style="width:100%;margin-top:20px;opacity:.4" disabled>
+      ${T("Create the family kitchen →", "Создать семейную кухню →")}
+    </button>
+    <button class="btn btn-ghost" id="signoutBtn2" style="width:100%;margin-top:8px;color:#888">
+      ${T("Not you? Sign out", "Это не ты? Выйти")}
+    </button>
+    <div id="createNote" style="color:#888;font-size:13px;margin-top:10px;line-height:1.5"></div>
+  </div>`;
+
+  const captureState = () => ({
+    selRole,
+    householdName: nameHouseholdInput.value,
+    displayName: nameInput.value,
+    otherLabel: otherInput.value,
+  });
+  document.querySelectorAll("#obLangWrap [data-ol]").forEach(c => c.onclick = () => {
+    saveLangChoice(c.dataset.ol, { forOnboard: true });
+    renderCreateHouseholdOnboarding(captureState());
+  });
+  document.querySelectorAll("#obUnitsWrap [data-ou]").forEach(c => c.onclick = () => {
+    saveUnitsChoice(c.dataset.ou);
+    renderCreateHouseholdOnboarding(captureState());
+  });
+
+  const nameHouseholdInput = document.getElementById("householdNameInput");
+  const householdNote = document.getElementById("householdNameNote");
+  const roleChips = app.querySelectorAll("#roleWrap .chip");
+  const otherWrap = document.getElementById("otherLabelWrap");
+  const otherInput = document.getElementById("otherLabelInput");
+  const nameInput = document.getElementById("displayNameInput");
+  const createBtn = document.getElementById("createBtn");
+  const note = document.getElementById("createNote");
+
+  const validate = () => {
+    const householdOk = HOUSEHOLD_NAME_RE.test(nameHouseholdInput.value.trim());
+    householdNote.textContent = nameHouseholdInput.value && !householdOk
+      ? T("3-20 characters, letters and numbers only.", "3-20 символов, только буквы и цифры.")
+      : "";
+    householdNote.style.color = "#ef4444";
+    const nameOk = nameInput.value.trim().length > 0;
+    const roleOk = selRole !== null;
+    const otherOk = selRole !== "other" || otherInput.value.trim().length > 0;
+    const ok = householdOk && roleOk && nameOk && otherOk;
+    createBtn.disabled = !ok;
+    createBtn.style.opacity = ok ? "1" : ".4";
+  };
+
+  roleChips.forEach(c => c.onclick = () => {
+    selRole = c.dataset.r;
+    roleChips.forEach(x => x.classList.toggle("on", x.dataset.r === selRole));
+    otherWrap.style.display = selRole === "other" ? "block" : "none";
+    if (!nameInput.value && email) nameInput.value = email.split("@")[0];
+    validate();
+  });
+  nameHouseholdInput.oninput = validate;
+  otherInput.oninput = validate;
+  nameInput.oninput = validate;
+  validate();
+
+  document.getElementById("signoutBtn2").onclick = async () => {
+    await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
+  };
+
+  createBtn.onclick = async () => {
+    if (createBtn.disabled) return;
+    createBtn.disabled = true; createBtn.textContent = T("Creating...", "Создаём...");
+    note.textContent = ""; note.style.color = "#888";
+    const { data, error } = await sb.rpc("spin_food_create_family", {
+      p_household_name: nameHouseholdInput.value.trim(),
+      p_avatar_role: selRole,
+      p_display_name: nameInput.value.trim(),
+      p_other_label: selRole === "other" ? otherInput.value.trim() : null,
+    });
+    if (error) {
+      const taken = /already taken/i.test(error.message);
+      note.textContent = (taken
+        ? T("That household name is taken - try another.", "Это имя уже занято - попробуй другое.")
+        : T("Couldn't create the family kitchen: ", "Не удалось создать семейную кухню: ") + error.message);
+      note.style.color = "#ef4444";
+      createBtn.disabled = false;
+      createBtn.textContent = T("Try again →", "Попробовать снова →");
+      return;
+    }
+    await refreshMembership();
+    if (me === null) me = membership.member_id;
+    if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
+    joinPresence();
+    await load();
+    subscribe();
+    startSyncWatchers();
+    render();
+    toast(T("Your family kitchen is ready 🍲", "Твоя семейная кухня готова 🍲"));
+  };
+}
+
 // settings - always reachable from the ⚙️ in the top bar
 function openSettings() {
   const isOwner = Boolean(membership?.is_owner);
@@ -2217,8 +2341,8 @@ function openSettings() {
       <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-su="metric">📏 ${T("Metric (g, ml, °C)", "Метрическая (г, мл, °C)")}</div>
       <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-su="imperial">📐 ${T("Imperial (oz, cups, °F)", "Имперская (унции, чашки, °F)")}</div>
     </div>
-    <div class="sect">${T("Family", "Семья")}</div>
-    <div style="font-size:13px;color:#666;margin-bottom:10px">${membership?.family_name ? `<b>${membership.family_name}</b> · ` : ""}${T("shared code", "общий код")}: <b>${FAMILY_KEY}</b></div>
+    <div class="sect">${T("Household", "Семья")}</div>
+    <div style="font-size:13px;color:#666;margin-bottom:10px">${membership?.family_name ? `<b>${membership.family_name}</b>` : ""}</div>
     ${isOwner ? `
       <button class="btn btn-primary" id="inviteBtn" style="width:100%">👥 ${T("Invite family member", "Пригласить члена семьи")}</button>
       <button class="btn btn-ghost" id="dayRulesBtn" style="width:100%;margin-top:8px">🗓 ${T("Day Rules", "Правила дня")}</button>
@@ -2297,7 +2421,7 @@ function openInviteFlow() {
           "Authorization": "Bearer " + accessToken,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, family_key: FAMILY_KEY }),
+        body: JSON.stringify({ email }),
       });
       result = await resp.json();
     } catch (e) {
@@ -2711,28 +2835,6 @@ function renderOnboard() {
     ob = null; tab = "menu";
     render();
     toast(T("Welcome to the family kitchen 🍲", "Добро пожаловать на семейную кухню 🍲"));
-  };
-}
-function renderGate() {
-  app.innerHTML = `<div class="gate">
-    ${previousMe ? `<button class="ob-back" id="gateBack" style="align-self:flex-start">‹ ${T("Back", "Назад")}</button>` : ""}
-    <h1>🍲 Spin the Food</h1>
-    <p>${T("Who's on this phone? New members register first.", "Кто за этим телефоном? Новые участники сначала регистрируются.")}</p>
-    ${FAMILY.map(m => {
-      const reg = game?.profiles?.[m.id];
-      return `<button class="who-btn" data-who="${m.id}"><span class="em">${m.em}</span>
-      <span>${mName(m)}<small>${reg ? T("✓ registered", "✓ зарегистрирован(а)") : T("not registered yet - onboarding first", "ещё не в системе - сначала онбординг")}</small></span></button>`;
-    }).join("")}
-    <p style="margin-top:16px;font-size:12px">${T("Family", "Семья")}: <b>${FAMILY_KEY}</b></p>
-  </div>`;
-  app.querySelectorAll("[data-who]").forEach(b => b.onclick = async () => {
-    me = b.dataset.who; localStorage.setItem("stf_me", me); previousMe = null;
-    obReset(); joinPresence(); render();
-  });
-  const back = document.getElementById("gateBack");
-  if (back) back.onclick = () => {
-    me = previousMe; localStorage.setItem("stf_me", me); previousMe = null;
-    render();
   };
 }
 function topbar() {
