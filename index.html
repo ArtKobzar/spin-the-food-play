@@ -1043,6 +1043,7 @@ function snapshotToGame(snap) {
     // SPEC_MEAL_GRAIN.md Q_G5: owner-only, once-per-family course-per-meal
     // template. {} means "never configured" - gates renderMealShapeOnboard().
     defaultMealShapes: snap.family_settings?.default_meal_shapes || {},
+    ownerSetupCompletedAt: snap.family_settings?.owner_setup_completed_at || null,
     // SPEC_WEEKLY_CYCLE.md W17: family-local wall-clock zone. Only consumed
     // client-side so far as the pre-fill default for renderTimezoneOnboarding.
     familyTimezone: snap.family_settings?.timezone || null,
@@ -1982,7 +1983,12 @@ function render() {
   // Q_G5: owner-only, once per family, before the first Menu open. Non-owner
   // members are never gated on this - they just ride the server-side
   // fallback (food.default_meal_shapes_for_family) until the owner sets it.
-  if (membership.is_owner && Object.keys(game.defaultMealShapes || {}).length === 0) return renderOwnerSetup();
+  // Gated on owner_setup_completed_at (an explicit flag set only once the
+  // owner reaches and submits the *last* step of the sequence), not on
+  // default_meal_shapes being non-empty - that column is written by step 1
+  // of 2, so using it as the "done" signal let a returning owner who'd only
+  // finished meal shape skip Day Rules forever (2026-08-19 bug).
+  if (membership.is_owner && !game.ownerSetupCompletedAt) return renderOwnerSetup();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
   wire();
 }
@@ -2828,6 +2834,12 @@ function renderDayRulesOnboarding() {
   document.getElementById("drDone").onclick = async () => {
     const btn = document.getElementById("drDone");
     btn.disabled = true; btn.textContent = T("Loading...", "Загрузка...");
+    try {
+      const { error } = await withTimeout(sb.rpc("spin_food_owner_setup_done"), 15000, "Owner setup done");
+      if (error) logClientDiagnostic("owner_setup_done_error", { message: error?.message || String(error) });
+    } catch (e) {
+      logClientDiagnostic("owner_setup_done_exception", { message: e?.message || String(e), stack: e?.stack || null });
+    }
     await pullLatest();
     toast(T("Kitchen set up \ud83c\udf72", "Кухня настроена \ud83c\udf72"));
     render();
@@ -2894,28 +2906,34 @@ const DEFAULT_MEAL_SHAPE = {
   "dinner-side_dish": true,
   "dinner-dessert": true,
 };
-// The 3-step owner-only post-founding sequence, per SPEC_CLIENT_REFACTOR.md
-// #14 §5B.2: meal shape -> timezone confirmation -> Day Rules. All three are
-// gated together on game.defaultMealShapes being {} (see render()) - once
-// Day Rules' "done" button pulls a fresh snapshot with a non-empty
-// default_meal_shapes, the gate clears for good and this state is moot.
+// The owner-only post-founding sequence, per SPEC_CLIENT_REFACTOR.md #14
+// §5B.2: meal shape -> Day Rules (timezone confirmation moved to the
+// pre-auth device gate). Gated on food.families.owner_setup_completed_at,
+// an explicit flag set only by spin_food_owner_setup_done() from Day
+// Rules' final "done"/"Next" button - the *last* screen in the sequence
+// (see render()). An earlier version inferred completion from
+// default_meal_shapes being non-empty, but that column is written by step
+// 1 alone - a returning owner who'd only finished meal shape and then
+// refreshed the client got the gate cleared early and permanently skipped
+// Day Rules (2026-08-19 bug; user: "owner setup is completed only when we
+// have gathered and written all data from all screens to the db and
+// clicked submit on the very last screen").
 // Whether the current owner still needs to run through kitchen setup
-// (meal shape -> timezone -> Day Rules). Two call sites read this:
+// (meal shape -> Day Rules). Two call sites read this:
 //  1. obReset() caches it once as ob.needsOwnerSetup, so obSteps() can
-//     append the 3 steps *inside* the per-member wizard, before "done" -
+//     append the steps *inside* the per-member wizard, before "done" -
 //     for an owner onboarding for the first time. Caching at reset time
-//     (rather than recomputing live) matters: submitting the meal-shape
-//     step itself is what flips this to false, and obSteps() must not
-//     shrink mid-flow and skip the timezone/Day Rules steps that follow.
+//     (rather than recomputing live) matters: obSteps() must not shrink
+//     mid-flow and skip Day Rules once meal shape is submitted.
 //  2. render()'s top-level gate calls it live, for an owner who already has
 //     a saved profile from before this feature existed - they get the same
-//     3 steps as a standalone flow (renderOwnerSetup()) instead of being
+//     steps as a standalone flow (renderOwnerSetup()) instead of being
 //     forced to redo their entire member profile.
 // (User feedback, 2026-08-18: showing kitchen setup *after* the "Profile
 // ready!" celebration made that celebration a lie - setup wasn't actually
 // finished. Fixed by inserting the steps into the same wizard instead.)
 function needsOwnerSetup() {
-  return Boolean(membership?.is_owner) && Object.keys(game?.defaultMealShapes || {}).length === 0;
+  return Boolean(membership?.is_owner) && !game?.ownerSetupCompletedAt;
 }
 let ownerSetupStep = "mealshape"; // "mealshape" | "timezone" | "dayrules" - standalone flow only (call site 2)
 let ownerSetupTz = null;
@@ -2953,8 +2971,22 @@ function refreshMsBulkDims(root) {
 // either standalone (renderMealShapeOnboarding, call site 2) or inline as a
 // step inside the per-member wizard (renderOnboard()'s cur === "mealshape",
 // call site 1) without duplicating the grid logic.
+// Converts food.families.default_meal_shapes' server shape
+// ({mealKey: [role,...]}) into the flat "mealKey-role": true draft map this
+// screen edits. Falls back to DEFAULT_MEAL_SHAPE only when nothing's been
+// saved yet - a returning owner revisiting this step (e.g. to finally reach
+// Day Rules, see needsOwnerSetup()) must see their real saved shape, not
+// get bounced back to the starter template.
+function mealShapeFromSaved(saved) {
+  if (!saved || Object.keys(saved).length === 0) return { ...DEFAULT_MEAL_SHAPE };
+  const draft = {};
+  for (const [mealKey, roles] of Object.entries(saved)) {
+    (roles || []).forEach(r => { draft[msKey(mealKey, r)] = true; });
+  }
+  return draft;
+}
 function mealShapeContentHtml() {
-  if (!mealShapeDraft) mealShapeDraft = { ...DEFAULT_MEAL_SHAPE };
+  if (!mealShapeDraft) mealShapeDraft = mealShapeFromSaved(game?.defaultMealShapes);
   return `<div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша СЕМЬЯ ест дома?")}</div>
     <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда вы готовите в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-Меню. Это можно изменить в Настройках позже.")}</div>
     <div class="mealgrid roles">
@@ -3369,10 +3401,22 @@ function renderOnboard() {
     mountDayRules(app, obDayRulesByDay);
   }
   const next = document.getElementById("obNext");
-  if (next) next.onclick = () => {
+  if (next) next.onclick = async () => {
     const ta = document.getElementById("obTop3");
     if (ta) ob.top3 = ta.value;
     if (next.disabled) return;
+    // Day Rules is the last screen of the owner-setup sequence (mealshape ->
+    // dayrules) - mark it complete here so needsOwnerSetup() never re-shows
+    // this sequence again (2026-08-19 fix, see needsOwnerSetup() comment).
+    if (cur === "dayrules") {
+      next.disabled = true; next.textContent = t("Saving...", "Сохраняем...");
+      try {
+        const { error } = await withTimeout(sb.rpc("spin_food_owner_setup_done"), 15000, "Owner setup done");
+        if (error) logClientDiagnostic("owner_setup_done_error", { message: error?.message || String(error) });
+      } catch (e) {
+        logClientDiagnostic("owner_setup_done_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      }
+    }
     ob.step++; render();
   };
   const done = document.getElementById("obDone");
