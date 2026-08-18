@@ -3049,7 +3049,7 @@ function renderOnboard() {
     const chosen = obCookSlotsOn();
     const cls = chosen.length === 1 ? "one" : chosen.length === 2 ? "two" : "";
     inner = `<div class="ob-q">${t("Your cooking week", "Твоя неделя готовки")}</div>
-      <div class="ob-note" style="padding:0 0 12px">${t("We pre-assigned every meal you can cook. Tap or drag across cells to free slots. Tap a day or meal icon to clear a whole row or column.", "Мы назначили тебе все, что ты можешь. Нажми или проведи по ячейкам, чтобы их освободить. Нажми на день или иконку приёма пищи - чтобы очистить всю строку или столбец сразу.")}</div>
+      <div class="ob-note" style="padding:0 0 12px">${t("These are the days you cook. Tap or drag across cells to adjust your availability. Tap a day or meal icon to clear a whole row or column.", "Это дни, когда ты готовишь. Нажми или проведи по ячейкам, чтобы поправить свою доступность. Нажми на день или иконку приёма пищи - чтобы очистить всю строку или столбец сразу.")}</div>
       <div class="mealgrid ${cls}"><div></div>${chosen.map(m => {
         const allOn = DAYS.every((_, di) => obCookCellOn(di, m.k));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-cw-col="${m.k}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
