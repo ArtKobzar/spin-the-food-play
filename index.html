@@ -89,6 +89,8 @@
   .btn-primary { background: var(--amber); color: var(--amber-text); box-shadow: 0 4px 0 var(--amber-d); }
   .btn-primary:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--amber-d); }
   .btn-ghost { background: #fff; color: #444; border: 2px solid #e5e7eb; }
+  .btn-success { background: var(--green); color: #fff; box-shadow: 0 4px 0 #047857; }
+  .btn-success:active { transform: translateY(3px); box-shadow: 0 1px 0 #047857; }
   .chip { background: #fff; border: 1.5px solid #e5e7eb; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; user-select: none; }
   .chip.on { border-color: var(--amber); background: var(--amber-tint); font-weight: 600; }
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -3316,14 +3318,15 @@ function renderOnboard() {
     inner = `${dayRulesOnboardContentHtml(obDayRulesByDay)}
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else {
-    inner = `<div class="ob-q">🎉 ${ob.needsOwnerSetup
+    inner = `<div class="ob-q" style="text-align:center">🎉 ${ob.needsOwnerSetup
         ? t("Your kitchen is set up! Profile ready!", "Твоя кухня настроена! Профиль готов!")
         : t("Profile ready!", "Профиль готов!")}</div>
       <div style="display:flex;justify-content:center;margin:14px 0 20px">
         <img src="${CELEBRATION_GIF_URL}" alt="" style="width:min(80vw,340px);height:min(80vw,340px);object-fit:cover;border-radius:50%;box-shadow:0 10px 28px rgba(0,0,0,.18)">
       </div>
-      ${membership?.is_owner ? `<button class="btn btn-primary" id="obInviteFamily" style="width:100%;margin-bottom:10px">👥 ${t("Invite family members", "Пригласить членов семьи")}</button>` : ""}
-      <button class="btn btn-primary ob-next" id="obDone">${t("To this week's menu →", "К меню недели →")}</button>`;
+      ${membership?.is_owner ? `<button class="btn btn-ghost" id="obInviteFamily" style="width:100%">👥 ${t("Invite family members", "Пригласить членов семьи")}</button>
+      <div style="text-align:center;font-size:12px;color:#999;margin:8px 0 22px">${t("You can always invite them later from Settings.", "Пригласить можно в любой момент позже, в Настройках.")}</div>` : `<div style="margin-bottom:22px"></div>`}
+      <button class="btn btn-success ob-next" id="obDone" style="width:100%">${t("Complete! \u2192", "Готово! \u2192")}</button>`;
   }
   app.innerHTML = `<div class="ob">${nav}${inner}</div>`;
 
