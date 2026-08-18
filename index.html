@@ -2850,7 +2850,7 @@ const COURSE_ROLES = ["appetizer", "soup", "main_course", "side_dish", "salad", 
 // Emoji per course role, shown as the meal-shape matrix's row icon.
 function courseRoleIcon(role) {
   return ({
-    appetizer: "🥟", soup: "🍲", main_course: "🍛", side_dish: "🥔",
+    appetizer: "🍢", soup: "🍲", main_course: "🍝", side_dish: "🍚",
     salad: "🥗", dessert: "🍰", pickle: "🥒",
   })[role] || "🍽️";
 }
@@ -3000,6 +3000,7 @@ function renderMealShapeOnboarding() {
 // Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
 // declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
 const OB_ALG = [
+  ["none","None","Нет"],
   ["gluten","Gluten","Глютен"],
   ["crustaceans","Crustaceans","Ракообразные"],
   ["eggs","Eggs","Яйца"],
@@ -3014,7 +3015,6 @@ const OB_ALG = [
   ["sulphites","Sulphites","Сульфиты"],
   ["lupin","Lupin","Люпин"],
   ["molluscs","Molluscs","Моллюски"],
-  ["none","None","Нет"],
 ];
 function obCookSlotsOn() { return MEALS.filter(m => ob.avail.includes(m.k)); }
 function obCookCellOn(dayIdx, mealKey) { return ob.cookGrid[dayIdx + "-" + mealKey] !== false; }
