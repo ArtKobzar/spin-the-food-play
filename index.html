@@ -2952,10 +2952,13 @@ function wireMealShapeGrid() {
   });
 }
 function renderMealShapeOnboarding() {
+  // Same ordering rule as renderOnboard()'s "mealshape" branch: content must
+  // seed mealShapeDraft before anyOn reads it.
+  const content = mealShapeContentHtml();
   const anyOn = mealShapeAnyOn();
   app.innerHTML = `<div class="ob">
     <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 1 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 1 ИЗ 3")}</div>
-    ${mealShapeContentHtml()}
+    ${content}
     <button class="btn btn-primary ob-next" id="msSubmit" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${T("Set up my kitchen \u2192", "Настроить кухню \u2192")}</button>
   </div>`;
   wireMealShapeGrid();
@@ -3181,8 +3184,16 @@ function renderOnboard() {
       </div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Continue", "Продолжить")}</button>`;
   } else if (cur === "mealshape") {
+    // mealShapeContentHtml() is what lazily seeds mealShapeDraft (starts out
+    // null) - it MUST run before anything reads the draft. mealShapeAnyOn()
+    // used to be called first (to compute the button's disabled state), which
+    // threw "Cannot read properties of null" on every fresh owner's very
+    // first visit to this step, straight out of the "eat" step's Continue
+    // click (confirmed via the 2026-08-18 uncaught_error diagnostic added
+    // this session - msCellOn <- mealShapeAnyOn <- renderOnboard).
+    const content = mealShapeContentHtml();
     const anyOn = mealShapeAnyOn();
-    inner = `${mealShapeContentHtml()}
+    inner = `${content}
       <button class="btn btn-primary ob-next" id="msNextOb" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${t("Next", "Дальше")}</button>`;
   } else if (cur === "timezone") {
     inner = `${timezoneContentHtml()}
