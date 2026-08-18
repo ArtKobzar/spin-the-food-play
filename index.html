@@ -2688,9 +2688,27 @@ async function saveTimezoneAndThen(btnId, onOk) {
   const btn = document.getElementById(btnId);
   const note = document.getElementById("tzNote");
   btn.disabled = true; btn.textContent = T("Saving...", "Сохраняем...");
-  const { error } = await sb.rpc("spin_food_set_family_timezone", { p_timezone: ownerSetupTz });
-  if (error) {
-    note.textContent = T("Couldn't save: ", "Не удалось сохранить: ") + error.message;
+  // 2026-08-18 fix: this call used to go straight to sb.rpc() with no
+  // timeout/try-catch, unlike every other RPC call site that has hung on
+  // this user before (create_family, accept_invitation, applyEvent) - a
+  // stalled network request here left the button stuck on "Saving..."
+  // forever with nothing to retry and no server-side trace.
+  logClientDiagnostic("set_family_timezone_start", {});
+  try {
+    const { error } = await withTimeout(
+      sb.rpc("spin_food_set_family_timezone", { p_timezone: ownerSetupTz }),
+      15000,
+      "Timezone save"
+    );
+    if (error) {
+      logClientDiagnostic("set_family_timezone_error", { message: error?.message || String(error) });
+      note.textContent = T("Couldn't save: ", "Не удалось сохранить: ") + error.message;
+      btn.disabled = false; btn.textContent = T("Next", "Дальше");
+      return;
+    }
+  } catch (e) {
+    logClientDiagnostic("set_family_timezone_exception", { message: e?.message || String(e), stack: e?.stack || null });
+    note.textContent = T("Something went wrong - check your connection and try again.", "Что-то пошло не так - проверь соединение и попробуй снова.");
     btn.disabled = false; btn.textContent = T("Next", "Дальше");
     return;
   }
@@ -2862,9 +2880,16 @@ function mealShapeContentHtml() {
     </div>`;
 }
 function mealShapeAnyOn() { return MEALS.some(m => COURSE_ROLES.some(r => msCellOn(m.k, r))); }
+// Shape sent to the server must be {"breakfast": [role,...], ...} - a plain
+// array of role strings per meal type (see food.families.default_meal_shapes
+// comment, 20260818090000_food_meal_grain_v1.sql §4) - NOT {roles:[...]}.
+// A prior version of this function nested the array under a "roles" key,
+// which passed the event's own jsonb-object validation (so the save itself
+// looked successful) but broke every later jsonb_array_elements_text() call
+// against it in spin_food_create_plan, i.e. the very next weekly rollover.
 function mealShapeToShapes() {
   const shapes = {};
-  for (const m of MEALS) shapes[m.k] = { roles: COURSE_ROLES.filter(r => msCellOn(m.k, r)) };
+  for (const m of MEALS) shapes[m.k] = COURSE_ROLES.filter(r => msCellOn(m.k, r));
   return shapes;
 }
 function wireMealShapeGrid() {
@@ -6116,10 +6141,15 @@ function stickyToast(msg) {
 // visible toast instead of vanishing invisibly.
 window.addEventListener("error", (e) => {
   console.error("[stf-uncaught]", e.error || e.message);
+  // 2026-08-18: this net was toast-only with zero server-side trace, so every
+  // report of a bare "something went wrong" (e.g. 2026-08-18 onboarding
+  // report) meant blind code-reading with no stack trace to confirm the fix.
+  logClientDiagnostic("uncaught_error", { message: e.error?.message || String(e.message || e), stack: e.error?.stack || null, filename: e.filename || null, lineno: e.lineno || null });
   toast(T("Something went wrong - please try that again", "Что-то пошло не так - попробуйте ещё раз"));
 });
 window.addEventListener("unhandledrejection", (e) => {
   console.error("[stf-uncaught-promise]", e.reason);
+  logClientDiagnostic("uncaught_rejection", { message: e.reason?.message || String(e.reason), stack: e.reason?.stack || null });
   toast(T("Something went wrong - please try that again", "Что-то пошло не так - попробуйте ещё раз"));
 });
 
