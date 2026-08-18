@@ -56,7 +56,7 @@
   .mealgrid.two { grid-template-columns: 52px repeat(2, 1fr); }
   .mealgrid.one { grid-template-columns: 52px 1fr; }
   .mealgrid .hd { text-align: center; color: #888; font-weight: 600; padding: 2px 0; font-size: 22px; }
-  .mealgrid .dy { color: #666; font-weight: 700; align-self: center; }
+  .mealgrid .dy { color: #666; font-weight: 700; align-self: center; font-size: 15px; }
   .mealgrid .hd.bulk, .mealgrid .dy.bulk { cursor: pointer; border-radius: 8px; user-select: none; -webkit-tap-highlight-color: transparent; }
   .mealgrid .hd.bulk { padding: 6px 2px; }
   .mealgrid .dy.bulk { padding: 4px 6px; }
@@ -2965,6 +2965,12 @@ const DEFAULT_MEAL_SHAPE = {
 // (User feedback, 2026-08-18: showing kitchen setup *after* the "Profile
 // ready!" celebration made that celebration a lie - setup wasn't actually
 // finished. Fixed by inserting the steps into the same wizard instead.)
+// game.ownerSetupCompletedAt itself is only written by the green "Complete!"
+// button (call site 1's obDone) or by drDone (call site 2's own terminal
+// button) - never by an intermediate Next click - so this stays true for
+// the whole wizard until the user has actually finished everything,
+// including a chance to invite family members from the celebration screen
+// (2026-08-19).
 function needsOwnerSetup() {
   return Boolean(membership?.is_owner) && !game?.ownerSetupCompletedAt;
 }
@@ -3232,7 +3238,7 @@ function renderOnboard() {
         <a href="#" id="notMe" style="color:var(--amber-d);font-weight:600;margin-left:6px">${t("Not you? Switch", "Это не ты? Сменить")}</a></div>`;
   } else if (cur === "avail") {
     inner = `<div class="ob-q">${t("Which meals can you cook?", "В какое время ты можешь готовить?")}</div>
-      <div class="chips-wrap stack">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}">${m.ic} ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
+      <div class="chips-wrap stack">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${m.ic}</span> ${t(m.n, {breakfast:"Завтрак",lunch:"Обед",dinner:"Ужин"}[m.k] || m.n)}</div>`).join("")}</div>
       <div class="ob-q" style="margin-top:22px">${t("What courses can you cook?", "Какие блюда ты умеешь готовить?")}</div>
       <div class="chips-wrap">
         <div class="chip ${ob.courses.length === COURSE_CATEGORIES.length ? "on" : ""}" data-course-all>${t("All", "Всё")}</div>
@@ -3433,22 +3439,18 @@ function renderOnboard() {
     mountDayRules(app, obDayRulesByDay);
   }
   const next = document.getElementById("obNext");
-  if (next) next.onclick = async () => {
+  if (next) next.onclick = () => {
     const ta = document.getElementById("obTop3");
     if (ta) ob.top3 = ta.value;
     if (next.disabled) return;
-    // Day Rules is the last screen of the owner-setup sequence (mealshape ->
-    // dayrules) - mark it complete here so needsOwnerSetup() never re-shows
-    // this sequence again (2026-08-19 fix, see needsOwnerSetup() comment).
-    if (cur === "dayrules") {
-      next.disabled = true; next.textContent = t("Saving...", "Сохраняем...");
-      try {
-        const { error } = await withTimeout(sb.rpc("spin_food_owner_setup_done"), 15000, "Owner setup done");
-        if (error) logClientDiagnostic("owner_setup_done_error", { message: error?.message || String(error) });
-      } catch (e) {
-        logClientDiagnostic("owner_setup_done_exception", { message: e?.message || String(e), stack: e?.stack || null });
-      }
-    }
+    // Day Rules no longer marks owner setup complete on its own "Next" -
+    // that's now bundled into the green "Complete!" button on the
+    // celebration screen (obDone), alongside member_profile_updated, so
+    // both land together only once the whole wizard - including a chance
+    // to invite family members - is truly finished (2026-08-19, user:
+    // "I want both of these events complete on the green button click -
+    // hopefully signaling truly the kitchen setup and full user
+    // onboarding also, after sending out invites").
     ob.step++; render();
   };
   const inviteFamily = document.getElementById("obInviteFamily");
@@ -3477,6 +3479,33 @@ function renderOnboard() {
       // directly comparable and opens the door to skill/equipment-aware AI-fill).
       cook_profile: { avail: ob.avail || [], courses: ob.courses || [], cookGrid: ob.cookGrid || {}, techniques: ob.techniques || [], appliances: ob.appliances || [] },
     };
+    // 2026-08-19: the green "Complete!" button is now the single checkpoint
+    // for *both* completion signals - owner kitchen setup (when this pass
+    // included it) and the member profile - so neither can land "partially"
+    // done just from clicking through intermediate Next buttons, and both
+    // are confirmed only after the user's had their chance to invite family
+    // members from this same screen (user: "I want both of these events
+    // complete on the green button click - hopefully signaling truly the
+    // kitchen setup and full user onboarding also, after sending out
+    // invites"). Owner setup goes first - if it fails, don't even attempt
+    // the profile save, so a retry click starts clean from the top.
+    if (ob.needsOwnerSetup) {
+      done.disabled = true; done.textContent = t("Saving...", "Сохраняем...");
+      try {
+        const { error } = await withTimeout(sb.rpc("spin_food_owner_setup_done"), 15000, "Owner setup done");
+        if (error) {
+          logClientDiagnostic("owner_setup_done_error", { message: error?.message || String(error) });
+          toast(T("Couldn't finish kitchen setup - check your connection and try again.", "Не удалось завершить настройку кухни - проверь соединение и попробуй снова."));
+          done.disabled = false; done.textContent = t("Complete! \u2192", "Готово! \u2192");
+          return;
+        }
+      } catch (e) {
+        logClientDiagnostic("owner_setup_done_exception", { message: e?.message || String(e), stack: e?.stack || null });
+        toast(T("Couldn't finish kitchen setup - check your connection and try again.", "Не удалось завершить настройку кухни - проверь соединение и попробуй снова."));
+        done.disabled = false; done.textContent = t("Complete! \u2192", "Готово! \u2192");
+        return;
+      }
+    }
     // 2026-08-18 fix: don't mark the wizard "done" (clearing `ob`, setting
     // game.profiles[me]) until the server actually confirms the write. The
     // previous version did this unconditionally before commitAndSync even
@@ -3487,6 +3516,7 @@ function renderOnboard() {
     const ok = await commitAndSync(`${mem(me).en} registered their profile`, "member_profile_updated", profilePayload);
     if (!ok) {
       toast(T("Couldn't save your profile - check your connection and try again.", "Не удалось сохранить профиль - проверь соединение и попробуй снова."));
+      done.disabled = false; done.textContent = t("Complete! \u2192", "Готово! \u2192");
       return;
     }
     game.profiles[me] = profile;
