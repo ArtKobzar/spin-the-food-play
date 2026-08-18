@@ -2614,32 +2614,67 @@ function openInviteFlow({ forPrivateChef = false } = {}) {
 // weekday, consumed by the Thursday scheduled AI pre-fill (§5.3/§9/§10) - never
 // affects manual assignment, Spin, Wish, or Duel.
 const DAY_RULE_KINDS = [
-  ["none", "No rule", "Без правила"],
-  ["protein_type", "Protein day", "День белка"],
-  ["diet_suitability", "Diet day", "День диеты"],
-  ["cuisine", "Cuisine day", "День кухни"],
-  ["dish_style", "Style day", "День стиля"],
+  ["none", "No Rule", "Без правила"],
+  ["protein_type", "Protein Day", "День белка"],
+  ["diet_suitability", "Diet Day", "День диеты"],
+  ["cuisine", "Cuisine Day", "День кухни"],
 ];
-const DAY_RULE_PROTEIN_VALUES = ["meat", "fish", "seafood", "egg", "dairy"];
-const DAY_RULE_DIET_VALUES = ["vegan", "vegetarian", "pescatarian", "gluten-free", "dairy-free"];
+const DAY_RULE_PROTEIN_VALUES = [
+  ["meat", "Meat", "Мясо"],
+  ["fish", "Fish", "Рыба"],
+  ["seafood", "Seafood", "Морепродукты"],
+  ["egg", "Egg", "Яйца"],
+  ["dairy", "Dairy", "Молочное"],
+];
+const DAY_RULE_DIET_VALUES = [
+  ["vegan", "Vegan", "Веганское"],
+  ["vegetarian", "Vegetarian", "Вегетарианское"],
+  ["pescatarian", "Pescatarian", "Пескетарианское"],
+  ["gluten-free", "Gluten-Free", "Без глютена"],
+  ["dairy-free", "Dairy-Free", "Без молочного"],
+];
+// Canonical top-15 "world's most popular cuisines" default list - mirrors
+// food.cuisines' seed rows (20260819000000_food_day_rules_cuisine_v1.sql).
+// "Random World Cuisine" isn't a real cuisine - it's a sentinel rule_value
+// ('random') telling Auto-Menu to pick any recognized world cuisine rather
+// than pin the day to one specific kitchen.
+const WORLD_CUISINES = [
+  ["random", "Random World Cuisine", "Случайная кухня мира"],
+  ["italian", "Italian", "Итальянская"],
+  ["chinese", "Chinese", "Китайская"],
+  ["japanese", "Japanese", "Японская"],
+  ["mexican", "Mexican", "Мексиканская"],
+  ["indian", "Indian", "Индийская"],
+  ["thai", "Thai", "Тайская"],
+  ["french", "French", "Французская"],
+  ["greek", "Greek", "Греческая"],
+  ["spanish", "Spanish", "Испанская"],
+  ["korean", "Korean", "Корейская"],
+  ["vietnamese", "Vietnamese", "Вьетнамская"],
+  ["turkish", "Turkish", "Турецкая"],
+  ["middle_eastern", "Middle Eastern", "Ближневосточная"],
+  ["american", "American", "Американская"],
+  ["mediterranean", "Mediterranean", "Средиземноморская"],
+];
 // Factored out of openDayRules() (2026-08-18) so the exact same rows +
 // autosave-per-cell behavior can be mounted either in the Settings modal or
 // as a full-screen onboarding step (renderDayRulesOnboarding) without
 // duplicating the save/rerender wiring.
 function dayRulesRowHtml(rulesByDay, di) {
   const r = rulesByDay[di] || { rule_kind: "none", rule_value: null };
-  const needsFreeText = r.rule_kind === "cuisine" || r.rule_kind === "dish_style";
   const fixedValues = r.rule_kind === "protein_type" ? DAY_RULE_PROTEIN_VALUES
     : r.rule_kind === "diet_suitability" ? DAY_RULE_DIET_VALUES : null;
+  const needsCuisineSelect = r.rule_kind === "cuisine";
   return `<div class="day-block" style="margin-bottom:10px" data-drday="${di}">
     <div class="day-hd">${dayN(di)}</div>
     <div style="padding:10px 12px">
       <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(([k, l, lru]) =>
         `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>
-      ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(v =>
-        `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${v}</div>`).join("")}</div>` : ""}
-      ${needsFreeText ? `<input data-drtext="${di}" value="${r.rule_value || ""}" placeholder="${T("e.g. italian", "например, italian")}"
-        style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">` : ""}
+      ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(([v, l, lru]) =>
+        `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${T(l, lru)}</div>`).join("")}</div>` : ""}
+      ${needsCuisineSelect ? `<select data-drcuisine="${di}" style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">
+        ${WORLD_CUISINES.map(([v, l, lru]) => `<option value="${v}" ${r.rule_value === v ? "selected" : ""}>${T(l, lru)}</option>`).join("")}
+      </select>` : ""}
     </div>
   </div>`;
 }
@@ -2679,17 +2714,12 @@ function mountDayRules(root, rulesByDay) {
       rerenderRow(di);
       save(di, kind, value);
     });
-    const text = root.querySelector(`[data-drtext="${di}"]`);
-    if (text) {
-      const commit = () => {
-        const kind = rulesByDay[di]?.rule_kind || "none";
-        const value = text.value.trim().toLowerCase();
-        rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value || null };
-        save(di, kind, value);
-      };
-      text.addEventListener("blur", commit);
-      text.addEventListener("keydown", e => { if (e.key === "Enter") { text.blur(); } });
-    }
+    const cuisineSelect = root.querySelector(`[data-drcuisine="${di}"]`);
+    if (cuisineSelect) cuisineSelect.onchange = () => {
+      const value = cuisineSelect.value;
+      rulesByDay[di] = { day_of_week: di, rule_kind: "cuisine", rule_value: value };
+      save(di, "cuisine", value);
+    };
   };
   DAYS.forEach((_, di) => wireRow(di));
 }
@@ -2781,8 +2811,8 @@ function renderTimezoneOnboarding() {
   });
 }
 function dayRulesOnboardContentHtml(rulesByDay) {
-  return `<div class="ob-q">🗓 ${T("Any day-specific rules?", "Есть правила для конкретных дней?")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-Меню старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
+  return `<div class="ob-q">🗓 ${T("Any rules for specific days of the week?", "Есть правила для конкретных дней недели?")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Optional - some families set fish days or eat only vegan dishes. Once set here, Auto-Menu follows these rules for AI suggestions - like a seafood day or an Italian cuisine night. Never overrides allergies. Change or skip this any time in Settings.", "Необязательно - некоторые семьи определяют рыбные дни или едят веганские блюда только. Настроив здесь, Авто-Меню следует этим правилам при ИИ-предложениях - например, день морепродуктов или вечер Итальянской кухни. Никогда не нарушает аллергии. Изменить или пропустить можно в любой момент в Настройках.")}</div>
     <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
     <div id="drNote" style="font-size:12px;color:#999;margin:4px 0 16px;min-height:16px"></div>`;
 }
@@ -5050,7 +5080,6 @@ const DAY_RULE_KIND_LABEL = {
   protein_type: ["protein day", "день белка"],
   cuisine: ["cuisine day", "день кухни"],
   diet_suitability: ["diet day", "день диеты"],
-  dish_style: ["style day", "день стиля"],
 };
 function aiNoteText(note) {
   if (!note) return "";
