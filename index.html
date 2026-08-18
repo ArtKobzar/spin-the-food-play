@@ -2144,7 +2144,7 @@ function renderInvitationOnboarding(preset = null) {
     </div>
     <div class="sect" style="margin-top:14px">${T("Your role", "Твоя роль")}</div>
     <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${T(c.en, c.ru)}</div>
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${T(c.en, c.ru)}</div>
     `).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${T("What should we call this role?", "Как назвать эту роль?")}</div>
@@ -2302,7 +2302,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
     </div>
     <div class="sect" style="margin-top:14px">${T("Your role", "Твоя роль")}</div>
     <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:18px;margin-right:4px">${c.em}</span> ${T(c.en, c.ru)}</div>
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${T(c.en, c.ru)}</div>
     `).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${T("What should we call this role?", "Как назвать эту роль?")}</div>
