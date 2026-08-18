@@ -1021,6 +1021,9 @@ function snapshotToGame(snap) {
     // SPEC_MEAL_GRAIN.md Q_G5: owner-only, once-per-family course-per-meal
     // template. {} means "never configured" - gates renderMealShapeOnboard().
     defaultMealShapes: snap.family_settings?.default_meal_shapes || {},
+    // SPEC_WEEKLY_CYCLE.md W17: family-local wall-clock zone. Only consumed
+    // client-side so far as the pre-fill default for renderTimezoneOnboarding.
+    familyTimezone: snap.family_settings?.timezone || null,
   };
 }
 
@@ -1950,7 +1953,7 @@ function render() {
   // Q_G5: owner-only, once per family, before the first Menu open. Non-owner
   // members are never gated on this - they just ride the server-side
   // fallback (food.default_meal_shapes_for_family) until the owner sets it.
-  if (membership.is_owner && Object.keys(game.defaultMealShapes || {}).length === 0) return renderMealShapeOnboarding();
+  if (membership.is_owner && Object.keys(game.defaultMealShapes || {}).length === 0) return renderOwnerSetup();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
   wire();
 }
@@ -2481,6 +2484,7 @@ function openSettings() {
     closeModal();
     await sb.auth.signOut();
     authSession = null; membership = null; me = null; game = null; ob = null;
+    ownerSetupStep = "mealshape"; mealShapeDraft = null; ownerSetupTz = null;
     localStorage.removeItem("stf_me");
     render();
   };
@@ -2564,31 +2568,31 @@ const DAY_RULE_KINDS = [
 ];
 const DAY_RULE_PROTEIN_VALUES = ["meat", "fish", "seafood", "egg", "dairy"];
 const DAY_RULE_DIET_VALUES = ["vegan", "vegetarian", "pescatarian", "gluten-free", "dairy-free"];
-function openDayRules() {
-  const rulesByDay = {};
-  (game.dayRules || []).forEach(r => { rulesByDay[r.day_of_week] = r; });
-  const rowHtml = di => {
-    const r = rulesByDay[di] || { rule_kind: "none", rule_value: null };
-    const needsFreeText = r.rule_kind === "cuisine" || r.rule_kind === "dish_style";
-    const fixedValues = r.rule_kind === "protein_type" ? DAY_RULE_PROTEIN_VALUES
-      : r.rule_kind === "diet_suitability" ? DAY_RULE_DIET_VALUES : null;
-    return `<div class="day-block" style="margin-bottom:10px" data-drday="${di}">
-      <div class="day-hd">${dayN(di)}</div>
-      <div style="padding:10px 12px">
-        <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(([k, l, lru]) =>
-          `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>
-        ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(v =>
-          `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${v}</div>`).join("")}</div>` : ""}
-        ${needsFreeText ? `<input data-drtext="${di}" value="${r.rule_value || ""}" placeholder="${T("e.g. italian", "например, italian")}"
-          style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">` : ""}
-      </div>
-    </div>`;
-  };
-  const v = modal(`<h3>🗓 ${T("Day Rules", "Правила дня")}</h3>
-    <div style="font-size:13px;color:#666;margin-bottom:10px">${T("Owner-only. The Thursday AI pre-fill tries to follow these, but never at the cost of anyone's allergy safety.", "Только для владельца. ИИ старается следовать этим правилам, но безопасность важнее.")}</div>
-    <div id="drRows">${DAYS.map((_, di) => rowHtml(di)).join("")}</div>
-    <div id="drNote" style="font-size:12px;color:#999;margin-top:4px;min-height:16px"></div>`);
-  const note = v.querySelector("#drNote");
+// Factored out of openDayRules() (2026-08-18) so the exact same rows +
+// autosave-per-cell behavior can be mounted either in the Settings modal or
+// as a full-screen onboarding step (renderDayRulesOnboarding) without
+// duplicating the save/rerender wiring.
+function dayRulesRowHtml(rulesByDay, di) {
+  const r = rulesByDay[di] || { rule_kind: "none", rule_value: null };
+  const needsFreeText = r.rule_kind === "cuisine" || r.rule_kind === "dish_style";
+  const fixedValues = r.rule_kind === "protein_type" ? DAY_RULE_PROTEIN_VALUES
+    : r.rule_kind === "diet_suitability" ? DAY_RULE_DIET_VALUES : null;
+  return `<div class="day-block" style="margin-bottom:10px" data-drday="${di}">
+    <div class="day-hd">${dayN(di)}</div>
+    <div style="padding:10px 12px">
+      <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(([k, l, lru]) =>
+        `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${T(l, lru)}</div>`).join("")}</div>
+      ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(v =>
+        `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${v}</div>`).join("")}</div>` : ""}
+      ${needsFreeText ? `<input data-drtext="${di}" value="${r.rule_value || ""}" placeholder="${T("e.g. italian", "например, italian")}"
+        style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">` : ""}
+    </div>
+  </div>`;
+}
+// root must already contain the markup from dayRulesRowHtml() for every day
+// (under #drRows) plus a #drNote element - wires clicks/autosave into it.
+function mountDayRules(root, rulesByDay) {
+  const note = root.querySelector("#drNote");
   const save = async (di, kind, value) => {
     note.textContent = T("Saving...", "Сохранение...");
     const { error } = await sb.rpc("spin_food_day_rules_set", { p_day_of_week: di, p_rule_kind: kind, p_rule_value: value || "" });
@@ -2599,12 +2603,12 @@ function openDayRules() {
     note.style.color = "#059669";
   };
   const rerenderRow = di => {
-    const row = v.querySelector(`[data-drday="${di}"]`);
-    row.outerHTML = rowHtml(di);
+    const row = root.querySelector(`[data-drday="${di}"]`);
+    row.outerHTML = dayRulesRowHtml(rulesByDay, di);
     wireRow(di);
   };
   const wireRow = di => {
-    v.querySelectorAll(`[data-drkind="${di}"] .chip`).forEach(c => c.onclick = () => {
+    root.querySelectorAll(`[data-drkind="${di}"] .chip`).forEach(c => c.onclick = () => {
       const kind = c.dataset.k;
       const r = rulesByDay[di] || {};
       // Switching kind clears the old value - a leftover 'meat' value under a
@@ -2614,14 +2618,14 @@ function openDayRules() {
       rerenderRow(di);
       save(di, kind, value);
     });
-    v.querySelectorAll(`[data-drval="${di}"] .chip`).forEach(c => c.onclick = () => {
+    root.querySelectorAll(`[data-drval="${di}"] .chip`).forEach(c => c.onclick = () => {
       const kind = rulesByDay[di]?.rule_kind || "none";
       const value = c.dataset.v;
       rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value };
       rerenderRow(di);
       save(di, kind, value);
     });
-    const text = v.querySelector(`[data-drtext="${di}"]`);
+    const text = root.querySelector(`[data-drtext="${di}"]`);
     if (text) {
       const commit = () => {
         const kind = rulesByDay[di]?.rule_kind || "none";
@@ -2634,6 +2638,79 @@ function openDayRules() {
     }
   };
   DAYS.forEach((_, di) => wireRow(di));
+}
+function openDayRules() {
+  const rulesByDay = {};
+  (game.dayRules || []).forEach(r => { rulesByDay[r.day_of_week] = r; });
+  const v = modal(`<h3>🗓 ${T("Day Rules", "Правила дня")}</h3>
+    <div style="font-size:13px;color:#666;margin-bottom:10px">${T("Owner-only. The Thursday AI pre-fill tries to follow these, but never at the cost of anyone's allergy safety.", "Только для владельца. ИИ старается следовать этим правилам, но безопасность важнее.")}</div>
+    <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
+    <div id="drNote" style="font-size:12px;color:#999;margin-top:4px;min-height:16px"></div>`);
+  mountDayRules(v, rulesByDay);
+}
+
+// ============================================================
+// Owner setup steps 2 & 3 (SPEC_CLIENT_REFACTOR.md #14 §5B.2): timezone
+// confirmation, then Day Rules. Chained after renderMealShapeOnboarding()'s
+// submit handler - see ownerSetupStep / renderOwnerSetup() above.
+// ============================================================
+function commonTimezones() {
+  try {
+    if (typeof Intl.supportedValuesOf === "function") return Intl.supportedValuesOf("timeZone");
+  } catch (e) { /* fall through to the curated list below */ }
+  return ["Europe/Amsterdam", "Europe/London", "Europe/Berlin", "Europe/Kyiv", "Europe/Moscow",
+    "America/New_York", "America/Chicago", "America/Los_Angeles", "Asia/Dubai", "Asia/Almaty", "Australia/Sydney"];
+}
+function renderTimezoneOnboarding() {
+  let detected = "Europe/Amsterdam";
+  try { detected = Intl.DateTimeFormat().resolvedOptions().timeZone || detected; } catch (e) { /* keep fallback */ }
+  if (!ownerSetupTz) ownerSetupTz = game?.familyTimezone || detected;
+  const zones = commonTimezones();
+  if (!zones.includes(ownerSetupTz)) zones.unshift(ownerSetupTz);
+  app.innerHTML = `<div class="ob">
+    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 2 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 2 ИЗ 3")}</div>
+    <div class="ob-q">🕐 ${T("Confirm your timezone", "Подтверди часовой пояс")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("This is when your family's week actually turns over - it decides when Auto-Fill and Menu Lock fire, and which day counts as \u201ctoday\u201d on the menu.", "Это момент, когда неделя вашей семьи фактически переходит в новую - от этого зависит, когда срабатывают Авто-подбор и Блокировка меню, и какой день считается \u00abсегодня\u00bb в меню.")}</div>
+    <select id="tzSelect" style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+      ${zones.map(z => `<option value="${z}" ${z === ownerSetupTz ? "selected" : ""}>${z}${z === detected ? " " + T("(detected)", "(определён)") : ""}</option>`).join("")}
+    </select>
+    <div id="tzNote" style="font-size:12px;color:#ef4444;margin-top:6px;min-height:16px"></div>
+    <button class="btn btn-primary ob-next" id="tzNext" style="margin-top:16px">${T("Next", "Дальше")}</button>
+  </div>`;
+  document.getElementById("tzSelect").onchange = e => { ownerSetupTz = e.target.value; };
+  document.getElementById("tzNext").onclick = async () => {
+    const btn = document.getElementById("tzNext");
+    const note = document.getElementById("tzNote");
+    btn.disabled = true; btn.textContent = T("Saving...", "Сохраняем...");
+    const { error } = await sb.rpc("spin_food_set_family_timezone", { p_timezone: ownerSetupTz });
+    if (error) {
+      note.textContent = T("Couldn't save: ", "Не удалось сохранить: ") + error.message;
+      btn.disabled = false; btn.textContent = T("Next", "Дальше");
+      return;
+    }
+    ownerSetupStep = "dayrules";
+    renderOwnerSetup();
+  };
+}
+function renderDayRulesOnboarding() {
+  const rulesByDay = {};
+  (game.dayRules || []).forEach(r => { rulesByDay[r.day_of_week] = r; });
+  app.innerHTML = `<div class="ob">
+    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 3 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 3 ИЗ 3")}</div>
+    <div class="ob-q">🗓 ${T("Any day-specific rules?", "Есть правила для конкретных дней?")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-подбор старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
+    <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
+    <div id="drNote" style="font-size:12px;color:#999;margin:4px 0 16px;min-height:16px"></div>
+    <button class="btn btn-primary ob-next" id="drDone">${T("To this week's menu \u2192", "К меню недели \u2192")}</button>
+  </div>`;
+  mountDayRules(app, rulesByDay);
+  document.getElementById("drDone").onclick = async () => {
+    const btn = document.getElementById("drDone");
+    btn.disabled = true; btn.textContent = T("Loading...", "Загрузка...");
+    await pullLatest();
+    toast(T("Kitchen set up \ud83c\udf72", "Кухня настроена \ud83c\udf72"));
+    render();
+  };
 }
 
 // ── onboarding (registration gate - every member passes it once) ──
@@ -2678,6 +2755,18 @@ const DEFAULT_MEAL_SHAPE = {
   "dinner-side_dish": true,
   "dinner-dessert": true,
 };
+// The 3-step owner-only post-founding sequence, per SPEC_CLIENT_REFACTOR.md
+// #14 §5B.2: meal shape -> timezone confirmation -> Day Rules. All three are
+// gated together on game.defaultMealShapes being {} (see render()) - once
+// Day Rules' "done" button pulls a fresh snapshot with a non-empty
+// default_meal_shapes, the gate clears for good and this state is moot.
+let ownerSetupStep = "mealshape"; // "mealshape" | "timezone" | "dayrules"
+let ownerSetupTz = null;
+function renderOwnerSetup() {
+  if (ownerSetupStep === "timezone") return renderTimezoneOnboarding();
+  if (ownerSetupStep === "dayrules") return renderDayRulesOnboarding();
+  return renderMealShapeOnboarding();
+}
 let mealShapeDraft = null;
 function msKey(mealKey, role) { return mealKey + "-" + role; }
 function msCellOn(mealKey, role) { return mealShapeDraft[msKey(mealKey, role)] === true; }
@@ -2707,6 +2796,7 @@ function renderMealShapeOnboarding() {
   if (!mealShapeDraft) mealShapeDraft = { ...DEFAULT_MEAL_SHAPE };
   const anyOn = MEALS.some(m => COURSE_ROLES.some(r => msCellOn(m.k, r)));
   app.innerHTML = `<div class="ob">
+    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 1 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 1 ИЗ 3")}</div>
     <div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша семья ест дома?")}</div>
     <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда обычно входят в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-подбор. Позже это можно изменить в настройках - изменения касаются только будущих недель, а не уже спланированного меню.")}</div>
     <div class="mealgrid">
@@ -2746,9 +2836,8 @@ function renderMealShapeOnboarding() {
     const ok = await applyEvent("meal_shape_edited", { shapes });
     if (ok) {
       mealShapeDraft = null;
-      await pullLatest();
-      toast(T("Kitchen set up \ud83c\udf72", "Кухня настроена \ud83c\udf72"));
-      render();
+      ownerSetupStep = "timezone";
+      renderOwnerSetup();
     } else {
       submit.disabled = false;
       submit.textContent = T("Set up my kitchen \u2192", "Настроить кухню \u2192");
