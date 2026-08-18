@@ -1740,11 +1740,25 @@ async function persist() { /* legacy no-op; game state lives in food.* */ }
 async function commitAndSync(text, eventType, payload) {
   if (text) act(text);
   render();
-  if (!eventType || !activePlanId) return;
+  // 2026-08-18 fix: this used to also gate on `!activePlanId`, silently
+  // dropping every non-plan-scoped event (member_profile_updated,
+  // recipe_added/edited, wish/duel events not tied to a slot) whenever
+  // load()/ensureActivePlan() hadn't set activePlanId yet - e.g. every fresh
+  // onboarding, since the wizard's own commitAndSync call is the very first
+  // one after signup. No RPC ever fired, no toast, no client_diagnostics
+  // breadcrumb (that logger lives inside applyEvent, never reached). The
+  // wizard rendered success locally (game.profiles[me] set before this
+  // call), so a user could "complete" onboarding every single reload and
+  // never actually persist anything server-side. Plan-scoped events already
+  // carry their own plan_id inside the payload via slotPayload() - the
+  // server validates that independently, so this client-side gate was
+  // redundant for them and actively harmful for everything else.
+  if (!eventType) return;
   saving = true;
   const ok = await applyEvent(eventType, payload);
   saving = false;
   if (ok) await pullLatest();
+  return ok;
 }
 function act(text) { game.activity.unshift({ id: rid(), who: me, text, ts: Date.now() }); game.activity = game.activity.slice(0, 30); }
 
@@ -2658,8 +2672,7 @@ function renderOnboard() {
   };
   const done = document.getElementById("obDone");
   if (done) done.onclick = async () => {
-    game.profiles[me] = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
-    cacheProfile(me, game.profiles[me]);
+    const profile = { lang, isCook: ob.isCook, avail: ob.avail, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
     const profilePayload = {
       is_cook: !!ob.isCook,
       // "none" is a client-only sentinel (picking it just clears any other chips -
@@ -2681,10 +2694,23 @@ function renderOnboard() {
       // directly comparable and opens the door to skill/equipment-aware AI-fill).
       cook_profile: { avail: ob.avail || [], cookGrid: ob.cookGrid || {}, techniques: ob.techniques || [], appliances: ob.appliances || [] },
     };
+    // 2026-08-18 fix: don't mark the wizard "done" (clearing `ob`, setting
+    // game.profiles[me]) until the server actually confirms the write. The
+    // previous version did this unconditionally before commitAndSync even
+    // ran, so a dropped save (see the activePlanId gate fix above) still
+    // looked like a completed registration on this device - only to
+    // reappear as onboarding again on the next fresh load once real server
+    // state was checked. See docs/DECISION_LOG.md 2026-08-18 addendum.
+    const ok = await commitAndSync(`${mem(me).en} registered their profile`, "member_profile_updated", profilePayload);
+    if (!ok) {
+      toast(T("Couldn't save your profile - check your connection and try again.", "Не удалось сохранить профиль - проверь соединение и попробуй снова."));
+      return;
+    }
+    game.profiles[me] = profile;
+    cacheProfile(me, profile);
     ob = null; tab = "menu";
-    await commitAndSync(`${mem(me).en} registered their profile`, "member_profile_updated", profilePayload);
-    toast(T("Welcome to the family kitchen 🍲", "Добро пожаловать на семейную кухню 🍲"));
     render();
+    toast(T("Welcome to the family kitchen 🍲", "Добро пожаловать на семейную кухню 🍲"));
   };
 }
 function renderGate() {
