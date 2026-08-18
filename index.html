@@ -64,6 +64,15 @@
   .mealgrid .hd.bulk.dim, .mealgrid .dy.bulk.dim { color: #ccc; }
   .mg-cell { height: 34px; border-radius: 9px; background: #ecfdf5; border: 1.5px solid var(--green); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; touch-action: none; user-select: none; }
   .mg-cell.off { background: #f5f5f4; border-color: #e5e7eb; color: #ccc; }
+  /* Meal x course-role matrix (meal-shape onboarding step) - row labels are
+     full course names ("Первые / Супы"), much longer than the day-name grid's
+     2-3 char abbreviations, so this variant gets a wider label column, a
+     bigger header icon, and slightly smaller cells to compensate. */
+  .mealgrid.roles { grid-template-columns: 94px repeat(3, 1fr); gap: 5px; }
+  .mealgrid.roles .hd { font-size: 22px; padding: 4px 0; }
+  .mealgrid.roles .dy { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; line-height: 1.15; font-size: 11px; padding: 4px 2px; }
+  .mealgrid.roles .dy .ms-row-ic { font-size: 17px; }
+  .mealgrid.roles .mg-cell { height: 28px; }
   .ob-sum { background: #fff; border: 1.5px solid #eee; border-radius: 16px; padding: 14px; font-size: 14px; line-height: 1.7; }
 
   /* top bar */
@@ -2718,7 +2727,7 @@ function timezoneContentHtml() {
   const zones = commonTimezones();
   if (!zones.includes(ownerSetupTz)) zones.unshift(ownerSetupTz);
   return `<div class="ob-q">🕐 ${T("Confirm your timezone", "Подтверди часовой пояс")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("This tells the app when your day starts. It decides when Auto-Fill and Menu Lock happen, and which day is \u201ctoday\u201d on your menu.", "Это нужно, чтобы приложение знало, когда у вас начинается новый день. От этого зависит, когда сработают Авто-подбор и Блокировка меню, и какой день сейчас показан как «сегодня» в меню.")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("This tells the app when your day starts. It decides when Auto-Fill and Menu Lock happen, and which day is \u201ctoday\u201d on your menu.", "Это нужно, чтобы приложение знало, когда у вас начинается новый день. От этого зависит, когда сработают Авто-Меню и Блокировка меню, и какой день сейчас показан как «сегодня» в меню.")}</div>
     <select id="tzSelect" style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
       ${zones.map(z => `<option value="${z}" ${z === ownerSetupTz ? "selected" : ""}>${z}${z === detected ? " " + T("(detected)", "(определён)") : ""}</option>`).join("")}
     </select>
@@ -2774,7 +2783,7 @@ function renderTimezoneOnboarding() {
 }
 function dayRulesOnboardContentHtml(rulesByDay) {
   return `<div class="ob-q">🗓 ${T("Any day-specific rules?", "Есть правила для конкретных дней?")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-подбор старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-Меню старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
     <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
     <div id="drNote" style="font-size:12px;color:#999;margin:4px 0 16px;min-height:16px"></div>`;
 }
@@ -2816,7 +2825,6 @@ function obReset() {
 function obCourseLabel(v) {
   return ({
     appetizer: T("Starters", "Закуски"),
-    cold_starter: T("Cold starters", "Холодные закуски"),
     soup: T("Soups", "Первые / Супы"),
     main_course: T("Main courses", "Основные блюда"),
     side_dish: T("Side dishes", "Гарниры"),
@@ -2835,7 +2843,17 @@ function obCourseLabel(v) {
 // suggest into. Forward-only: editing later (Settings, not built yet) never
 // reshapes meals that already exist.
 // ============================================================
-const COURSE_ROLES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "salad", "dessert", "pickle"];
+// 2026-08-18: cold_starter merged into appetizer ("Starter"/"Закуски" now
+// covers hot AND cold starters, bites, finger food - see docs/CHANGELOG.md
+// and 20260818230000_food_course_role_merge_starter_v1.sql.
+const COURSE_ROLES = ["appetizer", "soup", "main_course", "side_dish", "salad", "dessert", "pickle"];
+// Emoji per course role, shown as the meal-shape matrix's row icon.
+function courseRoleIcon(role) {
+  return ({
+    appetizer: "🥟", soup: "🍲", main_course: "🍛", side_dish: "🥔",
+    salad: "🥗", dessert: "🍰", pickle: "🥒",
+  })[role] || "🍽️";
+}
 // Sprint 2a default (SPEC_CLIENT_REFACTOR.md #14): breakfast = 1 main,
 // lunch = 1 main + 1 salad, dinner = 1 starter + 1 main + 1 side + 1 dessert.
 const DEFAULT_MEAL_SHAPE = {
@@ -2908,16 +2926,18 @@ function refreshMsBulkDims(root) {
 // call site 1) without duplicating the grid logic.
 function mealShapeContentHtml() {
   if (!mealShapeDraft) mealShapeDraft = { ...DEFAULT_MEAL_SHAPE };
-  return `<div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша семья ест дома?")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда обычно входят в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-подбор. Позже это можно изменить в настройках - изменения касаются только будущих недель, а не уже спланированного меню.")}</div>
-    <div class="mealgrid">
+  return `<div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша СЕМЬЯ ест дома?")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда вы готовите в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-Меню. Это можно изменить в Настройках позже.")}</div>
+    <div class="mealgrid roles">
       <div></div>${MEALS.map(m => {
         const allOn = COURSE_ROLES.every(r => msCellOn(m.k, r));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-ms-col="${m.k}" title="${T("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
       }).join("")}
       ${COURSE_ROLES.map(r => {
         const rowAllOn = MEALS.every(m => msCellOn(m.k, r));
-        return `<div class="dy bulk ${rowAllOn ? "" : "dim"}" data-ms-row="${r}" style="font-size:11px;line-height:1.25" title="${T("Toggle all meals", "Переключить все приёмы")} ${obCourseLabel(r)}">${obCourseLabel(r)}</div>`
+        return `<div class="dy bulk ${rowAllOn ? "" : "dim"}" data-ms-row="${r}" title="${T("Toggle all meals", "Переключить все приёмы")} ${obCourseLabel(r)}">
+            <span class="ms-row-ic">${courseRoleIcon(r)}</span><span>${obCourseLabel(r)}</span>
+          </div>`
           + MEALS.map(m => {
             const k = msKey(m.k, r), on = msCellOn(m.k, r);
             return `<div class="mg-cell ${on ? "" : "off"}" data-ms="${k}">${on ? "✓" : ""}</div>`;
@@ -3167,8 +3187,8 @@ function renderOnboard() {
       <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
       <button class="btn btn-primary ob-next" id="obNext" style="margin-top:8px${ob.allergies.length ? "" : ";opacity:.4"}" ${ob.allergies.length ? "" : "disabled"}>${t("Next", "Дальше")}</button>`;
   } else if (cur === "eat") {
-    inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ешь дома?")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap or drag across cells. Tap a day or meal icon for a whole row or column.", "Какие приёмы пищи ты дома? Нажми или проведи по ячейкам. Нажми на день или иконку приёма — для всей строки или столбца.")}</div>
+    inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ЛИЧНО ешь дома?")}</div>
+      <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap or drag across cells. Tap a day or meal icon for a whole row or column.", "Какие приёмы пищи ты обычно ешь дома? Нажми или проведи по ячейкам чтоб выбрать. Нажми на день или иконку чтоб изменить всю строку или столбец целиком.")}</div>
       <div class="mealgrid"><div></div>${MEALS.map((m, mi) => {
         const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-eat-col="${mi}" title="${t("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
@@ -3750,7 +3770,7 @@ let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
 
 const DISH_ROLES = ["main", "side", "component"];
-const COURSE_CATEGORIES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "pickle", "salad", "dessert"];
+const COURSE_CATEGORIES = ["appetizer", "soup", "main_course", "side_dish", "pickle", "salad", "dessert"];
 // Must match food.techniques (20260801120000_food_ontology_v1.sql) exactly - this is a
 // vocabulary-validation trigger on the server, not a client-side convenience list.
 // Trimmed + reordered per 2026-08-18 taxonomy review (docs/CHANGELOG.md):
@@ -3782,7 +3802,7 @@ function dishRoleLabel(v) {
 }
 function courseLabel(v) {
   return ({
-    appetizer: T("Appetizer", "Закуска"), cold_starter: T("Cold starter", "Холодная закуска"),
+    appetizer: T("Starter", "Закуска"),
     soup: T("Soup", "Первое"), main_course: T("Main course", "Основное блюдо"),
     side_dish: T("Side dish", "Гарнир"), pickle: T("Pickle / Preserve", "Соленья"),
     salad: T("Salad", "Салат"), dessert: T("Dessert", "Десерт"),
