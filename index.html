@@ -2688,10 +2688,28 @@ function dayRulesRowHtml(rulesByDay, di) {
 // (under #drRows) plus a #drNote element - wires clicks/autosave into it.
 function mountDayRules(root, rulesByDay) {
   const note = root.querySelector("#drNote");
+  // 2026-08-19 fix: a Postgres error from a prior save (e.g. the
+  // now-fixed premature-save bug below) painted this note red via
+  // note.style.color, and nothing ever reset it back - so a *later*,
+  // fully successful "Saving..." could still render in red, looking like
+  // a fresh failure. Every save attempt now starts by clearing the color.
   const save = async (di, kind, value) => {
-    note.textContent = T("Saving...", "Сохранение...");
-    const { error } = await sb.rpc("spin_food_day_rules_set", { p_day_of_week: di, p_rule_kind: kind, p_rule_value: value || "" });
-    if (error) { note.textContent = T("Failed: ", "Ошибка: ") + error.message; note.style.color = "#ef4444"; return; }
+    note.style.color = ""; note.textContent = T("Saving...", "Сохранение...");
+    try {
+      const { error } = await withTimeout(
+        sb.rpc("spin_food_day_rules_set", { p_day_of_week: di, p_rule_kind: kind, p_rule_value: value || "" }),
+        15000,
+        "Day rule save"
+      );
+      if (error) {
+        logClientDiagnostic("day_rules_set_error", { message: error?.message || String(error), kind, value });
+        note.textContent = T("Failed: ", "Ошибка: ") + error.message; note.style.color = "#ef4444"; return;
+      }
+    } catch (e) {
+      logClientDiagnostic("day_rules_set_exception", { message: e?.message || String(e), stack: e?.stack || null, kind, value });
+      note.textContent = T("Something went wrong - check your connection and try again.", "Что-то пошло не так - проверь соединение и попробуй снова.");
+      note.style.color = "#ef4444"; return;
+    }
     rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value || null };
     game.dayRules = Object.values(rulesByDay);
     note.textContent = "✓ " + T("Saved", "Сохранено");
@@ -2711,7 +2729,14 @@ function mountDayRules(root, rulesByDay) {
       const value = kind === "none" ? null : (kind === r.rule_kind ? r.rule_value : null);
       rulesByDay[di] = { day_of_week: di, rule_kind: kind, rule_value: value };
       rerenderRow(di);
-      save(di, kind, value);
+      // 2026-08-19 fix: kinds other than 'none' require a non-null value
+      // (rule_value_contract), but the user hasn't picked one yet the very
+      // first time they switch to protein_type/diet_suitability/cuisine on
+      // a day - saving here with value=null always failed server-side
+      // (silently, save() only surfaces it as a red note). Wait for the
+      // value/cuisine picker click instead; 'none' has no value to wait
+      // for, so it still saves immediately.
+      if (kind === "none" || value !== null) save(di, kind, value);
     });
     root.querySelectorAll(`[data-drval="${di}"] .chip`).forEach(c => c.onclick = () => {
       const kind = rulesByDay[di]?.rule_kind || "none";
@@ -2845,6 +2870,12 @@ function renderDayRulesOnboarding() {
     render();
   };
 }
+
+// Shown on the final "Profile ready!" onboarding screen in place of the old
+// stats summary (user feedback, 2026-08-19: "instead of these useless stats
+// let's throw in there a very funny gif that has kitchen / cooking and
+// celebration fun in it").
+const CELEBRATION_GIF_URL = "https://media.giphy.com/media/xT8qB1hXpFlJ6MOE3S/giphy.gif";
 
 // ── onboarding (registration gate - every member passes it once) ──
 let ob = null;
@@ -3285,15 +3316,13 @@ function renderOnboard() {
     inner = `${dayRulesOnboardContentHtml(obDayRulesByDay)}
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else {
-    inner = `<div class="ob-q">🎉 ${t("Profile ready!", "Профиль готов!")}</div>
-      <div class="ob-sum">
-        ${ob.isCook ? `👨‍🍳 ${t("Cook", "Повар")}: ${ob.avail.map(k => MEALS.find(m => m.k === k).ic).join(" ")}<br>
-        🍽️ ${t("Courses", "Блюда")}: ${ob.courses.length ? ob.courses.length : t("none picked", "не выбрано")}<br>
-        🔧 ${t("Techniques", "Техники")}: ${ob.techniques.length ? ob.techniques.length : t("none picked", "не выбрано")}<br>
-        🍳 ${t("Appliances", "Техника на кухне")}: ${ob.appliances.length ? ob.appliances.length : t("none picked", "не выбрано")}<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
-        ⚠️ ${ob.allergies.length ? ob.allergies.join(", ") : t("no allergies", "без аллергий")}
-        ${ob.needsOwnerSetup ? `<br>🍽️ ${t("Kitchen set up", "Кухня настроена")}` : ""}
+    inner = `<div class="ob-q">🎉 ${ob.needsOwnerSetup
+        ? t("Your kitchen is set up! Profile ready!", "Твоя кухня настроена! Профиль готов!")
+        : t("Profile ready!", "Профиль готов!")}</div>
+      <div style="display:flex;justify-content:center;margin:14px 0 20px">
+        <img src="${CELEBRATION_GIF_URL}" alt="" style="width:min(80vw,340px);height:min(80vw,340px);object-fit:cover;border-radius:50%;box-shadow:0 10px 28px rgba(0,0,0,.18)">
       </div>
+      ${membership?.is_owner ? `<button class="btn btn-primary" id="obInviteFamily" style="width:100%;margin-bottom:10px">👥 ${t("Invite family members", "Пригласить членов семьи")}</button>` : ""}
       <button class="btn btn-primary ob-next" id="obDone">${t("To this week's menu →", "К меню недели →")}</button>`;
   }
   app.innerHTML = `<div class="ob">${nav}${inner}</div>`;
@@ -3419,6 +3448,8 @@ function renderOnboard() {
     }
     ob.step++; render();
   };
+  const inviteFamily = document.getElementById("obInviteFamily");
+  if (inviteFamily) inviteFamily.onclick = () => openInviteFlow();
   const done = document.getElementById("obDone");
   if (done) done.onclick = async () => {
     const profile = { lang, isCook: ob.isCook, avail: ob.avail, courses: ob.courses, cookGrid: ob.cookGrid, techniques: ob.techniques, appliances: ob.appliances, top3: ob.top3, allergies: ob.allergies, eatGrid: ob.eatGrid, registeredAt: Date.now() };
