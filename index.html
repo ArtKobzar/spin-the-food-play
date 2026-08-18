@@ -1018,6 +1018,9 @@ function snapshotToGame(snap) {
     profiles,
     // SPEC_AI_PREFILL.md #7/#14: [{day_of_week, rule_kind, rule_value}], owner-editable.
     dayRules: snap.day_rules || [],
+    // SPEC_MEAL_GRAIN.md Q_G5: owner-only, once-per-family course-per-meal
+    // template. {} means "never configured" - gates renderMealShapeOnboard().
+    defaultMealShapes: snap.family_settings?.default_meal_shapes || {},
   };
 }
 
@@ -1944,6 +1947,10 @@ function render() {
     return;
   }
   if (!game.profiles[me]) return renderOnboard();
+  // Q_G5: owner-only, once per family, before the first Menu open. Non-owner
+  // members are never gated on this - they just ride the server-side
+  // fallback (food.default_meal_shapes_for_family) until the owner sets it.
+  if (membership.is_owner && Object.keys(game.defaultMealShapes || {}).length === 0) return renderMealShapeOnboarding();
   app.innerHTML = topbar() + ({ menu: renderMenu, spin: renderSpin, wish: renderWish, duel: renderDuel, feed: renderFeed }[tab])() + nav();
   wire();
 }
@@ -2649,6 +2656,105 @@ function obCourseLabel(v) {
     pickle: T("Pickles & preserves", "Соленья"),
   })[v] || v;
 }
+
+// ============================================================
+// Owner-only "meal shape" onboarding step (SPEC_MEAL_GRAIN.md Q_G5).
+// Once per family, gated in render() on game.defaultMealShapes being {}.
+// Writes food.families.default_meal_shapes via the meal_shape_edited event
+// - every new week's meals fan out into exactly these course-role dish
+// slots (spin_food_create_plan), so this is also what Auto-Fill can ever
+// suggest into. Forward-only: editing later (Settings, not built yet) never
+// reshapes meals that already exist.
+// ============================================================
+const COURSE_ROLES = ["appetizer", "cold_starter", "soup", "main_course", "side_dish", "salad", "dessert", "pickle"];
+// Sprint 2a default (SPEC_CLIENT_REFACTOR.md #14): breakfast = 1 main,
+// lunch = 1 main + 1 salad, dinner = 1 starter + 1 main + 1 side + 1 dessert.
+const DEFAULT_MEAL_SHAPE = {
+  "breakfast-main_course": true,
+  "lunch-main_course": true,
+  "lunch-salad": true,
+  "dinner-appetizer": true,
+  "dinner-main_course": true,
+  "dinner-side_dish": true,
+  "dinner-dessert": true,
+};
+let mealShapeDraft = null;
+function msKey(mealKey, role) { return mealKey + "-" + role; }
+function msCellOn(mealKey, role) { return mealShapeDraft[msKey(mealKey, role)] === true; }
+function msSetCell(mealKey, role, on) {
+  const k = msKey(mealKey, role);
+  if (on) mealShapeDraft[k] = true; else delete mealShapeDraft[k];
+}
+function msToggleRow(role) {
+  const allOn = MEALS.every(m => msCellOn(m.k, role));
+  MEALS.forEach(m => msSetCell(m.k, role, !allOn));
+}
+function msToggleCol(mealKey) {
+  const allOn = COURSE_ROLES.every(r => msCellOn(mealKey, r));
+  COURSE_ROLES.forEach(r => msSetCell(mealKey, r, !allOn));
+}
+function refreshMsBulkDims(root) {
+  root.querySelectorAll("[data-ms-col]").forEach(h => {
+    const allOn = COURSE_ROLES.every(r => msCellOn(h.dataset.msCol, r));
+    h.classList.toggle("dim", !allOn);
+  });
+  root.querySelectorAll("[data-ms-row]").forEach(h => {
+    const allOn = MEALS.every(m => msCellOn(m.k, h.dataset.msRow));
+    h.classList.toggle("dim", !allOn);
+  });
+}
+function renderMealShapeOnboarding() {
+  if (!mealShapeDraft) mealShapeDraft = { ...DEFAULT_MEAL_SHAPE };
+  const anyOn = MEALS.some(m => COURSE_ROLES.some(r => msCellOn(m.k, r)));
+  app.innerHTML = `<div class="ob">
+    <div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша семья ест дома?")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда обычно входят в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-подбор. Позже это можно изменить в настройках - изменения касаются только будущих недель, а не уже спланированного меню.")}</div>
+    <div class="mealgrid">
+      <div></div>${MEALS.map(m => {
+        const allOn = COURSE_ROLES.every(r => msCellOn(m.k, r));
+        return `<div class="hd bulk ${allOn ? "" : "dim"}" data-ms-col="${m.k}" title="${T("Toggle all", "Переключить все")} ${mealN(m)}">${m.ic}</div>`;
+      }).join("")}
+      ${COURSE_ROLES.map(r => {
+        const rowAllOn = MEALS.every(m => msCellOn(m.k, r));
+        return `<div class="dy bulk ${rowAllOn ? "" : "dim"}" data-ms-row="${r}" style="font-size:11px;line-height:1.25" title="${T("Toggle all meals", "Переключить все приёмы")} ${obCourseLabel(r)}">${obCourseLabel(r)}</div>`
+          + MEALS.map(m => {
+            const k = msKey(m.k, r), on = msCellOn(m.k, r);
+            return `<div class="mg-cell ${on ? "" : "off"}" data-ms="${k}">${on ? "✓" : ""}</div>`;
+          }).join("");
+      }).join("")}
+    </div>
+    <button class="btn btn-primary ob-next" id="msSubmit" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${T("Set up my kitchen \u2192", "Настроить кухню \u2192")}</button>
+  </div>`;
+
+  document.querySelectorAll("[data-ms-row]").forEach(b => b.onclick = () => { msToggleRow(b.dataset.msRow); render(); });
+  document.querySelectorAll("[data-ms-col]").forEach(b => b.onclick = () => { msToggleCol(b.dataset.msCol); render(); });
+  const grid = app.querySelector(".mealgrid");
+  if (grid) wireObGridPaint(grid, {
+    cellSelector: "[data-ms]",
+    getKey: el => el.dataset.ms,
+    isOn: key => mealShapeDraft[key] === true,
+    setOn: (key, on) => { if (on) mealShapeDraft[key] = true; else delete mealShapeDraft[key]; },
+    refreshCell: (el, on) => { el.classList.toggle("off", !on); el.textContent = on ? "✓" : ""; },
+    onEnd: () => refreshMsBulkDims(grid),
+  });
+  const submit = document.getElementById("msSubmit");
+  if (submit) submit.onclick = async () => {
+    if (submit.disabled) return;
+    submit.disabled = true; submit.textContent = T("Saving...", "Сохраняем...");
+    const shapes = {};
+    for (const m of MEALS) shapes[m.k] = { roles: COURSE_ROLES.filter(r => msCellOn(m.k, r)) };
+    const ok = await applyEvent("meal_shape_edited", { shapes });
+    if (ok) {
+      mealShapeDraft = null;
+      await pullLatest();
+      toast(T("Kitchen set up \ud83c\udf72", "Кухня настроена \ud83c\udf72"));
+      render();
+    } else {
+      submit.disabled = false;
+      submit.textContent = T("Set up my kitchen \u2192", "Настроить кухню \u2192");
+    }
+  };
+}
 // Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
 // declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
 const OB_ALG = [
@@ -2761,7 +2867,7 @@ function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell,
     cell.addEventListener("lostpointercapture", end);
   });
 }
-function obSteps() { return ob.isCook === false ? ["cookq","eat","done"] : ["cookq","avail","cookweek","kit","top3","eat","done"]; }
+function obSteps() { return ob.isCook === false ? ["cookq","allergies","eat","done"] : ["cookq","avail","cookweek","kit","top3","allergies","eat","done"]; }
 function renderOnboard() {
   if (!ob) obReset();
   const t = T; // language already chosen at the very first screen; carries through
@@ -2823,10 +2929,12 @@ function renderOnboard() {
       <textarea class="ob-text" id="obTop3" placeholder="${t("e.g. plov, borscht, syrniki...", "например: плов, борщ, сырники...")}">${ob.top3}</textarea>
       <div class="ob-note">${t("Dishes you name here get your 👑 crown on the menu.", "Названные блюда получат твою корону 👑 в меню.")}</div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
+  } else if (cur === "allergies") {
+    inner = `<div class="ob-q">${t("Allergies?", "Аллергии?")}</div>
+      <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
+      <button class="btn btn-primary ob-next" id="obNext" style="margin-top:8px${ob.allergies.length ? "" : ";opacity:.4"}" ${ob.allergies.length ? "" : "disabled"}>${t("Next", "Дальше")}</button>`;
   } else if (cur === "eat") {
     inner = `<div class="ob-q">${t("How do you eat at home?", "Как ты ешь дома?")}</div>
-      <div class="ob-note" style="padding:0 0 6px">${t("Allergies?", "Аллергии?")}</div>
-      <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${t(en, ru)}</div>`).join("")}</div>
       <div class="ob-note" style="padding:0 0 6px">${t("Which meals are you home for? Tap or drag across cells. Tap a day or meal icon for a whole row or column.", "Какие приёмы пищи ты дома? Нажми или проведи по ячейкам. Нажми на день или иконку приёма — для всей строки или столбца.")}</div>
       <div class="mealgrid"><div></div>${MEALS.map((m, mi) => {
         const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
