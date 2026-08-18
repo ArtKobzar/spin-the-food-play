@@ -507,6 +507,20 @@ function needsDeviceLangGate() {
   return !stfGet("stf_lang") && !lang;
 }
 
+// Timezone confirmation moved to right after sign-in (user feedback,
+// 2026-08-18) - previously the 2nd of 3 owner-only steps buried deep inside
+// the per-member wizard, well after household creation. Deliberately placed
+// post-auth rather than alongside the language gate: a pre-auth choice can't
+// reliably survive the magic-link round trip if the link opens in a
+// different browser/webview than the one that picked it. There is no family
+// yet at this point, so the choice is only cached on-device here; it gets
+// applied server-side the moment a new family is actually created (see
+// renderCreateHouseholdOnboarding's create handler). Runs once per device,
+// same pattern as stf_lang.
+function needsDeviceTzGate() {
+  return !stfGet("stf_tz_confirmed");
+}
+
 function needsOnboardLangGate(memberId) {
   return memberId && !stfGet(onboardLangKey(memberId));
 }
@@ -1917,6 +1931,13 @@ function render() {
   // 2. Auth gate.
   if (!authSession) return renderSignInGate();
 
+  // 2.5. Timezone, right after auth succeeds (user feedback, 2026-08-18 - a
+  // pre-auth placement can't reliably survive the magic-link round trip if
+  // the link opens in a different browser/webview than the one that picked
+  // the timezone; moved here instead of buried deep in the owner-only
+  // wizard). Cached on-device only; applied server-side at family creation.
+  if (needsDeviceTzGate()) return renderTzGate();
+
   // 3. Invitation / membership onboarding.
   if (!membership) return renderInvitationOnboarding();
 
@@ -1966,6 +1987,21 @@ function renderLangGate() {
     <button type="button" class="who-btn" onclick="stfPickLang('en')"><span class="em">🇬🇧</span><span>English</span></button>
     <button type="button" class="who-btn" onclick="stfPickLang('ru')"><span class="em">🇷🇺</span><span>Русский</span></button>
   </div>`;
+}
+
+// Timezone gate - device-level, right after sign-in succeeds. Reuses the
+// same content/wiring as the owner-only in-wizard step (timezoneContentHtml/
+// wireTimezoneSelect) since it's the identical question, just asked earlier.
+function renderTzGate() {
+  app.innerHTML = `<div class="ob">${timezoneContentHtml()}
+    <button class="btn btn-primary ob-next" id="tzGateNext" style="margin-top:16px">${T("Continue", "Продолжить")}</button>
+  </div>`;
+  wireTimezoneSelect();
+  document.getElementById("tzGateNext").onclick = () => {
+    stfSet("stf_tz_confirmed", "1");
+    stfSet("stf_pending_tz", ownerSetupTz);
+    render();
+  };
 }
 
 // ── auth screens (Week 1) ─────────────────────────────────────────
@@ -2404,6 +2440,16 @@ function renderCreateHouseholdOnboarding(preset = null) {
       await refreshMembership();
       if (me === null) me = membership.member_id;
       if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
+      // Apply the timezone confirmed at the pre-auth device gate (see
+      // needsDeviceTzGate/renderTzGate) now that a family finally exists to
+      // attach it to. Best-effort: a failure here shouldn't block the whole
+      // signup - the family just keeps the Europe/Amsterdam default and can
+      // be corrected later (renderOwnerSetup's standalone timezone step).
+      const pendingTz = stfGet("stf_pending_tz");
+      if (pendingTz) {
+        try { await sb.rpc("spin_food_set_family_timezone", { p_timezone: pendingTz }); }
+        catch (tzErr) { logClientDiagnostic("pending_tz_apply_exception", { message: tzErr?.message || String(tzErr) }); }
+      }
       joinPresence();
       await load();
       subscribe();
@@ -3042,7 +3088,9 @@ function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell,
 }
 function obSteps() {
   const base = ob.isCook === false ? ["cookq", "allergies", "eat"] : ["cookq", "avail", "cookweek", "kit", "allergies", "eat"];
-  const ownerSteps = ob.needsOwnerSetup ? ["mealshape", "timezone", "dayrules"] : [];
+  // Timezone confirmation was moved to the pre-auth device gate (2026-08-18)
+  // - only mealshape + Day Rules remain inline here.
+  const ownerSteps = ob.needsOwnerSetup ? ["mealshape", "dayrules"] : [];
   // "Top-3 dishes" moved to the very last input step, right before the
   // celebration screen (user feedback, 2026-08-18) - was previously
   // sandwiched between "kit" and "allergies".
@@ -3131,7 +3179,7 @@ function renderOnboard() {
             }).join("");
         }).join("")}
       </div>
-      <button class="btn btn-primary ob-next" id="obNext">${t("Submit", "Отправить")}</button>`;
+      <button class="btn btn-primary ob-next" id="obNext">${t("Continue", "Продолжить")}</button>`;
   } else if (cur === "mealshape") {
     const anyOn = mealShapeAnyOn();
     inner = `${mealShapeContentHtml()}
