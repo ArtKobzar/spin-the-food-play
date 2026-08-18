@@ -2661,46 +2661,65 @@ function commonTimezones() {
   return ["Europe/Amsterdam", "Europe/London", "Europe/Berlin", "Europe/Kyiv", "Europe/Moscow",
     "America/New_York", "America/Chicago", "America/Los_Angeles", "Asia/Dubai", "Asia/Almaty", "Australia/Sydney"];
 }
-function renderTimezoneOnboarding() {
+function timezoneDetected() {
   let detected = "Europe/Amsterdam";
   try { detected = Intl.DateTimeFormat().resolvedOptions().timeZone || detected; } catch (e) { /* keep fallback */ }
+  return detected;
+}
+function timezoneContentHtml() {
+  const detected = timezoneDetected();
   if (!ownerSetupTz) ownerSetupTz = game?.familyTimezone || detected;
   const zones = commonTimezones();
   if (!zones.includes(ownerSetupTz)) zones.unshift(ownerSetupTz);
-  app.innerHTML = `<div class="ob">
-    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 2 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 2 ИЗ 3")}</div>
-    <div class="ob-q">🕐 ${T("Confirm your timezone", "Подтверди часовой пояс")}</div>
+  return `<div class="ob-q">🕐 ${T("Confirm your timezone", "Подтверди часовой пояс")}</div>
     <div class="ob-note" style="padding:0 0 12px">${T("This is when your family's week actually turns over - it decides when Auto-Fill and Menu Lock fire, and which day counts as \u201ctoday\u201d on the menu.", "Это момент, когда неделя вашей семьи фактически переходит в новую - от этого зависит, когда срабатывают Авто-подбор и Блокировка меню, и какой день считается \u00abсегодня\u00bb в меню.")}</div>
     <select id="tzSelect" style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
       ${zones.map(z => `<option value="${z}" ${z === ownerSetupTz ? "selected" : ""}>${z}${z === detected ? " " + T("(detected)", "(определён)") : ""}</option>`).join("")}
     </select>
-    <div id="tzNote" style="font-size:12px;color:#ef4444;margin-top:6px;min-height:16px"></div>
+    <div id="tzNote" style="font-size:12px;color:#ef4444;margin-top:6px;min-height:16px"></div>`;
+}
+function wireTimezoneSelect() {
+  document.getElementById("tzSelect").onchange = e => { ownerSetupTz = e.target.value; };
+}
+// Saves via spin_food_set_family_timezone, then calls onOk() - shared by
+// both the standalone screen (advances to Day Rules) and the inline wizard
+// step (just ob.step++; render()).
+async function saveTimezoneAndThen(btnId, onOk) {
+  const btn = document.getElementById(btnId);
+  const note = document.getElementById("tzNote");
+  btn.disabled = true; btn.textContent = T("Saving...", "Сохраняем...");
+  const { error } = await sb.rpc("spin_food_set_family_timezone", { p_timezone: ownerSetupTz });
+  if (error) {
+    note.textContent = T("Couldn't save: ", "Не удалось сохранить: ") + error.message;
+    btn.disabled = false; btn.textContent = T("Next", "Дальше");
+    return;
+  }
+  onOk();
+}
+function renderTimezoneOnboarding() {
+  app.innerHTML = `<div class="ob">
+    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 2 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 2 ИЗ 3")}</div>
+    ${timezoneContentHtml()}
     <button class="btn btn-primary ob-next" id="tzNext" style="margin-top:16px">${T("Next", "Дальше")}</button>
   </div>`;
-  document.getElementById("tzSelect").onchange = e => { ownerSetupTz = e.target.value; };
-  document.getElementById("tzNext").onclick = async () => {
-    const btn = document.getElementById("tzNext");
-    const note = document.getElementById("tzNote");
-    btn.disabled = true; btn.textContent = T("Saving...", "Сохраняем...");
-    const { error } = await sb.rpc("spin_food_set_family_timezone", { p_timezone: ownerSetupTz });
-    if (error) {
-      note.textContent = T("Couldn't save: ", "Не удалось сохранить: ") + error.message;
-      btn.disabled = false; btn.textContent = T("Next", "Дальше");
-      return;
-    }
+  wireTimezoneSelect();
+  document.getElementById("tzNext").onclick = () => saveTimezoneAndThen("tzNext", () => {
     ownerSetupStep = "dayrules";
     renderOwnerSetup();
-  };
+  });
+}
+function dayRulesOnboardContentHtml(rulesByDay) {
+  return `<div class="ob-q">🗓 ${T("Any day-specific rules?", "Есть правила для конкретных дней?")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-подбор старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
+    <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
+    <div id="drNote" style="font-size:12px;color:#999;margin:4px 0 16px;min-height:16px"></div>`;
 }
 function renderDayRulesOnboarding() {
   const rulesByDay = {};
   (game.dayRules || []).forEach(r => { rulesByDay[r.day_of_week] = r; });
   app.innerHTML = `<div class="ob">
     <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 3 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 3 ИЗ 3")}</div>
-    <div class="ob-q">🗓 ${T("Any day-specific rules?", "Есть правила для конкретных дней?")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("Optional. Auto-Fill tries to follow these for AI-suggested meals - e.g. a meat-free day or an Italian night. Never overrides anyone's allergies. Change or skip this any time in Settings.", "Необязательно. Авто-подбор старается следовать этим правилам при ИИ-предложениях - например, день без мяса или итальянский вечер. Никогда не нарушает чьи-то аллергии. Изменить или пропустить можно в любой момент в настройках.")}</div>
-    <div id="drRows">${DAYS.map((_, di) => dayRulesRowHtml(rulesByDay, di)).join("")}</div>
-    <div id="drNote" style="font-size:12px;color:#999;margin:4px 0 16px;min-height:16px"></div>
+    ${dayRulesOnboardContentHtml(rulesByDay)}
     <button class="btn btn-primary ob-next" id="drDone">${T("To this week's menu \u2192", "К меню недели \u2192")}</button>
   </div>`;
   mountDayRules(app, rulesByDay);
@@ -2715,7 +2734,16 @@ function renderDayRulesOnboarding() {
 
 // ── onboarding (registration gate - every member passes it once) ──
 let ob = null;
-function obReset() { ob = { step: 0, isCook: null, avail: [], courses: [], cookGrid: {}, techniques: [], appliances: [], top3: "", allergies: [], eatGrid: {} }; }
+function obReset() {
+  ob = {
+    step: 0, isCook: null, avail: [], courses: [], cookGrid: {}, techniques: [], appliances: [], top3: "", allergies: [], eatGrid: {},
+    // Cached once at reset time, not recomputed per obSteps() call - see
+    // needsOwnerSetup()'s comment for why this must stay fixed for the
+    // whole wizard even after the meal-shape step's own submit flips the
+    // live value to false.
+    needsOwnerSetup: needsOwnerSetup(),
+  };
+}
 
 // Plural, onboarding-only labels for food.course_role/course_category
 // (shared vocabulary with courseLabel(), which stays singular for recipe
@@ -2760,7 +2788,25 @@ const DEFAULT_MEAL_SHAPE = {
 // gated together on game.defaultMealShapes being {} (see render()) - once
 // Day Rules' "done" button pulls a fresh snapshot with a non-empty
 // default_meal_shapes, the gate clears for good and this state is moot.
-let ownerSetupStep = "mealshape"; // "mealshape" | "timezone" | "dayrules"
+// Whether the current owner still needs to run through kitchen setup
+// (meal shape -> timezone -> Day Rules). Two call sites read this:
+//  1. obReset() caches it once as ob.needsOwnerSetup, so obSteps() can
+//     append the 3 steps *inside* the per-member wizard, before "done" -
+//     for an owner onboarding for the first time. Caching at reset time
+//     (rather than recomputing live) matters: submitting the meal-shape
+//     step itself is what flips this to false, and obSteps() must not
+//     shrink mid-flow and skip the timezone/Day Rules steps that follow.
+//  2. render()'s top-level gate calls it live, for an owner who already has
+//     a saved profile from before this feature existed - they get the same
+//     3 steps as a standalone flow (renderOwnerSetup()) instead of being
+//     forced to redo their entire member profile.
+// (User feedback, 2026-08-18: showing kitchen setup *after* the "Profile
+// ready!" celebration made that celebration a lie - setup wasn't actually
+// finished. Fixed by inserting the steps into the same wizard instead.)
+function needsOwnerSetup() {
+  return Boolean(membership?.is_owner) && Object.keys(game?.defaultMealShapes || {}).length === 0;
+}
+let ownerSetupStep = "mealshape"; // "mealshape" | "timezone" | "dayrules" - standalone flow only (call site 2)
 let ownerSetupTz = null;
 function renderOwnerSetup() {
   if (ownerSetupStep === "timezone") return renderTimezoneOnboarding();
@@ -2792,12 +2838,13 @@ function refreshMsBulkDims(root) {
     h.classList.toggle("dim", !allOn);
   });
 }
-function renderMealShapeOnboarding() {
+// Content + wiring factored out so the exact same markup/behavior mounts
+// either standalone (renderMealShapeOnboarding, call site 2) or inline as a
+// step inside the per-member wizard (renderOnboard()'s cur === "mealshape",
+// call site 1) without duplicating the grid logic.
+function mealShapeContentHtml() {
   if (!mealShapeDraft) mealShapeDraft = { ...DEFAULT_MEAL_SHAPE };
-  const anyOn = MEALS.some(m => COURSE_ROLES.some(r => msCellOn(m.k, r)));
-  app.innerHTML = `<div class="ob">
-    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 1 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 1 ИЗ 3")}</div>
-    <div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша семья ест дома?")}</div>
+  return `<div class="ob-q">🍽️ ${T("How does your household eat?", "Как ваша семья ест дома?")}</div>
     <div class="ob-note" style="padding:0 0 12px">${T("Pick which courses each meal normally includes. This shapes every new week's menu - it decides how many dish slots each meal gets, and which of those slots Auto-Fill is ever allowed to suggest into. You (or your chef) can change this later in Settings - changes only apply to future weeks, never to menus you've already planned.", "Выбери, какие блюда обычно входят в каждый приём пищи. От этого зависит меню каждой новой недели - сколько блюд будет в каждом приёме и какие из них сможет заполнить Авто-подбор. Позже это можно изменить в настройках - изменения касаются только будущих недель, а не уже спланированного меню.")}</div>
     <div class="mealgrid">
       <div></div>${MEALS.map(m => {
@@ -2812,10 +2859,15 @@ function renderMealShapeOnboarding() {
             return `<div class="mg-cell ${on ? "" : "off"}" data-ms="${k}">${on ? "✓" : ""}</div>`;
           }).join("");
       }).join("")}
-    </div>
-    <button class="btn btn-primary ob-next" id="msSubmit" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${T("Set up my kitchen \u2192", "Настроить кухню \u2192")}</button>
-  </div>`;
-
+    </div>`;
+}
+function mealShapeAnyOn() { return MEALS.some(m => COURSE_ROLES.some(r => msCellOn(m.k, r))); }
+function mealShapeToShapes() {
+  const shapes = {};
+  for (const m of MEALS) shapes[m.k] = { roles: COURSE_ROLES.filter(r => msCellOn(m.k, r)) };
+  return shapes;
+}
+function wireMealShapeGrid() {
   document.querySelectorAll("[data-ms-row]").forEach(b => b.onclick = () => { msToggleRow(b.dataset.msRow); render(); });
   document.querySelectorAll("[data-ms-col]").forEach(b => b.onclick = () => { msToggleCol(b.dataset.msCol); render(); });
   const grid = app.querySelector(".mealgrid");
@@ -2827,13 +2879,20 @@ function renderMealShapeOnboarding() {
     refreshCell: (el, on) => { el.classList.toggle("off", !on); el.textContent = on ? "✓" : ""; },
     onEnd: () => refreshMsBulkDims(grid),
   });
+}
+function renderMealShapeOnboarding() {
+  const anyOn = mealShapeAnyOn();
+  app.innerHTML = `<div class="ob">
+    <div style="font-size:11px;color:#aaa;margin-bottom:4px;font-weight:700;letter-spacing:.03em">${T("KITCHEN SETUP · STEP 1 OF 3", "НАСТРОЙКА КУХНИ · ШАГ 1 ИЗ 3")}</div>
+    ${mealShapeContentHtml()}
+    <button class="btn btn-primary ob-next" id="msSubmit" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${T("Set up my kitchen \u2192", "Настроить кухню \u2192")}</button>
+  </div>`;
+  wireMealShapeGrid();
   const submit = document.getElementById("msSubmit");
   if (submit) submit.onclick = async () => {
     if (submit.disabled) return;
     submit.disabled = true; submit.textContent = T("Saving...", "Сохраняем...");
-    const shapes = {};
-    for (const m of MEALS) shapes[m.k] = { roles: COURSE_ROLES.filter(r => msCellOn(m.k, r)) };
-    const ok = await applyEvent("meal_shape_edited", { shapes });
+    const ok = await applyEvent("meal_shape_edited", { shapes: mealShapeToShapes() });
     if (ok) {
       mealShapeDraft = null;
       ownerSetupStep = "timezone";
@@ -2956,7 +3015,11 @@ function wireObGridPaint(root, { cellSelector, getKey, isOn, setOn, refreshCell,
     cell.addEventListener("lostpointercapture", end);
   });
 }
-function obSteps() { return ob.isCook === false ? ["cookq","allergies","eat","done"] : ["cookq","avail","cookweek","kit","top3","allergies","eat","done"]; }
+function obSteps() {
+  const base = ob.isCook === false ? ["cookq", "allergies", "eat"] : ["cookq", "avail", "cookweek", "kit", "top3", "allergies", "eat"];
+  const ownerSteps = ob.needsOwnerSetup ? ["mealshape", "timezone", "dayrules"] : [];
+  return [...base, ...ownerSteps, "done"];
+}
 function renderOnboard() {
   if (!ob) obReset();
   const t = T; // language already chosen at the very first screen; carries through
@@ -2964,6 +3027,7 @@ function renderOnboard() {
   const nav = `<div class="ob-nav">${ob.step > 0 && cur !== "done" ? `<button class="ob-back" id="obBack">‹</button>` : ""}
     <div class="ob-prog">${steps.map((_, i) => `<i class="${i <= ob.step ? "done" : ""}"></i>`).join("")}</div></div>`;
   let inner = "";
+  let obDayRulesByDay = null; // set below when cur === "dayrules", read again by the wiring section near the bottom
   if (cur === "cookq") {
     inner = `<div class="ob-q">${t("Do you cook for your family?", "Ты готовишь для семьи?")}</div>
       <div class="ob-big">
@@ -3039,6 +3103,18 @@ function renderOnboard() {
         }).join("")}
       </div>
       <button class="btn btn-primary ob-next" id="obNext">${t("Submit", "Отправить")}</button>`;
+  } else if (cur === "mealshape") {
+    const anyOn = mealShapeAnyOn();
+    inner = `${mealShapeContentHtml()}
+      <button class="btn btn-primary ob-next" id="msNextOb" style="margin-top:22px${anyOn ? "" : ";opacity:.4"}" ${anyOn ? "" : "disabled"}>${t("Next", "Дальше")}</button>`;
+  } else if (cur === "timezone") {
+    inner = `${timezoneContentHtml()}
+      <button class="btn btn-primary ob-next" id="tzNextOb" style="margin-top:16px">${t("Next", "Дальше")}</button>`;
+  } else if (cur === "dayrules") {
+    obDayRulesByDay = {};
+    (game.dayRules || []).forEach(r => { obDayRulesByDay[r.day_of_week] = r; });
+    inner = `${dayRulesOnboardContentHtml(obDayRulesByDay)}
+      <button class="btn btn-primary ob-next" id="obNext">${t("Next", "Дальше")}</button>`;
   } else {
     inner = `<div class="ob-q">🎉 ${t("Profile ready!", "Профиль готов!")}</div>
       <div class="ob-sum">
@@ -3047,6 +3123,7 @@ function renderOnboard() {
         🔧 ${t("Techniques", "Техники")}: ${ob.techniques.length ? ob.techniques.length : t("none picked", "не выбрано")}<br>
         🍳 ${t("Appliances", "Техника на кухне")}: ${ob.appliances.length ? ob.appliances.length : t("none picked", "не выбрано")}<br>❤️ ${ob.top3 || "-"}<br>` : `🍽️ ${t("Eater profile", "Профиль едока")}<br>`}
         ⚠️ ${ob.allergies.length ? ob.allergies.join(", ") : t("no allergies", "без аллергий")}
+        ${ob.needsOwnerSetup ? `<br>🍽️ ${t("Kitchen set up", "Кухня настроена")}` : ""}
       </div>
       <button class="btn btn-primary ob-next" id="obDone">${t("To this week's menu →", "К меню недели →")}</button>`;
   }
@@ -3131,6 +3208,28 @@ function renderOnboard() {
       refreshCell: (el, on) => { el.classList.toggle("off", !on); el.textContent = on ? "✓" : ""; },
       onEnd: () => refreshEatBulkDims(grid),
     });
+  }
+  // The 3 owner-only kitchen-setup steps, inserted into this same wizard
+  // (see obSteps()) so an owner sees them *before* the "Profile ready!"
+  // celebration instead of after it.
+  if (cur === "mealshape") {
+    wireMealShapeGrid();
+    const btn = document.getElementById("msNextOb");
+    if (btn) btn.onclick = async () => {
+      if (btn.disabled) return;
+      btn.disabled = true; btn.textContent = T("Saving...", "Сохраняем...");
+      const ok = await applyEvent("meal_shape_edited", { shapes: mealShapeToShapes() });
+      if (ok) { mealShapeDraft = null; ob.step++; render(); }
+      else { btn.disabled = false; btn.textContent = t("Next", "Дальше"); }
+    };
+  }
+  if (cur === "timezone") {
+    wireTimezoneSelect();
+    const btn = document.getElementById("tzNextOb");
+    if (btn) btn.onclick = () => saveTimezoneAndThen("tzNextOb", () => { ob.step++; render(); });
+  }
+  if (cur === "dayrules") {
+    mountDayRules(app, obDayRulesByDay);
   }
   const next = document.getElementById("obNext");
   if (next) next.onclick = () => {
