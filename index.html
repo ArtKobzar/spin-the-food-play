@@ -433,6 +433,11 @@ const AVATAR_CHOICES = [
   { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка" },
   { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка" },
   { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
+  // Private-chef feature (2026-08-18, docs/DECISION_LOG.md): picked by the
+  // invited chef themselves at accept-invitation time, not by the founder -
+  // the founder only answers "do you have one" (has_private_chef) and sends
+  // the invite; the person who accepts it chooses this role for themselves.
+  { r: "chef", em: "🧑‍🍳", en: "Private chef", ru: "Личный повар" },
   { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
 ];
 
@@ -2220,24 +2225,20 @@ function renderInvitationOnboarding(preset = null) {
 function renderCreateHouseholdOnboarding(preset = null) {
   const email = authSession?.user?.email || "";
   let selRole = preset?.selRole ?? null;
+  let hasPrivateChef = preset?.hasPrivateChef ?? null; // mandatory tri-state: null = not yet answered
   app.innerHTML = `<div class="ob">
     <h2 style="font-size:22px;margin-bottom:6px">🍲 ${T("Welcome to Spin the Food", "Добро пожаловать в Spin the Food")}</h2>
     <div style="color:#666;font-size:14px;margin-bottom:18px">
       ${T("Signed in as", "Вошёл(-ла) как")} <b>${email}</b>. ${T("Let's set up your family kitchen.", "Давай создадим твою семейную кухню.")}
     </div>
-    <div class="sect">${T("Name your household", "Назови свою семью")}</div>
+    <div class="sect">${T("Name your home", "Назови свой дом")}</div>
     <div style="font-size:12px;color:#999;margin-bottom:6px">
       ${T("3-20 characters, letters and numbers only. This name is unique - it's how your household is identified.", "3-20 символов, только буквы и цифры. Это имя уникально - по нему определяется твоя семья.")}
     </div>
     <input id="householdNameInput" placeholder="${T("e.g. Kobzars", "напр. Кобзари")}" maxlength="20" value="${(preset?.householdName ?? "").replace(/"/g, "&quot;")}"
       style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
     <div id="householdNameNote" style="font-size:12px;margin-top:4px;min-height:16px"></div>
-    <div class="sect" style="margin-top:14px">${T("Language", "Язык")}</div>
-    <div class="chips-wrap" id="obLangWrap">
-      <div class="chip ${lang === "en" ? "on" : ""}" data-ol="en">🇬🇧 English</div>
-      <div class="chip ${lang === "ru" ? "on" : ""}" data-ol="ru">🇷🇺 Русский</div>
-    </div>
-    <div class="sect" style="margin-top:10px">${T("Units", "Единицы измерения")}</div>
+    <div class="sect" style="margin-top:14px">${T("Units", "Единицы измерения")}</div>
     <div class="chips-wrap" id="obUnitsWrap">
       <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${T("Metric (g, ml, °C)", "Метрическая (г, мл, °C)")}</div>
       <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${T("Imperial (oz, cups, °F)", "Имперская (унции, чашки, °F)")}</div>
@@ -2250,6 +2251,14 @@ function renderCreateHouseholdOnboarding(preset = null) {
       <div class="sect">${T("What should we call this role?", "Как назвать эту роль?")}</div>
       <input id="otherLabelInput" placeholder="${T("e.g. Uncle, Nanny, Roommate", "напр. Дядя, Няня, Сосед")}" maxlength="30" value="${preset?.otherLabel ?? ""}"
         style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
+    </div>
+    <div class="sect" style="margin-top:14px">${T("Do you have a Private Chef?", "Есть ли у вас личный повар?")}</div>
+    <div style="font-size:12px;color:#999;margin-bottom:6px">
+      ${T("Someone who cooks for your family for money.", "Тот, кто готовит для вашей семьи за деньги.")}
+    </div>
+    <div class="chips-wrap" id="chefWrap">
+      <div class="chip ${preset?.hasPrivateChef === true ? "on" : ""}" data-chef="yes">🧑‍🍳 ${T("Yes", "Да")}</div>
+      <div class="chip ${preset?.hasPrivateChef === false ? "on" : ""}" data-chef="no">${T("No", "Нет")}</div>
     </div>
     <div class="sect" style="margin-top:14px">${T("Your display name", "Твоё имя")}</div>
     <input id="displayNameInput" placeholder="${T("How the family will see your name", "Как семья будет видеть твоё имя")}" maxlength="40" value="${preset?.displayName ?? ""}"
@@ -2265,13 +2274,10 @@ function renderCreateHouseholdOnboarding(preset = null) {
 
   const captureState = () => ({
     selRole,
+    hasPrivateChef,
     householdName: nameHouseholdInput.value,
     displayName: nameInput.value,
     otherLabel: otherInput.value,
-  });
-  document.querySelectorAll("#obLangWrap [data-ol]").forEach(c => c.onclick = () => {
-    saveLangChoice(c.dataset.ol, { forOnboard: true });
-    renderCreateHouseholdOnboarding(captureState());
   });
   document.querySelectorAll("#obUnitsWrap [data-ou]").forEach(c => c.onclick = () => {
     saveUnitsChoice(c.dataset.ou);
@@ -2281,6 +2287,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
   const nameHouseholdInput = document.getElementById("householdNameInput");
   const householdNote = document.getElementById("householdNameNote");
   const roleChips = app.querySelectorAll("#roleWrap .chip");
+  const chefChips = app.querySelectorAll("#chefWrap .chip");
   const otherWrap = document.getElementById("otherLabelWrap");
   const otherInput = document.getElementById("otherLabelInput");
   const nameInput = document.getElementById("displayNameInput");
@@ -2296,7 +2303,8 @@ function renderCreateHouseholdOnboarding(preset = null) {
     const nameOk = nameInput.value.trim().length > 0;
     const roleOk = selRole !== null;
     const otherOk = selRole !== "other" || otherInput.value.trim().length > 0;
-    const ok = householdOk && roleOk && nameOk && otherOk;
+    const chefOk = hasPrivateChef !== null; // mandatory yes/no, no silent default
+    const ok = householdOk && roleOk && nameOk && otherOk && chefOk;
     createBtn.disabled = !ok;
     createBtn.style.opacity = ok ? "1" : ".4";
   };
@@ -2306,6 +2314,11 @@ function renderCreateHouseholdOnboarding(preset = null) {
     roleChips.forEach(x => x.classList.toggle("on", x.dataset.r === selRole));
     otherWrap.style.display = selRole === "other" ? "block" : "none";
     if (!nameInput.value && email) nameInput.value = email.split("@")[0];
+    validate();
+  });
+  chefChips.forEach(c => c.onclick = () => {
+    hasPrivateChef = c.dataset.chef === "yes";
+    chefChips.forEach(x => x.classList.toggle("on", x.dataset.chef === c.dataset.chef));
     validate();
   });
   nameHouseholdInput.oninput = validate;
@@ -2341,6 +2354,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
         p_avatar_role: selRole,
         p_display_name: nameInput.value.trim(),
         p_other_label: selRole === "other" ? otherInput.value.trim() : null,
+        p_has_private_chef: hasPrivateChef,
       }), 15000, "Create family");
     } catch (e) {
       logClientDiagnostic("create_family_call_exception", { message: e?.message || String(e), stack: e?.stack || null, household_name_len: nameHouseholdInput.value.trim().length });
@@ -2383,6 +2397,11 @@ function renderCreateHouseholdOnboarding(preset = null) {
       startSyncWatchers();
       render();
       toast(T("Your family kitchen is ready 🍲", "Твоя семейная кухня готова 🍲"));
+      // family.has_private_chef was captured above for future admin-handover
+      // logic (§ docs/DECISION_LOG.md 2026-08-18); this just gets the actual
+      // invite sent right away instead of leaving the founder to remember to
+      // do it later from Settings.
+      if (hasPrivateChef) openInviteFlow({ forPrivateChef: true });
     } catch (e) {
       logClientDiagnostic("create_family_post_create_exception", { message: e?.message || String(e), stack: e?.stack || null });
       note.textContent = T("Kitchen created, but couldn't finish loading - tap to retry.", "Кухня создана, но не удалось загрузить - нажми, чтобы повторить.");
@@ -2459,10 +2478,14 @@ function openSettings() {
 
 // Owner-only. Prompts for an email, calls the spin-food-invite Edge Function,
 // which creates the food.family_invitations row and sends the magic-link email.
-function openInviteFlow() {
-  const v = modal(`<h3>👥 ${T("Invite family member", "Пригласить члена семьи")}</h3>
+function openInviteFlow({ forPrivateChef = false } = {}) {
+  const v = modal(`<h3>${forPrivateChef ? "🧑‍🍳" : "👥"} ${forPrivateChef
+    ? T("Invite your private chef", "Пригласить личного повара")
+    : T("Invite family member", "Пригласить члена семьи")}</h3>
     <div style="font-size:13px;color:#666;margin-bottom:10px">
-      ${T("They'll get a one-tap magic link. On first sign-in they pick their role and name.", "Они получат ссылку-магию. При входе выберут роль и имя.")}
+      ${forPrivateChef
+        ? T("They'll get a one-tap magic link. On first sign-in, have them pick \"Private chef\" as their role.", "Они получат ссылку-магию. При входе попросите выбрать роль «Личный повар».")
+        : T("They'll get a one-tap magic link. On first sign-in they pick their role and name.", "Они получат ссылку-магию. При входе выберут роль и имя.")}
     </div>
     <div class="sect">${T("Email address", "Email")}</div>
     <input id="inviteEmail" type="email" inputmode="email" placeholder="them@example.com"
