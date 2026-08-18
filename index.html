@@ -2672,7 +2672,7 @@ function timezoneContentHtml() {
   const zones = commonTimezones();
   if (!zones.includes(ownerSetupTz)) zones.unshift(ownerSetupTz);
   return `<div class="ob-q">🕐 ${T("Confirm your timezone", "Подтверди часовой пояс")}</div>
-    <div class="ob-note" style="padding:0 0 12px">${T("This is when your family's week actually turns over - it decides when Auto-Fill and Menu Lock fire, and which day counts as \u201ctoday\u201d on the menu.", "Это момент, когда неделя вашей семьи фактически переходит в новую - от этого зависит, когда срабатывают Авто-подбор и Блокировка меню, и какой день считается \u00abсегодня\u00bb в меню.")}</div>
+    <div class="ob-note" style="padding:0 0 12px">${T("This tells the app when your day starts. It decides when Auto-Fill and Menu Lock happen, and which day is \u201ctoday\u201d on your menu.", "Это нужно, чтобы приложение знало, когда у вас начинается новый день. От этого зависит, когда сработают Авто-подбор и Блокировка меню, и какой день сейчас показан как «сегодня» в меню.")}</div>
     <select id="tzSelect" style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
       ${zones.map(z => `<option value="${z}" ${z === ownerSetupTz ? "selected" : ""}>${z}${z === detected ? " " + T("(detected)", "(определён)") : ""}</option>`).join("")}
     </select>
