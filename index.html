@@ -410,6 +410,52 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: "implicit" },
 });
 
+const LOCALE_EMOJI = { en: "🇬🇧", ru: "🇷🇺", uk: "🇺🇦", nl: "🇳🇱" };
+let UI_LOCALES = [
+  { code: "en", label_native: "English", emoji: "🇬🇧" },
+  { code: "ru", label_native: "Русский", emoji: "🇷🇺" },
+];
+
+async function loadUiLocales() {
+  try {
+    const { data, error } = await sb.rpc("spin_food_locales_list", { p_ui_only: true });
+    if (error || !Array.isArray(data) || !data.length) return;
+    UI_LOCALES = data.map((row) => ({
+      code: row.code,
+      label_native: row.label_native || row.label_en || row.code,
+      emoji: LOCALE_EMOJI[row.code] || "🌐",
+    }));
+  } catch (e) {
+    console.warn("[stf-i18n] locales list failed:", e);
+  }
+}
+
+function localeLangGateHtml() {
+  return UI_LOCALES.map((l) =>
+    `<button type="button" class="who-btn" onclick="stfPickLang('${l.code}')"><span class="em">${l.emoji}</span><span>${l.label_native}</span></button>`
+  ).join("");
+}
+
+function localeSignInButtonsHtml() {
+  return UI_LOCALES.map((l) =>
+    `<button type="button" class="mini-btn" id="signinLang${l.code}" style="margin:2px">${l.emoji} ${l.label_native}</button>`
+  ).join("");
+}
+
+function localeChipRowHtml(activeCode, dataAttr = "data-ol") {
+  return UI_LOCALES.map((l) =>
+    `<div class="chip ${activeCode === l.code ? "on" : ""}" ${dataAttr}="${l.code}">${l.emoji} ${l.label_native}</div>`
+  ).join("");
+}
+
+function applyMembershipLocale() {
+  const lc = membership?.locale;
+  if (lc && UI_LOCALES.some((l) => l.code === lc)) {
+    saveLangChoice(lc);
+    refreshI18n();
+  }
+}
+
 // Safari Private Browsing can block localStorage — keep an in-memory mirror so gates
 // (language picker, family key) still advance after a tap.
 const stfMem = {};
@@ -550,7 +596,7 @@ function needsOnboardLangGate(memberId) {
 function unitsSystem() {
   const stored = stfGet("stf_units");
   if (stored === "metric" || stored === "imperial") return stored;
-  return lang === "ru" ? "metric" : "imperial";
+  return (lang === "ru" || lang === "uk") ? "metric" : "imperial";
 }
 function saveUnitsChoice(sys) {
   if (sys !== "metric" && sys !== "imperial") return;
@@ -563,9 +609,19 @@ function saveUnitsChoice(sys) {
 // Per-member language overrides (settings screen, invitation accept) are a
 // separate, always-available concern and don't need their own gate screen.
 function pickLanguage(code) {
-  if (code !== "en" && code !== "ru") return;
+  if (!UI_LOCALES.some((l) => l.code === code)) return;
   saveLangChoice(code);
   refreshI18n();
+  if (membership?.member_id) {
+    sb.rpc("spin_food_set_member_locale", { p_locale: code }).catch((e) =>
+      console.warn("[stf-i18n] member locale save failed:", e)
+    );
+  }
+  const needsHydrate = code === "uk" || code === "nl";
+  if (needsHydrate && DISHES.length) {
+    hydrateRecipeContentForLocale(code).finally(() => render());
+    return;
+  }
   render();
 }
 globalThis.stfPickLang = pickLanguage;
@@ -832,6 +888,8 @@ function recipeToDish(r) {
     // translate pipeline yet (title_en/title_ru still null).
     en: r.title_en || r.title,
     ru: r.title_ru || r.title,
+    uk: r.title_en || r.title,
+    ukFallback: false,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
     t: cookMinutes,
     d: dots,
@@ -955,6 +1013,40 @@ async function loadCatalog() {
   if (membership) {
     const mine = FAMILY.find(m => m.id === membership.member_id);
     if (mine) applyMembershipToFamily(mine);
+  }
+  if (lang === "uk" || lang === "nl") await hydrateRecipeContentForLocale(lang);
+}
+
+async function hydrateDishContent(d, locale) {
+  if (!d || (locale !== "uk" && locale !== "nl")) return;
+  if (d._resolvedLocale === locale) return;
+  const { data, error } = await sb.rpc("spin_food_recipe_content_resolve", {
+    p_recipe_id: d.id,
+    p_locale: locale,
+  });
+  if (error || !data) return;
+  if (locale === "uk") {
+    d.uk = data.title || d.en;
+    d.ukFallback = !!data.title_is_fallback;
+  }
+  if (Array.isArray(data.instructions) && data.instructions.length) {
+    d.instructions = data.instructions.map((step, idx) => ({
+      ...(d.instructions[idx] || {}),
+      ...step,
+      text_resolved: step.text_resolved,
+      resolved_locale: step.resolved_locale,
+      is_fallback: step.is_fallback,
+    }));
+  }
+  d._resolvedLocale = locale;
+}
+
+async function hydrateRecipeContentForLocale(locale) {
+  if (locale !== "uk" && locale !== "nl") return;
+  const chunk = 8;
+  for (let i = 0; i < DISHES.length; i += chunk) {
+    const slice = DISHES.slice(i, i + chunk);
+    await Promise.all(slice.map((d) => hydrateDishContent(d, locale)));
   }
 }
 
@@ -1148,11 +1240,15 @@ const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const DAY_I18N = ["shared.day.mon","shared.day.tue","shared.day.wed","shared.day.thu","shared.day.fri","shared.day.sat","shared.day.sun"];
 const dayN = i => tr(DAY_I18N[i]);
 const MEALS = [
-  { k: "breakfast", ic: "🍳", n: "Breakfast", nru: "Завтрак" },
-  { k: "lunch",     ic: "🍲", n: "Lunch",     nru: "Обед" },
-  { k: "dinner",    ic: "🍗", n: "Dinner",    nru: "Ужин" },
+  { k: "breakfast", ic: "🍳", n: "Breakfast", nru: "Завтрак", nuk: "Сніданок" },
+  { k: "lunch",     ic: "🍲", n: "Lunch",     nru: "Обед",    nuk: "Обід" },
+  { k: "dinner",    ic: "🍗", n: "Dinner",    nru: "Ужин",    nuk: "Вечеря" },
 ];
-const mealN = m => (lang === "ru" ? m.nru : m.n);
+const mealN = m => {
+  if (lang === "uk") return m.nuk || m.n;
+  if (lang === "ru") return m.nru || m.n;
+  return m.n;
+};
 const dish = id => DISHES.find(d => d.id === id);
 // Fallback used only for building display text/labels - never for existence
 // checks (openDetail still relies on dish(id) itself being undefined for an
@@ -1179,8 +1275,12 @@ const mem = id => {
   }
   return { id, em: "🧑", en: "Member", ru: "Member", cook: true };
 };
-const dName = d => (lang === "ru" ? d.ru : d.en);
-const mName = m => (lang === "ru" ? m.ru : m.en);
+const dName = d => {
+  if (lang === "uk") return d.uk || d.en;
+  if (lang === "ru") return d.ru || d.en;
+  return d.en;
+};
+const mName = m => (lang === "uk" ? (m.uk || m.en) : lang === "ru" ? m.ru : m.en);
 // A slot/proposal's "by" always names the human accountable for it (who hand-picked
 // it, or who triggered the AI fill that picked it) - "viaAi" is a separate flag for
 // whether AI actually chose it, so both facts can render together: "AI (Artem)".
@@ -2032,9 +2132,8 @@ function render() {
 function renderLangGate() {
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>Language / Язык</p>
-    <button type="button" class="who-btn" onclick="stfPickLang('en')"><span class="em">🇬🇧</span><span>English</span></button>
-    <button type="button" class="who-btn" onclick="stfPickLang('ru')"><span class="em">🇷🇺</span><span>Русский</span></button>
+    <p>Language / Язык / Мова</p>
+    ${localeLangGateHtml()}
   </div>`;
 }
 
@@ -2080,8 +2179,7 @@ function renderSignInGate() {
       ${tr('renderSignInGate.well-email-you-a-one-tap-link-no-password')}
     </div>
     <div style="margin-top:14px;text-align:center;font-size:13px;color:#888">
-      <button type="button" class="mini-btn" id="signinLangEn" style="margin:2px">🇬🇧 English</button>
-      <button type="button" class="mini-btn" id="signinLangRu" style="margin:2px">🇷🇺 Русский</button>
+      ${localeSignInButtonsHtml()}
     </div>
   </div>`;
   const input = document.getElementById("signinEmail");
@@ -2156,8 +2254,10 @@ function renderSignInGate() {
     resendBtn.disabled = false;
     if (ok) { codeInput.value = ""; codeInput.focus(); }
   };
-  document.getElementById("signinLangEn").onclick = () => pickLanguage("en");
-  document.getElementById("signinLangRu").onclick = () => pickLanguage("ru");
+  UI_LOCALES.forEach((l) => {
+    const btn = document.getElementById(`signinLang${l.code}`);
+    if (btn) btn.onclick = () => pickLanguage(l.code);
+  });
   input.focus();
 }
 
@@ -2177,10 +2277,7 @@ function renderInvitationOnboarding(preset = null) {
       ${tr('renderInvitationOnboarding.signed-in-as')} <b>${email}</b>. ${tr('renderInvitationOnboarding.tell-us-who-you-are-in-the-family')}
     </div>
     <div class="sect">${tr('renderInvitationOnboarding.language')}</div>
-    <div class="chips-wrap" id="obLangWrap">
-      <div class="chip ${lang === "en" ? "on" : ""}" data-ol="en">🇬🇧 English</div>
-      <div class="chip ${lang === "ru" ? "on" : ""}" data-ol="ru">🇷🇺 Русский</div>
-    </div>
+    <div class="chips-wrap" id="obLangWrap">${localeChipRowHtml(lang, "data-ol")}</div>
     <div class="sect" style="margin-top:10px">${tr('renderInvitationOnboarding.units')}</div>
     <div class="chips-wrap" id="obUnitsWrap">
       <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${tr('renderInvitationOnboarding.metric-g-ml-c')}</div>
@@ -2214,6 +2311,7 @@ function renderInvitationOnboarding(preset = null) {
   });
   document.querySelectorAll("#obLangWrap [data-ol]").forEach(c => c.onclick = () => {
     saveLangChoice(c.dataset.ol, { forOnboard: true });
+    refreshI18n();
     renderInvitationOnboarding(captureState());
   });
   document.querySelectorAll("#obUnitsWrap [data-ou]").forEach(c => c.onclick = () => {
@@ -2535,8 +2633,7 @@ function openSettings() {
     </div>
     <div class="sect">${tr('openSettings.language')}</div>
     <div class="chips-wrap">
-      <div class="chip ${lang === "en" ? "on" : ""}" data-sl="en">🇬🇧 English</div>
-      <div class="chip ${lang === "ru" ? "on" : ""}" data-sl="ru">🇷🇺 Русский</div>
+      ${localeChipRowHtml(lang, "data-sl")}
     </div>
     <div class="sect">${tr('openSettings.units')}</div>
     <div style="font-size:12px;color:#999;margin-bottom:6px">${tr('openSettings.independent-of-language-ingredient-quantities-sh')}</div>
@@ -2556,9 +2653,9 @@ function openSettings() {
     <div class="sect" style="margin-top:16px">${tr('openSettings.session')}</div>
     <button class="btn btn-ghost" id="signoutBtn3" style="width:100%">${tr('openSettings.sign-out')}</button>`);
   v.querySelectorAll("[data-sl]").forEach(c => c.onclick = () => {
-    saveLangChoice(c.dataset.sl, { forOnboard: true });
+    pickLanguage(c.dataset.sl);
     if (me && game?.profiles?.[me]) game.profiles[me].lang = lang;
-    closeModal(); render();
+    closeModal();
   });
   v.querySelectorAll("[data-su]").forEach(c => c.onclick = () => {
     saveUnitsChoice(c.dataset.su);
@@ -4036,8 +4133,10 @@ function ingredientLine(ing, scaleFactor = 1) {
 function stepLangText(s, l) {
   if (typeof s === "string") return s;
   if (!s) return "";
-  const key = l === "ru" ? "text_ru" : "text_en";
-  return s[key] || s.text || "";
+  if (s.text_resolved) return s.text_resolved;
+  if (l === "ru") return s.text_ru || s.text || "";
+  if (l === "uk") return s.text_uk || s.text_en || s.text || "";
+  return s.text_en || s.text || "";
 }
 function instructionsText(d) {
   if (!d.instructions.length) return "";
@@ -4075,7 +4174,13 @@ function instructionSteps(d) {
 function openDetail(id) {
   if (!dish(id)) return;
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
-  renderDetailOverlay();
+  const d = dish(id);
+  const finish = () => renderDetailOverlay();
+  if ((lang === "uk" || lang === "nl") && d._resolvedLocale !== lang) {
+    hydrateDishContent(d, lang).then(finish);
+    return;
+  }
+  finish();
 }
 function closeDetail() {
   const el = document.getElementById("detailOverlay");
@@ -4119,7 +4224,8 @@ function detailHeaderHtml(d) {
     <div style="padding:14px 16px">
       ${detailEditMode
         ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.recipe-name')}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
-        : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>`}
+        : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>
+          ${lang === "uk" && d.ukFallback ? `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>` : ""}`}
       <div class="mt" style="margin-top:8px">
         ${detailEditMode
           ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${tr('detailHeaderHtml.min')}</span>
@@ -6394,6 +6500,7 @@ window.addEventListener("unhandledrejection", (e) => {
 // URL fragment, handled by detectSessionInUrl). Only start realtime + load
 // spin_play_state once we have both a session and a membership row.
 (async function () {
+  await loadUiLocales();
   const { data: sessData } = await sb.auth.getSession();
   authSession = sessData.session;
 
@@ -6420,6 +6527,7 @@ window.addEventListener("unhandledrejection", (e) => {
   });
 
   if (authSession) await refreshMembership();
+  applyMembershipLocale();
 
   // Housekeeping: if the caller lands with ?invite=<token> in the URL but is
   // already a member (e.g. they clicked their own old invite link), strip the
