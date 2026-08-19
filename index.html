@@ -500,13 +500,19 @@ function syncLangFromStorage() {
   const memberId = membership?.member_id;
   if (memberId) {
     const ob = stfGet(onboardLangKey(memberId));
-    if (ob) { lang = ob; return; }
+    if (ob) {
+      lang = ob;
+      globalThis.lang = ob;
+      return;
+    }
   }
   lang = stfGet("stf_lang") || lang || null;
+  if (lang) globalThis.lang = lang;
 }
 
 function saveLangChoice(l, { forOnboard = false } = {}) {
   lang = l;
+  globalThis.lang = l;
   stfSet("stf_lang", l);
   const memberId = membership?.member_id || me;
   if (forOnboard && memberId) {
@@ -2073,6 +2079,10 @@ function renderSignInGate() {
     <div id="signinNote" style="color:#888;font-size:13px;line-height:1.5">
       ${tr('renderSignInGate.well-email-you-a-one-tap-link-no-password')}
     </div>
+    <div style="margin-top:14px;text-align:center;font-size:13px;color:#888">
+      <button type="button" class="mini-btn" id="signinLangEn" style="margin:2px">🇬🇧 English</button>
+      <button type="button" class="mini-btn" id="signinLangRu" style="margin:2px">🇷🇺 Русский</button>
+    </div>
   </div>`;
   const input = document.getElementById("signinEmail");
   const btn = document.getElementById("signinGo");
@@ -2146,6 +2156,8 @@ function renderSignInGate() {
     resendBtn.disabled = false;
     if (ok) { codeInput.value = ""; codeInput.focus(); }
   };
+  document.getElementById("signinLangEn").onclick = () => pickLanguage("en");
+  document.getElementById("signinLangRu").onclick = () => pickLanguage("ru");
   input.focus();
 }
 
