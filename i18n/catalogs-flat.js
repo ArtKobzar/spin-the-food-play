@@ -560,7 +560,19 @@ export const STF_I18N_CATALOGS = {
     "stackHtml.hidden-by-filters": "\"{name}\" is in your library but hidden by active filters ({mealHint}).",
     "confirmDeleteRecipe.will-disappear": "\"{name}\" will disappear from the cookbook, Spin, Wish, and Duel for your whole family. This can't be undone from here.",
     "aiNoteText.day-rule-skipped": "AI skipped this day's {kindLabel} rule (\"{ruleValue}\") to keep the meal safe for everyone attending.",
-    "detailView.shown-in-english-not-requested-language": "Shown in English (translation not available in your language)"
+    "detailView.shown-in-english-not-requested-language": "Shown in English (translation not available in your language)",
+    "detailView.machine-translated": "Machine translated",
+    "detailHeaderHtml.translate-recipe": "Translate to your language",
+    "detailHeaderHtml.show-original": "Show original",
+    "detailHeaderHtml.translation-failed": "Translation could not be completed. Showing the original.",
+    "renderLangGate.pick-your-language": "Pick your language",
+    "avatarRole.mom": "Mom",
+    "avatarRole.dad": "Dad",
+    "avatarRole.grandma": "Grandma",
+    "avatarRole.grandpa": "Grandpa",
+    "avatarRole.kid": "Kid",
+    "avatarRole.chef": "Private chef",
+    "avatarRole.other": "Someone else"
   },
   "ru": {
     "filterIconButtonHtml.filters": "Фильтры",
@@ -1123,7 +1135,19 @@ export const STF_I18N_CATALOGS = {
     "stackHtml.hidden-by-filters": "\"{name}\" в библиотеке, но скрыт активными фильтрами ({mealHint}).",
     "confirmDeleteRecipe.will-disappear": "«{name}» пропадёт из книги рецептов, Крутки, Желаний и Дуэлей для всей семьи. Отменить это отсюда нельзя.",
     "aiNoteText.day-rule-skipped": "ИИ пропустил правило \"{kindLabel}\" (\"{ruleValue}\") на этот день, чтобы блюдо оставалось безопасным для всех.",
-    "detailView.shown-in-english-not-requested-language": "Показано на английском (перевод на ваш язык недоступен)"
+    "detailView.shown-in-english-not-requested-language": "Показано на английском (перевод на ваш язык недоступен)",
+    "detailView.machine-translated": "Машинный перевод",
+    "detailHeaderHtml.translate-recipe": "Перевести на ваш язык",
+    "detailHeaderHtml.show-original": "Показать оригинал",
+    "detailHeaderHtml.translation-failed": "Перевод не выполнен. Показан оригинал.",
+    "renderLangGate.pick-your-language": "Выберите язык",
+    "avatarRole.mom": "Мама",
+    "avatarRole.dad": "Папа",
+    "avatarRole.grandma": "Бабушка",
+    "avatarRole.grandpa": "Дедушка",
+    "avatarRole.kid": "Ребёнок",
+    "avatarRole.chef": "Личный повар",
+    "avatarRole.other": "Кто-то ещё"
   },
   "uk": {
     "filterIconButtonHtml.filters": "Фільтри",
@@ -1686,6 +1710,18 @@ export const STF_I18N_CATALOGS = {
     "stackHtml.hidden-by-filters": "\"{name}\" є у вашій бібліотеці, але приховане активними фільтрами ({mealHint}).",
     "confirmDeleteRecipe.will-disappear": "\"{name}\" зникне з кулінарної книги, Spin, Wish та Duel для вашої родини. Це не можна скасувати звідси.",
     "aiNoteText.day-rule-skipped": "ШІ пропустив правило {kindLabel} цього дня (\"{ruleValue}\") щоб зберегти безпеку страви для всіх учасників.",
-    "detailView.shown-in-english-not-requested-language": "Показано англійською (переклад вашою мовою недоступний)"
+    "detailView.shown-in-english-not-requested-language": "Показано англійською (переклад вашою мовою недоступний)",
+    "detailView.machine-translated": "Машинний переклад",
+    "detailHeaderHtml.translate-recipe": "Перекласти вашою мовою",
+    "detailHeaderHtml.show-original": "Показати оригінал",
+    "detailHeaderHtml.translation-failed": "Переклад не виконано. Показано оригінал.",
+    "renderLangGate.pick-your-language": "Виберіть мову",
+    "avatarRole.mom": "Мама",
+    "avatarRole.dad": "Тато",
+    "avatarRole.grandma": "Бабуся",
+    "avatarRole.grandpa": "Дідусь",
+    "avatarRole.kid": "Дитина",
+    "avatarRole.chef": "Приватний кулінар",
+    "avatarRole.other": "Хтось інший"
   }
 };
