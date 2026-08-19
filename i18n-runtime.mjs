@@ -39,10 +39,16 @@ export function initI18n() {
     const lc = globalThis.lang || "en";
     if (lc === "uk") return o.uk ?? o.en ?? o.ru;
     if (lc === "ru") return o.ru ?? o.en ?? o.uk;
+    if (lc === "nl") return o.nl ?? o.en ?? o.uk;
     return o.en ?? o.ru ?? o.uk ?? "";
   };
-  globalThis.pairLang = (en, ru, uk = en) =>
-    globalThis.lang === "uk" ? (uk ?? en) : globalThis.lang === "ru" ? ru : en;
+  globalThis.pairLang = (en, ru, uk = en, nl = en) => {
+    const lc = globalThis.lang || "en";
+    if (lc === "uk") return uk ?? en;
+    if (lc === "ru") return ru;
+    if (lc === "nl") return nl ?? en;
+    return en;
+  };
 }
 
 export function refreshI18n() {
