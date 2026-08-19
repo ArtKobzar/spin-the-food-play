@@ -17,11 +17,18 @@ export function initI18n() {
   rebuildIntl();
   globalThis.tr = (id, values) => {
     try {
-      return intl.formatMessage(
+      let out = intl.formatMessage(
         { id, defaultMessage: STF_I18N_CATALOGS.en?.[id] || id },
         values,
         { ignoreTag: true }
       );
+      // HTML-bearing messages can leave simple {name} placeholders unreplaced.
+      if (values) {
+        for (const [k, v] of Object.entries(values)) {
+          out = out.split(`{${k}}`).join(String(v));
+        }
+      }
+      return out;
     } catch (e) {
       console.warn("[i18n]", id, e);
       return STF_I18N_CATALOGS[globalThis.lang]?.[id] || STF_I18N_CATALOGS.en?.[id] || id;
