@@ -2407,6 +2407,8 @@ function renderInvitationOnboarding(preset = null) {
     clearFoundingSessionKeys();
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
   };
+
+  acceptBtn.onclick = async () => {
     if (acceptBtn.disabled) return;
     acceptBtn.disabled = true; acceptBtn.textContent = tr('anonymous.joining');
     note.textContent = ""; note.style.color = "#888";
