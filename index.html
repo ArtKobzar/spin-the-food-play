@@ -202,6 +202,11 @@
      not an unrelated animal. */
   .scard .qhide, .dtl-hero .qhide { position: absolute; top: 12px; left: 12px; z-index: 3; width: 34px; height: 34px; border: none; border-radius: 50%; background: #dcfce7; color: #16a34a; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 8px rgba(0,0,0,.22); }
   .scard .qhide.off, .dtl-hero .qhide.off { background: #ffedd5; color: #c2410c; }
+  /* On-demand recipe translation (SPEC_I18N.md §8) - compact translate/languages
+     glyph beside the detail title; toggles authored ↔ UI-locale view. */
+  .dtl-translate-btn { flex: 0 0 32px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f3f4f6; color: #4b5563; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-top: 2px; }
+  .dtl-translate-btn.on { background: #dbeafe; color: #1d4ed8; }
+  .dtl-translate-btn:disabled { opacity: .45; cursor: default; }
   /* Same photo-carousel chrome (nav arrows, dots, pending/approve UI, "add a
      photo" CTA) is reused verbatim on the recipe detail view's hero, via
      photoSlideHtml() - `.dtl-hero` just needs `position:relative` (it already
@@ -474,6 +479,9 @@ function stfDel(key) {
   delete stfMem[key];
   try { localStorage.removeItem(key); } catch (e) { /* noop */ }
 }
+function clearFoundingSessionKeys() {
+  stfDel("stf_founding_lang");
+}
 
 // ── auth + membership ────────────────────────────────────────────
 // Every family member signs in via Supabase Auth magic link. After sign-in,
@@ -487,18 +495,24 @@ let membership = null;    // { member_id, family_id, family_name, avatar_role, o
 // Shared by both the "join via invite" and "found a new household" onboarding
 // screens - picking a family role is common to both.
 const AVATAR_CHOICES = [
-  { r: "mom", em: "👩", en: "Mom", ru: "Мама" },
-  { r: "dad", em: "👨", en: "Dad", ru: "Папа" },
-  { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка" },
-  { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка" },
-  { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок" },
+  { r: "mom", em: "👩", en: "Mom", ru: "Мама", uk: "Мама", nl: "Mama" },
+  { r: "dad", em: "👨", en: "Dad", ru: "Папа", uk: "Тато", nl: "Papa" },
+  { r: "grandma", em: "👵", en: "Grandma", ru: "Бабушка", uk: "Бабуся", nl: "Oma" },
+  { r: "grandpa", em: "👴", en: "Grandpa", ru: "Дедушка", uk: "Дідусь", nl: "Opa" },
+  { r: "kid", em: "👧", en: "Kid", ru: "Ребёнок", uk: "Дитина", nl: "Kind" },
   // Private-chef feature (2026-08-18, docs/DECISION_LOG.md): picked by the
   // invited chef themselves at accept-invitation time, not by the founder -
   // the founder only answers "do you have one" (has_private_chef) and sends
   // the invite; the person who accepts it chooses this role for themselves.
-  { r: "chef", em: "🧑‍🍳", en: "Private chef", ru: "Личный повар" },
-  { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё" },
+  { r: "chef", em: "🧑‍🍳", en: "Private chef", ru: "Личный повар", uk: "Приватний кулінар", nl: "Privé-kok" },
+  { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё", uk: "Хтось інший", nl: "Iemand anders" },
 ];
+
+function avatarRoleLabel(role) {
+  const c = AVATAR_CHOICES.find((x) => x.r === role);
+  if (lang === "nl" && c?.nl) return c.nl;
+  return tr(`avatarRole.${role}`);
+}
 
 // Household name rules (locked 2026-08-18, see
 // supabase/migrations/20260818150000_food_household_name_v1.sql): 3-20
@@ -560,14 +574,23 @@ function saveLangChoice(l, { forOnboard = false } = {}) {
   lang = l;
   globalThis.lang = l;
   stfSet("stf_lang", l);
+  if (authSession && !membership && !inviteTokenInUrl) {
+    stfSet("stf_founding_lang", l);
+  }
   const memberId = membership?.member_id || me;
   if (forOnboard && memberId) {
     stfSet(onboardLangKey(memberId), l);
   }
 }
 
+function needsFounderLangGate() {
+  // Signed-in founder with no membership yet: always confirm language once per
+  // founding attempt, even if stf_lang was left from a prior account on this device.
+  return authSession && !membership && !inviteTokenInUrl && !stfGet("stf_founding_lang");
+}
+
 function needsDeviceLangGate() {
-  return !stfGet("stf_lang") && !lang;
+  return (!stfGet("stf_lang") && !lang) || needsFounderLangGate();
 }
 
 // Timezone confirmation moved to right after sign-in (user feedback,
@@ -616,11 +639,6 @@ function pickLanguage(code) {
     sb.rpc("spin_food_set_member_locale", { p_locale: code }).catch((e) =>
       console.warn("[stf-i18n] member locale save failed:", e)
     );
-  }
-  const needsHydrate = code === "uk" || code === "nl";
-  if (needsHydrate && DISHES.length) {
-    hydrateRecipeContentForLocale(code).finally(() => render());
-    return;
   }
   render();
 }
@@ -690,7 +708,7 @@ function logClientDiagnostic(eventType, details = {}) {
   }
 }
 
-const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", other: "🧑" };
+const AVATAR_EMOJI = { mom: "👩", dad: "👨", grandpa: "👴", grandma: "👵", kid: "👧", chef: "🧑‍🍳", other: "🧑" };
 
 function avatarEmoji(role) { return AVATAR_EMOJI[role] || "🧑"; }
 
@@ -886,10 +904,14 @@ function recipeToDish(r) {
     // Translated title (SPEC_RECIPE_I18N.md) - falls back to the legacy
     // single-language title while a recipe hasn't been through the
     // translate pipeline yet (title_en/title_ru still null).
+    title: r.title || r.title_en || r.title_ru || "",
+    source_lang: r.source_lang || null,
     en: r.title_en || r.title,
     ru: r.title_ru || r.title,
     uk: r.title_en || r.title,
+    nl: r.title_en || r.title,
     ukFallback: false,
+    nlFallback: false,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
     t: cookMinutes,
     d: dots,
@@ -1014,7 +1036,6 @@ async function loadCatalog() {
     const mine = FAMILY.find(m => m.id === membership.member_id);
     if (mine) applyMembershipToFamily(mine);
   }
-  if (lang === "uk" || lang === "nl") await hydrateRecipeContentForLocale(lang);
 }
 
 async function hydrateDishContent(d, locale) {
@@ -1028,6 +1049,10 @@ async function hydrateDishContent(d, locale) {
   if (locale === "uk") {
     d.uk = data.title || d.en;
     d.ukFallback = !!data.title_is_fallback;
+  }
+  if (locale === "nl") {
+    d.nl = data.title || d.en;
+    d.nlFallback = !!data.title_is_fallback;
   }
   if (Array.isArray(data.instructions) && data.instructions.length) {
     d.instructions = data.instructions.map((step, idx) => ({
@@ -1275,11 +1300,40 @@ const mem = id => {
   }
   return { id, em: "🧑", en: "Member", ru: "Member", cook: true };
 };
-const dName = d => {
-  if (lang === "uk") return d.uk || d.en;
-  if (lang === "ru") return d.ru || d.en;
-  return d.en;
-};
+function dishSourceLang(d) {
+  if (d?.source_lang) return d.source_lang;
+  const probe = d?.title || d?.en || d?.ru || "";
+  if (/[\u0400-\u04FF]/.test(probe)) return "ru";
+  return "en";
+}
+function authoredDishName(d) {
+  const src = dishSourceLang(d);
+  if (src === "ru") return d.ru || d.title || d.en;
+  if (src === "uk") return d.uk || d.title || d.en;
+  if (src === "nl") return d.nl || d.title || d.en;
+  return d.en || d.title || d.ru;
+}
+function translatedDishName(d, locale) {
+  if (locale === "ru") return d.ru || d.en || d.title;
+  if (locale === "uk") return d.uk || d.en || d.title;
+  if (locale === "nl") return d.nl || d.en || d.title;
+  return d.en || d.ru || d.title;
+}
+function recipeNeedsTranslation(d) {
+  return dishSourceLang(d) !== lang;
+}
+function translatedTitleReady(d) {
+  const src = dishSourceLang(d);
+  const target = lang;
+  if (src === target) return true;
+  if (target === "uk") return d._resolvedLocale === "uk" && !d.ukFallback;
+  if (target === "nl") return d._resolvedLocale === "nl" && !d.nlFallback;
+  const authored = authoredDishName(d);
+  const translated = translatedDishName(d, target);
+  return translated && translated !== authored;
+}
+// Cards, spin deck, and menu always show the recipe as authored (SPEC_I18N.md §8).
+const dName = d => authoredDishName(d);
 const mName = m => (lang === "uk" ? (m.uk || m.en) : lang === "ru" ? m.ru : m.en);
 // A slot/proposal's "by" always names the human accountable for it (who hand-picked
 // it, or who triggered the AI fill that picked it) - "viaAi" is a separate flag for
@@ -2130,9 +2184,10 @@ function render() {
 
 // language gate - the very first screen, bilingual by nature
 function renderLangGate() {
+  const founder = needsFounderLangGate();
   app.innerHTML = `<div class="gate">
     <h1>🍲 Spin the Food</h1>
-    <p>Language / Язык / Мова</p>
+    <p>${founder ? tr('renderLangGate.pick-your-language') : "Language / Язык / Мова"}</p>
     ${localeLangGateHtml()}
   </div>`;
 }
@@ -2285,7 +2340,7 @@ function renderInvitationOnboarding(preset = null) {
     </div>
     <div class="sect" style="margin-top:14px">${tr('renderInvitationOnboarding.your-role')}</div>
     <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${pairLang(c.en, c.ru)}</div>
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${avatarRoleLabel(c.r)}</div>
     `).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${tr('renderInvitationOnboarding.what-should-we-call-this-role')}</div>
@@ -2349,10 +2404,9 @@ function renderInvitationOnboarding(preset = null) {
   validate();
 
   document.getElementById("signoutBtn2").onclick = async () => {
+    clearFoundingSessionKeys();
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
   };
-
-  acceptBtn.onclick = async () => {
     if (acceptBtn.disabled) return;
     acceptBtn.disabled = true; acceptBtn.textContent = tr('anonymous.joining');
     note.textContent = ""; note.style.color = "#888";
@@ -2430,21 +2484,23 @@ function renderCreateHouseholdOnboarding(preset = null) {
     <div style="color:#666;font-size:14px;margin-bottom:18px">
       ${tr('renderCreateHouseholdOnboarding.signed-in-as')} <b>${email}</b>. ${tr('renderCreateHouseholdOnboarding.lets-set-up-your-family-kitchen')}
     </div>
-    <div class="sect">${tr('renderCreateHouseholdOnboarding.name-your-home')}</div>
+    <div class="sect">${tr('renderInvitationOnboarding.language')}</div>
+    <div class="chips-wrap" id="obLangWrap">${localeChipRowHtml(lang, "data-ol")}</div>
+    <div class="sect" style="margin-top:10px">${tr('renderCreateHouseholdOnboarding.units')}</div>
+    <div class="chips-wrap" id="obUnitsWrap">
+      <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${tr('renderCreateHouseholdOnboarding.metric-g-ml-c')}</div>
+      <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${tr('renderCreateHouseholdOnboarding.imperial-oz-cups-f')}</div>
+    </div>
+    <div class="sect" style="margin-top:14px">${tr('renderCreateHouseholdOnboarding.name-your-home')}</div>
     <div style="font-size:12px;color:#999;margin-bottom:6px">
       ${tr('renderCreateHouseholdOnboarding.3-20-characters-letters-and-numbers-only-this-na')}
     </div>
     <input id="householdNameInput" placeholder="${tr('renderCreateHouseholdOnboarding.e-g-kobzars')}" maxlength="20" value="${(preset?.householdName ?? "").replace(/"/g, "&quot;")}"
       style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
     <div id="householdNameNote" style="font-size:12px;margin-top:4px;min-height:16px"></div>
-    <div class="sect" style="margin-top:14px">${tr('renderCreateHouseholdOnboarding.units')}</div>
-    <div class="chips-wrap" id="obUnitsWrap">
-      <div class="chip ${unitsSystem() === "metric" ? "on" : ""}" data-ou="metric">📏 ${tr('renderCreateHouseholdOnboarding.metric-g-ml-c')}</div>
-      <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${tr('renderCreateHouseholdOnboarding.imperial-oz-cups-f')}</div>
-    </div>
     <div class="sect" style="margin-top:14px">${tr('renderCreateHouseholdOnboarding.your-role')}</div>
     <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${pairLang(c.en, c.ru)}</div>
+      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${avatarRoleLabel(c.r)}</div>
     `).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${tr('renderCreateHouseholdOnboarding.what-should-we-call-this-role')}</div>
@@ -2477,6 +2533,11 @@ function renderCreateHouseholdOnboarding(preset = null) {
     householdName: nameHouseholdInput.value,
     displayName: nameInput.value,
     otherLabel: otherInput.value,
+  });
+  document.querySelectorAll("#obLangWrap [data-ol]").forEach(c => c.onclick = () => {
+    saveLangChoice(c.dataset.ol, { forOnboard: true });
+    refreshI18n();
+    renderCreateHouseholdOnboarding(captureState());
   });
   document.querySelectorAll("#obUnitsWrap [data-ou]").forEach(c => c.onclick = () => {
     saveUnitsChoice(c.dataset.ou);
@@ -2526,6 +2587,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
   validate();
 
   document.getElementById("signoutBtn2").onclick = async () => {
+    clearFoundingSessionKeys();
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
   };
 
@@ -2589,7 +2651,12 @@ function renderCreateHouseholdOnboarding(preset = null) {
     try {
       await refreshMembership();
       if (me === null) me = membership.member_id;
-      if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
+      if (lang) {
+        saveLangChoice(lang, { forOnboard: true });
+        sb.rpc("spin_food_set_member_locale", { p_locale: lang }).catch((e) =>
+          console.warn("[stf-i18n] member locale save failed:", e)
+        );
+      }
       // Apply the timezone confirmed at the pre-auth device gate (see
       // needsDeviceTzGate/renderTzGate) now that a family finally exists to
       // attach it to. Best-effort: a failure here shouldn't block the whole
@@ -3871,6 +3938,8 @@ function photoSlideHtml(d, { allowRemove = false } = {}) {
 // as "hidden" only by unrelated cultural convention rather than looking like one.
 const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const EYE_CLOSED_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c3-4 7-6 10-6s7 2 10 6"/></svg>`;
+// Material-style translate / languages glyph (Chinese character + Latin A).
+const TRANSLATE_SVG = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>`;
 function stackHtml(dk) {
   if (!dk.length) {
     const q = deckSearch.trim();
@@ -4037,6 +4106,8 @@ let detailEditMode = false; // taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
+let detailShowTranslation = false; // detail read view: false = authored language, true = UI locale
+let detailTranslationLoading = false;
 
 const DISH_ROLES = ["main", "side", "component"];
 const COURSE_CATEGORIES = ["appetizer", "soup", "main_course", "side_dish", "pickle", "salad", "dessert"];
@@ -4107,10 +4178,17 @@ function fmtQty(n) {
   // so whole numbers print clean.
   return String(Math.round(n * 10) / 10).replace(/\.0$/, "");
 }
-function ingredientLine(ing, scaleFactor = 1) {
+function ingredientDisplayNameForLocale(ing, locale) {
+  if (!ing || typeof ing !== "object") return "";
+  const li = ing.labels_i18n;
+  if (li && typeof li === "object" && li[locale]) return li[locale];
+  if (locale === "ru" && ing.name_ru) return ing.name_ru;
+  return ing.name_en || ing.raw || "";
+}
+function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
-  const name = ingredientDisplayName(ing);
+  const name = nameLocale ? ingredientDisplayNameForLocale(ing, nameLocale) : ingredientDisplayName(ing);
   const note = ing.note ? ` (${ing.note})` : "";
   // Scaling (2026-08-09): scaleFactor = target servings / recipe.servings,
   // computed by the caller only when a real (non-null) servings baseline is
@@ -4133,14 +4211,70 @@ function ingredientLine(ing, scaleFactor = 1) {
 function stepLangText(s, l) {
   if (typeof s === "string") return s;
   if (!s) return "";
-  if (s.text_resolved) return s.text_resolved;
+  if ((l === "uk" || l === "nl") && s.text_resolved && detailShowTranslation) return s.text_resolved;
   if (l === "ru") return s.text_ru || s.text || "";
   if (l === "uk") return s.text_uk || s.text_en || s.text || "";
+  if (l === "nl") return s.text_en || s.text || "";
   return s.text_en || s.text || "";
 }
-function instructionsText(d) {
-  if (!d.instructions.length) return "";
-  return d.instructions.map(s => stepLangText(s, lang)).filter(Boolean).join("\n\n");
+function detailContentLocale(d) {
+  return detailShowTranslation ? lang : dishSourceLang(d);
+}
+function detailTitleName(d) {
+  return detailShowTranslation ? translatedDishName(d, lang) : authoredDishName(d);
+}
+function detailTranslationBadge(d) {
+  if (!detailShowTranslation || !recipeNeedsTranslation(d)) return "";
+  if (d._machineTranslated) {
+    return `<div style="font-size:12px;color:#6b7280;margin-top:6px">${tr('detailView.machine-translated')}</div>`;
+  }
+  if (lang === "uk" && d.ukFallback) {
+    return `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>`;
+  }
+  if (lang === "nl" && d.nlFallback) {
+    return `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>`;
+  }
+  return "";
+}
+function detailTranslateBtnHtml(d) {
+  if (detailEditMode || !recipeNeedsTranslation(d)) return "";
+  const active = detailShowTranslation;
+  const label = active ? tr('detailHeaderHtml.show-original') : tr('detailHeaderHtml.translate-recipe');
+  const busy = detailTranslationLoading;
+  return `<button class="dtl-translate-btn${active ? " on" : ""}" id="dtlTranslateBtn" title="${label}" aria-label="${label}" ${busy ? "disabled" : ""}>${busy ? "…" : TRANSLATE_SVG}</button>`;
+}
+async function refreshDishFromCatalog(d) {
+  const { data: recipes, error } = await sb.rpc("spin_food_list_recipes_for_family");
+  if (error || !recipes) return;
+  const r = recipes.find(x => x.id === d.id);
+  if (!r) return;
+  const fresh = recipeToDish(r);
+  const keep = { _machineTranslated: d._machineTranslated, _resolvedLocale: d._resolvedLocale, ukFallback: d.ukFallback, nlFallback: d.nlFallback };
+  Object.assign(d, fresh, keep);
+}
+async function requestRecipeTranslation(d) {
+  const INGEST_CLIENT_TIMEOUT_MS = 100_000;
+  detailTranslationLoading = true;
+  renderDetailOverlay();
+  try {
+    if (lang === "uk" || lang === "nl") await hydrateDishContent(d, lang);
+    if (!translatedTitleReady(d) && (lang === "en" || lang === "ru")) {
+      const res = await invokeWithTimeout("spin-food-import", {
+        body: { source_type: "url", action: "ingest", payload: { recipe_id: d.id, stage: "translate" } },
+      }, INGEST_CLIENT_TIMEOUT_MS);
+      if (res.error || res.data?.warning) {
+        toast(tr('detailHeaderHtml.translation-failed'));
+      } else {
+        d._machineTranslated = true;
+        await refreshDishFromCatalog(d);
+        if (lang === "uk" || lang === "nl") await hydrateDishContent(d, lang);
+      }
+    }
+    detailShowTranslation = true;
+  } finally {
+    detailTranslationLoading = false;
+    renderDetailOverlay();
+  }
 }
 // 2026-08-11: steps used to carry a single photo_url; now they carry
 // photo_urls (an array), so several photos can hang off one step. Every
@@ -4160,10 +4294,11 @@ function stepPhotoUrls(s) {
 // happens at save time, not here.
 function instructionSteps(d) {
   if (!Array.isArray(d.instructions) || !d.instructions.length) return [];
+  const contentL = detailOpen === d.id && !detailEditMode ? detailContentLocale(d) : lang;
   return d.instructions.map(s => typeof s === "string"
     ? { text: s, text_en: s, text_ru: null, photo_urls: [] }
     : {
-        text: stepLangText(s, lang),
+        text: stepLangText(s, contentL),
         text_en: (s && s.text_en) ?? null,
         text_ru: (s && s.text_ru) ?? null,
         photo_urls: stepPhotoUrls(s),
@@ -4174,13 +4309,8 @@ function instructionSteps(d) {
 function openDetail(id) {
   if (!dish(id)) return;
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
-  const d = dish(id);
-  const finish = () => renderDetailOverlay();
-  if ((lang === "uk" || lang === "nl") && d._resolvedLocale !== lang) {
-    hydrateDishContent(d, lang).then(finish);
-    return;
-  }
-  finish();
+  detailShowTranslation = false; detailTranslationLoading = false;
+  renderDetailOverlay();
 }
 function closeDetail() {
   const el = document.getElementById("detailOverlay");
@@ -4224,8 +4354,11 @@ function detailHeaderHtml(d) {
     <div style="padding:14px 16px">
       ${detailEditMode
         ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.recipe-name')}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
-        : `<div style="font-weight:800;font-size:24px">${dName(d)}</div>
-          ${lang === "uk" && d.ukFallback ? `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>` : ""}`}
+        : `<div style="display:flex;align-items:flex-start;gap:10px">
+            <div style="flex:1;font-weight:800;font-size:24px;line-height:1.25">${detailTitleName(d)}</div>
+            ${detailTranslateBtnHtml(d)}
+          </div>
+          ${detailTranslationBadge(d)}`}
       <div class="mt" style="margin-top:8px">
         ${detailEditMode
           ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${tr('detailHeaderHtml.min')}</span>
@@ -4319,8 +4452,9 @@ function detailView(d) {
         <button class="mini-btn" id="dtlIngAdd" style="margin-top:2px">+ ${tr('detailView.add-ingredient')}</button>`;
     } else {
       const scaleFactor = detailScaleTo ? detailScaleTo / baseServings : 1;
+      const ingLocale = detailContentLocale(d);
       ingHtml = d.ingredients.length
-        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor)}</li>`).join("")}</ul>`
+        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale)}</li>`).join("")}</ul>`
         : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${tr('detailView.no-ingredients-recorded-for-this-recipe-yet')}</div>`);
     }
 
@@ -4414,7 +4548,7 @@ function detailView(d) {
     </div>`;
   return `
   <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
-    <div style="flex:1;font-weight:800;font-size:15px">${dName(d)}</div>
+    <div style="flex:1;font-weight:800;font-size:15px">${detailTitleName(d)}</div>
     <button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button></div>
   ${pane}
   ${detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${tr('detailView.cancel')}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? tr('detailView.saving') : tr('detailView.save-changes')}</button></div>` : ""}`;
@@ -4460,6 +4594,15 @@ function wireDetailOverlay(wrap, d) {
     if (url) openPhotoLightbox(url);
   });
   wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
+  wrap.querySelector("#dtlTranslateBtn")?.addEventListener("click", async () => {
+    if (detailTranslationLoading) return;
+    if (detailShowTranslation) {
+      detailShowTranslation = false;
+      renderDetailOverlay();
+      return;
+    }
+    await requestRecipeTranslation(d);
+  });
   wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
     detailScaleTo = null; // editing always shows/edits the recipe's real base quantities
     if (detailEditMode) { detailEditMode = false; detailDraft = null; }
