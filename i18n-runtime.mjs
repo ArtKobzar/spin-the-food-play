@@ -17,7 +17,11 @@ export function initI18n() {
   rebuildIntl();
   globalThis.tr = (id, values) => {
     try {
-      return intl.formatMessage({ id, defaultMessage: STF_I18N_CATALOGS.en?.[id] || id }, values);
+      return intl.formatMessage(
+        { id, defaultMessage: STF_I18N_CATALOGS.en?.[id] || id },
+        values,
+        { ignoreTag: true }
+      );
     } catch (e) {
       console.warn("[i18n]", id, e);
       return STF_I18N_CATALOGS[globalThis.lang]?.[id] || STF_I18N_CATALOGS.en?.[id] || id;
