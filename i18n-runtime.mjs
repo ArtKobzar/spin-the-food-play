@@ -36,9 +36,13 @@ export function initI18n() {
   };
   globalThis.pairLabel = (o) => {
     if (!o) return "";
-    return globalThis.lang === "ru" ? (o.ru ?? o.en) : (o.en ?? o.ru);
+    const lc = globalThis.lang || "en";
+    if (lc === "uk") return o.uk ?? o.en ?? o.ru;
+    if (lc === "ru") return o.ru ?? o.en ?? o.uk;
+    return o.en ?? o.ru ?? o.uk ?? "";
   };
-  globalThis.pairLang = (en, ru) => (globalThis.lang === "ru" ? ru : en);
+  globalThis.pairLang = (en, ru, uk = en) =>
+    globalThis.lang === "uk" ? (uk ?? en) : globalThis.lang === "ru" ? ru : en;
 }
 
 export function refreshI18n() {
