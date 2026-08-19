@@ -751,19 +751,31 @@ const UNIT_SHORT_RU = {
   milliliter: "мл", liter: "л", teaspoon: "ч.л.", tablespoon: "ст.л.",
   cup: "чашка", piece: "шт", celsius: "°C", fahrenheit: "°F",
 };
-// Shared display label for a food.units record - used everywhere a unit is
-// rendered (ingredientLine() below, its edit-mode editor, and the import
-// review dialog) so short-form Russian units stay consistent no matter
-// which code path resolved the record.
-function unitLabel(rec) {
-  if (!rec) return "";
-  if (lang === "ru") return UNIT_SHORT_RU[rec.slug] || rec.name_ru || rec.slug;
-  return rec.name_en || rec.slug;
+// Phase 2 i18n: labels_i18n for uk/nl; name_en/name_ru mirrors for en/ru.
+function vocabLabel(rec, fallbackEn) {
+  if (!rec) return fallbackEn || "";
+  const li = rec.labels_i18n;
+  if (li && typeof li === "object" && lang && li[lang]) return li[lang];
+  if (lang === "ru") return rec.name_ru || rec.label_en || rec.name_en || fallbackEn || "";
+  return rec.name_en || rec.label_en || rec.name_ru || fallbackEn || "";
+}
+function ingredientDisplayName(ing) {
+  if (!ing || typeof ing !== "object") return "";
+  const li = ing.labels_i18n;
+  if (li && typeof li === "object" && li[lang]) return li[lang];
+  if (lang === "ru" && ing.name_ru) return ing.name_ru;
+  return ing.name_en || ing.raw || "";
 }
 // Localizes a food.units slug (canonical, or a legacy/alias form like "kg")
 // for display in the viewer's UI language - shared by the persisted-recipe
 // ingredient list (ingredientLine() below), its edit-mode editor, and the
 // import review dialog (openImportReview()).
+function unitLabel(rec) {
+  if (!rec) return "";
+  if (lang === "ru") return UNIT_SHORT_RU[rec.slug] || vocabLabel(rec, rec.slug);
+  if (lang === "uk" || lang === "nl") return vocabLabel(rec, rec.slug);
+  return rec.name_en || rec.slug;
+}
 function unitDisplay(slug) {
   if (!slug) return "";
   const rec = UNITS_BY_SLUG[matchUnitSlug(slug) || slug];
@@ -848,7 +860,11 @@ function recipeToDish(r) {
     // (no protein ingredient matched), empty on a thin card means "not classified at all" -
     // dishProteinGroups()/matchesAdvFilters() below tell the two apart via card_state.
     protein_groups: r.protein_groups || [],
-    diet_compatible_with: r.diet_compatible_with || [],
+    // The column is food.family_cookbook_recipes.diet_suitability. This read
+    // used to be r.diet_compatible_with, which no recipe row has ever had, so
+    // every diet filter chip silently matched nothing. Kept under the old
+    // local name because the filter code below reads d.diet_compatible_with.
+    diet_compatible_with: r.diet_suitability || [],
     required_appliances: r.required_appliances || [],
     ingredients: Array.isArray(r.ingredients) ? r.ingredients : [],
     ingredients_raw: r.ingredients_raw || "",
@@ -1261,8 +1277,13 @@ const DIET_META = {
   vegetarian:  { en: "Vegetarian",  ru: "Вегетарианское" },
   vegan:       { en: "Vegan",       ru: "Веганское" },
   pescatarian: { en: "Pescatarian", ru: "Пескетарианское" },
-  gluten_free: { en: "Gluten-free", ru: "Без глютена" },
-  dairy_free:  { en: "Dairy-free",  ru: "Без молочного" },
+  // Hyphenated, matching the one canonical vocabulary: live food.day_rules
+  // rule_values, food.ingredient_taxonomy.diet_compatible_with, and
+  // spin_food_filter_vocabulary()'s diet_options all use hyphens. These two
+  // keys were the only underscored ones anywhere, so a Day Rule of
+  // "gluten-free" could never match a recipe filtered on "gluten_free".
+  "gluten-free": { en: "Gluten-free", ru: "Без глютена" },
+  "dairy-free":  { en: "Dairy-free",  ru: "Без молочного" },
   halal:       { en: "Halal",       ru: "Халяль" },
   kosher:      { en: "Kosher",      ru: "Кошер" },
 };
@@ -3978,7 +3999,7 @@ function fmtQty(n) {
 function ingredientLine(ing, scaleFactor = 1) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
-  const name = (lang === "ru" && ing.name_ru) ? ing.name_ru : (ing.name_en || ing.raw || "");
+  const name = ingredientDisplayName(ing);
   const note = ing.note ? ` (${ing.note})` : "";
   // Scaling (2026-08-09): scaleFactor = target servings / recipe.servings,
   // computed by the caller only when a real (non-null) servings baseline is
@@ -4166,7 +4187,7 @@ function detailView(d) {
     if (detailEditMode) {
       const ings = detailDraft.ingredients;
       ingHtml = `<div id="ingList">${ings.map((ing, i) => {
-        const name = (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
+        const name = ingredientDisplayName(ing) || "";
         return `
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
           <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${T("qty", "кол-во")}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
@@ -6008,7 +6029,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     reasoning: draft.taxonomy.reasoning || null,
   } : null;
 
-  const ingName = (ing) => (lang === "ru" ? (ing.name_ru || ing.name_en) : (ing.name_en || ing.name_ru)) || "";
+  const ingName = (ing) => ingredientDisplayName(ing) || "";
   const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
   // unitDisplay()/unitFromInput() are shared top-level helpers (see convertQty
   // above) - the draft stores the canonical slug (e.g. "kg"), same as saved
