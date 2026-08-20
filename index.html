@@ -96,6 +96,12 @@
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
   .chips-wrap.stack { flex-direction: column; }
   .chips-wrap.stack .chip { width: 100%; box-sizing: border-box; text-align: center; }
+  /* Family-role onboarding chips: equal-width 2-col grid so long labels (e.g. UA
+     «Особистий кухар») don't stretch one flex row out of alignment. */
+  .chips-wrap.avatar-roles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .chips-wrap.avatar-roles .chip { display: flex; align-items: center; gap: 6px; line-height: 1.25; min-width: 0; padding: 10px 12px; }
+  .chips-wrap.avatar-roles .chip .role-em { flex: 0 0 auto; font-size: 22px; line-height: 1; }
+  .chips-wrap.avatar-roles .chip .role-label { flex: 1 1 auto; min-width: 0; font-size: 13px; }
   .banner { margin: 12px 18px; padding: 13px 15px; border-radius: 16px; background: linear-gradient(135deg,#10b981,#059669); color: #fff; font-weight: 700; font-size: 14px; text-align: center; }
 
   /* AI fill CTA - the big glaring button at the top of an empty menu */
@@ -504,9 +510,16 @@ const AVATAR_CHOICES = [
   // invited chef themselves at accept-invitation time, not by the founder -
   // the founder only answers "do you have one" (has_private_chef) and sends
   // the invite; the person who accepts it chooses this role for themselves.
-  { r: "chef", em: "🧑‍🍳", en: "Private chef", ru: "Личный повар", uk: "Приватний кулінар", nl: "Privé-kok" },
+  { r: "chef", em: "🧑‍🍳", en: "Private chef", ru: "Личный повар", uk: "Особистий кухар", nl: "Privé-kok" },
   { r: "other", em: "🙂", en: "Someone else", ru: "Кто-то ещё", uk: "Хтось інший", nl: "Iemand anders" },
 ];
+
+function avatarRoleChipHtml(c, selRole) {
+  return `<div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}">
+    <span class="role-em">${c.em}</span>
+    <span class="role-label">${avatarRoleLabel(c.r)}</span>
+  </div>`;
+}
 
 function avatarRoleLabel(role) {
   const c = AVATAR_CHOICES.find((x) => x.r === role);
@@ -2339,9 +2352,7 @@ function renderInvitationOnboarding(preset = null) {
       <div class="chip ${unitsSystem() === "imperial" ? "on" : ""}" data-ou="imperial">📐 ${tr('renderInvitationOnboarding.imperial-oz-cups-f')}</div>
     </div>
     <div class="sect" style="margin-top:14px">${tr('renderInvitationOnboarding.your-role')}</div>
-    <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${avatarRoleLabel(c.r)}</div>
-    `).join("")}</div>
+    <div class="chips-wrap avatar-roles" id="roleWrap">${AVATAR_CHOICES.map(c => avatarRoleChipHtml(c, selRole)).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${tr('renderInvitationOnboarding.what-should-we-call-this-role')}</div>
       <input id="otherLabelInput" placeholder="${tr('renderInvitationOnboarding.e-g-uncle-nanny-roommate')}" maxlength="30" value="${preset?.otherLabel ?? ""}"
@@ -2501,9 +2512,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
       style="width:100%;padding:12px;font-size:15px;border:2px solid #e5e7eb;border-radius:12px">
     <div id="householdNameNote" style="font-size:12px;margin-top:4px;min-height:16px"></div>
     <div class="sect" style="margin-top:14px">${tr('renderCreateHouseholdOnboarding.your-role')}</div>
-    <div class="chips-wrap" id="roleWrap">${AVATAR_CHOICES.map(c => `
-      <div class="chip ${selRole === c.r ? "on" : ""}" data-r="${c.r}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${c.em}</span> ${avatarRoleLabel(c.r)}</div>
-    `).join("")}</div>
+    <div class="chips-wrap avatar-roles" id="roleWrap">${AVATAR_CHOICES.map(c => avatarRoleChipHtml(c, selRole)).join("")}</div>
     <div id="otherLabelWrap" style="display:${selRole === "other" ? "block" : "none"};margin-top:10px">
       <div class="sect">${tr('renderCreateHouseholdOnboarding.what-should-we-call-this-role')}</div>
       <input id="otherLabelInput" placeholder="${tr('renderCreateHouseholdOnboarding.e-g-uncle-nanny-roommate')}" maxlength="30" value="${preset?.otherLabel ?? ""}"
