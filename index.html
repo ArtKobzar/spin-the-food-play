@@ -698,6 +698,18 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+// spin_food_create_family hung for 15s+ with zero server trace (2026-08-18, 2026-08-20
+// UA retest): supabase-js can block RPC behind a token refresh that never completes
+// on flaky networks. Resolve session explicitly before SECURITY DEFINER RPCs.
+async function ensureAuthReady(ms = 12000) {
+  const { data, error } = await withTimeout(sb.auth.getSession(), ms, "Auth session");
+  if (error) throw error;
+  const session = data?.session;
+  if (!session?.access_token) throw new Error("not signed in");
+  authSession = session;
+  return session;
+}
+
 // 2026-08-10 (SPEC gap: photo-upload timeouts with zero server-side trace -
 // see food.client_diagnostics migration comment for the full story) - a
 // minimal, best-effort breadcrumb logger for exactly this class of "the
@@ -2538,6 +2550,16 @@ function renderCreateHouseholdOnboarding(preset = null) {
     <div id="createNote" style="color:#888;font-size:13px;margin-top:10px;line-height:1.5"></div>
   </div>`;
 
+  const nameHouseholdInput = document.getElementById("householdNameInput");
+  const householdNote = document.getElementById("householdNameNote");
+  const roleChips = app.querySelectorAll("#roleWrap .chip");
+  const chefChips = app.querySelectorAll("#chefWrap .chip");
+  const otherWrap = document.getElementById("otherLabelWrap");
+  const otherInput = document.getElementById("otherLabelInput");
+  const nameInput = document.getElementById("displayNameInput");
+  const createBtn = document.getElementById("createBtn");
+  const note = document.getElementById("createNote");
+
   const captureState = () => ({
     selRole,
     hasPrivateChef,
@@ -2554,16 +2576,6 @@ function renderCreateHouseholdOnboarding(preset = null) {
     saveUnitsChoice(c.dataset.ou);
     renderCreateHouseholdOnboarding(captureState());
   });
-
-  const nameHouseholdInput = document.getElementById("householdNameInput");
-  const householdNote = document.getElementById("householdNameNote");
-  const roleChips = app.querySelectorAll("#roleWrap .chip");
-  const chefChips = app.querySelectorAll("#chefWrap .chip");
-  const otherWrap = document.getElementById("otherLabelWrap");
-  const otherInput = document.getElementById("otherLabelInput");
-  const nameInput = document.getElementById("displayNameInput");
-  const createBtn = document.getElementById("createBtn");
-  const note = document.getElementById("createNote");
 
   const validate = () => {
     const householdOk = HOUSEHOLD_NAME_RE.test(nameHouseholdInput.value.trim());
@@ -2620,17 +2632,22 @@ function renderCreateHouseholdOnboarding(preset = null) {
     // resolution either way; the outer try/catch guarantees the button is
     // never left stuck silently again, regardless of which line failed.
     let createResult;
+    const householdLen = nameHouseholdInput.value.trim().length;
+    logClientDiagnostic("create_family_start", { household_name_len: householdLen, lang });
     try {
+      await ensureAuthReady();
       createResult = await withTimeout(sb.rpc("spin_food_create_family", {
         p_household_name: nameHouseholdInput.value.trim(),
         p_avatar_role: selRole,
         p_display_name: nameInput.value.trim(),
         p_other_label: selRole === "other" ? otherInput.value.trim() : null,
         p_has_private_chef: hasPrivateChef,
-      }), 15000, "Create family");
+      }), 45000, "Create family");
     } catch (e) {
-      logClientDiagnostic("create_family_call_exception", { message: e?.message || String(e), stack: e?.stack || null, household_name_len: nameHouseholdInput.value.trim().length });
-      note.textContent = tr('anonymous.couldnt-reach-the-server-check-your-connection-a');
+      const rawMsg = e?.message || String(e);
+      logClientDiagnostic("create_family_call_exception", { message: rawMsg, stack: e?.stack || null, household_name_len: householdLen });
+      note.textContent = tr('anonymous.couldnt-reach-the-server-check-your-connection-a')
+        + (rawMsg ? ` (${rawMsg})` : "");
       note.style.color = "#ef4444";
       createBtn.disabled = false;
       createBtn.textContent = tr('anonymous.try-again');
