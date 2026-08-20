@@ -1255,8 +1255,8 @@ export const STF_I18N_CATALOGS = {
     "openSettings.sign-out": "Вийти",
     "openInviteFlow.invite-your-private-chef": "Запросити вашого особистого кухаря",
     "openInviteFlow.invite-family-member": "Запросити члена родини",
-    "openInviteFlow.theyll-get-a-one-tap-magic-link-on-first-sign-in": "Вони отримають магічне посилання.",
-    "openInviteFlow.theyll-get-a-one-tap-magic-link-on-first-sign-in-2": "Вони отримають магічне посилання.",
+    "openInviteFlow.theyll-get-a-one-tap-magic-link-on-first-sign-in": "Вони отримають магічне посилання. Під час першого входу нехай обере роль «Особистий кухар».",
+    "openInviteFlow.theyll-get-a-one-tap-magic-link-on-first-sign-in-2": "Вони отримають магічне посилання. Під час першого входу оберуть роль і ім'я.",
     "openInviteFlow.email-address": "Електронна адреса",
     "openInviteFlow.send-invitation": "Надіслати запрошення",
     "submit.that-doesnt-look-like-a-valid-email": "Це не виглядає як дійсна електронна адреса.",
@@ -1721,7 +1721,7 @@ export const STF_I18N_CATALOGS = {
     "avatarRole.grandma": "Бабуся",
     "avatarRole.grandpa": "Дідусь",
     "avatarRole.kid": "Дитина",
-    "avatarRole.chef": "Приватний кулінар",
+    "avatarRole.chef": "Особистий кухар",
     "avatarRole.other": "Хтось інший"
   }
 };
