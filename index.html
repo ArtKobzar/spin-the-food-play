@@ -232,6 +232,7 @@
   .scard .pdots span, .dtl-hero .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
   .scard .pdots span.on, .dtl-hero .pdots span.on { background: #fff; }
   .scard .photo-pending-badge, .dtl-hero .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
+  .scard .photo-credit, .dtl-hero .photo-credit { position: absolute; bottom: 10px; left: 10px; z-index: 3; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 12px; max-width: 70%; line-height: 1.3; }
   /* Top-right "remove this photo" X, approved (non-pending) slides only -
      pending slides show .photo-pending-badge in the same corner instead,
      never both at once (see photoSlideHtml). */
@@ -1109,6 +1110,27 @@ function dishDisplayTitle(d) {
   if (lang === "en") return d.en || d.title || d.ru;
   return d.en || d.title || d.ru;
 }
+function isPlatformRecipe(d) {
+  return !!(d && d.family_id == null);
+}
+function isRecipeOwner(d) {
+  if (!d || !me) return false;
+  if (d.added_by_member_id === me) return true;
+  if (!d.added_by_member_id && d.family_id) return true;
+  return false;
+}
+function recipePhotoSlides(d) {
+  if (Array.isArray(d.photo_gallery) && d.photo_gallery.length) {
+    return d.photo_gallery.map((entry) => ({
+      url: entry.url,
+      pending: false,
+      family_name: entry.family_name || "",
+      member_name: entry.member_name || "",
+    }));
+  }
+  const urls = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
+  return urls.map((url) => ({ url, pending: false, family_name: "", member_name: "" }));
+}
 // Localizes a food.units slug (canonical, or a legacy/alias form like "kg")
 // for display in the viewer's UI language - shared by the persisted-recipe
 // ingredient list (ingredientLine() below), its edit-mode editor, and the
@@ -1237,6 +1259,7 @@ function recipeToDish(r) {
     // Photo gallery (20260804 migration) - photo_url above stays as the
     // legacy single-photo fallback for recipes never re-photographed.
     photo_urls: Array.isArray(r.photo_urls) ? r.photo_urls : [],
+    photo_gallery: Array.isArray(r.photo_gallery) ? r.photo_gallery : [],
     pending_photo: r.pending_photo || null,
   };
 }
@@ -4237,9 +4260,7 @@ const photoIdx = {};
 // family knows something is waiting), then one virtual "add a photo" slide
 // at the very end.
 function photoSlideHtml(d, { allowRemove = false } = {}) {
-  const approved = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
-  const slides = approved.map(url => ({ url, pending: false }));
-  if (d.pending_photo && d.pending_photo.url) slides.push({ url: d.pending_photo.url, pending: true });
+  const slides = recipePhotoSlides(d);
   const total = slides.length + 1; // +1 for the trailing "add a photo" slide
   let idx = photoIdx[d.id] || 0;
   idx = Math.max(0, Math.min(idx, total - 1));
@@ -4251,27 +4272,18 @@ function photoSlideHtml(d, { allowRemove = false } = {}) {
   const prevBtn = idx > 0 ? `<button class="pnav prev" data-pnav="prev" data-dish="${d.id}" aria-label="${tr('photoSlideHtml.previous-photo')}">‹</button>` : "";
   const nextBtn = idx < total - 1 ? `<button class="pnav next" data-pnav="next" data-dish="${d.id}" aria-label="${tr('photoSlideHtml.next-photo')}">›</button>` : "";
   const dots = total > 1 ? `<div class="pdots">${Array.from({ length: total }).map((_, i) => `<span class="${i === idx ? "on" : ""}"></span>`).join("")}</div>` : "";
-  const pendingBadge = slide?.pending
-    ? `<div class="photo-pending-badge">⏳ ${tr('photoSlideHtml.pending-approval')}</div>` : "";
-  const canModerate = slide?.pending && membership?.is_owner;
-  const adminActions = canModerate ? `<div class="photo-approve-row">
-      <button class="pbtn approve" data-papprove="${d.id}">✓ ${tr('photoSlideHtml.approve')}</button>
-      <button class="pbtn decline" data-pdecline="${d.id}">✗ ${tr('photoSlideHtml.decline')}</button>
-    </div>` : "";
-  // Permanent removal (2026-08-11) - top-right X on any approved (non-pending)
-  // slide. Edit-mode-only, per follow-up request: allowRemove is passed true
-  // only from detailHeaderHtml() while detailEditMode is on, so the Spin
-  // card's carousel (which always calls this with no options) never shows
-  // it. Goes through a confirm dialog (removeRecipePhotoLive) before ever
-  // calling the recipe_photo_removed event, same "no surprise destructive
-  // taps" pattern as confirmDeleteRecipe.
+  const creditLabel = slide && (slide.family_name || slide.member_name)
+    ? [slide.family_name, slide.member_name].filter(Boolean).join(" · ")
+    : "";
+  const creditBadge = creditLabel
+    ? `<div class="photo-credit">${creditLabel.replace(/</g, "&lt;")}</div>` : "";
   const removeBtn = (allowRemove && slide && !slide.pending)
     ? `<button class="photo-remove-btn" data-premove="${d.id}" data-photourl="${slide.url.replace(/"/g, "&quot;")}" title="${tr('photoSlideHtml.remove-this-photo')}" aria-label="${tr('photoSlideHtml.remove-this-photo')}">✕</button>` : "";
   const addSlideHtml = isAddSlide ? `<label class="add-photo-cta" data-addphoto="${d.id}">
       <span class="ic">📷</span><span>${tr('photoSlideHtml.add-a-photo')}</span>
       <input type="file" accept="image/*" data-photofile="${d.id}" style="display:none">
     </label>` : "";
-  return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${pendingBadge}${adminActions}${removeBtn}${addSlideHtml}` };
+  return { bgStyle, inner: `${prevBtn}${nextBtn}${dots}${creditBadge}${removeBtn}${addSlideHtml}` };
 }
 // Reliable cross-platform icons for the quick-hide button (see .scard .qhide) -
 // an actual open/shut eyelid drawn in SVG, not the 🙈 monkey emoji, which reads
@@ -4413,10 +4425,6 @@ function wireStack() {
       if (file) await uploadRecipePhoto(id, file);
     });
   }
-  const approveBtn = topCard?.querySelector("[data-papprove]");
-  if (approveBtn) { stopBubble(approveBtn); approveBtn.addEventListener("click", () => resolvePendingPhoto(approveBtn.dataset.papprove, true)); }
-  const declineBtn = topCard?.querySelector("[data-pdecline]");
-  if (declineBtn) { stopBubble(declineBtn); declineBtn.addEventListener("click", () => resolvePendingPhoto(declineBtn.dataset.pdecline, false)); }
   // No [data-premove] wiring here (2026-08-11 follow-up): photoSlideHtml()
   // only renders the remove button when allowRemove is passed, and the Spin
   // card call site (above) never does - removal is edit-view only.
@@ -4703,8 +4711,6 @@ function renderDetailOverlay() {
 // logic and same Hide/Show tooltips, as the Spin card (see stackHtml()) -
 // just anchored to this hero's top-left corner instead of the card's.
 function detailHeaderHtml(d) {
-  const isOwner = !!(d.added_by_member_id && d.added_by_member_id === me);
-  const canApprove = !!(d.pending_edit && isOwner);
   const photo = photoSlideHtml(d, { allowRemove: detailEditMode });
   const enrichBtn = `<button class="enrich-fab" id="dtlEnrichBtn" title="${tr('detailHeaderHtml.enrich-this-recipe')}" aria-label="${tr('detailHeaderHtml.enrich-this-recipe')}">✨</button>`;
   const eyeBtn = d.is_active
@@ -4740,10 +4746,6 @@ function detailHeaderHtml(d) {
     </div>
     <div style="padding:0 16px">
       ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${tr('detailHeaderHtml.thin-card-tap-to-add-ingredients')}</div>` : ""}
-      ${d.pending_edit && !canApprove ? `<div class="dtl-banner edit">✏️ ${tr('detailHeaderHtml.an-edit-is-pending-the-owning-cooks-approval')}</div>` : ""}
-      ${canApprove ? `<div class="dtl-banner edit">✏️ ${tr('detailHeaderHtml.someone-proposed-an-edit-to-this-recipe')}
-        <div class="mini-row" style="margin-top:8px"><button class="mini-btn accept" id="dtlApprove">✅ ${tr('detailHeaderHtml.approve')}</button>
-        <button class="mini-btn reject" id="dtlDecline">🍴 ${tr('detailHeaderHtml.decline-fork-instead')}</button></div></div>` : ""}
       ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${tr('detailHeaderHtml.your-familys-copy-of-the-original-recipe')}</div>` : ""}
     </div>`;
 }
@@ -4916,7 +4918,8 @@ function detailView(d) {
   return `
   <div class="dtl-hd"><button class="dtl-back" id="dtlBack">←</button>
     <div style="flex:1;font-weight:800;font-size:15px">${detailTitleName(d)}</div>
-    <button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}">${detailEditMode ? "✕" : "✏️"}</button></div>
+    <button class="dtl-back" id="dtlEditToggle" style="border-color:${detailEditMode ? "var(--amber)" : "#eee"}" title="${isRecipeOwner(d) ? tr('detailView.edit-recipe') : tr('detailView.make-my-version')}">${detailEditMode ? "✕" : isRecipeOwner(d) ? "✏️" : "✏️"}</button></div>
+  ${!detailEditMode && !isRecipeOwner(d) ? `<div style="padding:4px 16px 0;font-size:12px;color:#6b7280;text-align:right">${tr('detailView.make-my-version')}</div>` : ""}
   ${pane}
   ${detailEditMode ? `<div class="dtl-editbar"><button class="btn btn-ghost" id="dtlCancel">${tr('detailView.cancel')}</button><button class="btn btn-primary" id="dtlSave" ${detailSaving ? "disabled" : ""}>${detailSaving ? tr('detailView.saving') : tr('detailView.save-changes')}</button></div>` : ""}`;
 }
@@ -4948,15 +4951,13 @@ function wireDetailOverlay(wrap, d) {
       toast(tr('anonymous.something-went-wrong-adding-that-photo-try-again'));
     }
   });
-  wrap.querySelector(".dtl-hero [data-papprove]")?.addEventListener("click", () => resolvePendingPhoto(d.id, true));
-  wrap.querySelector(".dtl-hero [data-pdecline]")?.addEventListener("click", () => resolvePendingPhoto(d.id, false));
   const dtlPhotoRemove = wrap.querySelector(".dtl-hero [data-premove]");
   dtlPhotoRemove?.addEventListener("click", () => confirmRemovePhoto(() => removeRecipePhotoLive(dtlPhotoRemove.dataset.premove, dtlPhotoRemove.dataset.photourl)));
   // Tapping the photo itself (not any of the controls above it) opens it
   // full-screen, uncropped - the hero strip only ever shows it letterboxed.
   wrap.querySelector(".dtl-hero")?.addEventListener("click", e => {
     if (e.target.closest(".pnav, .add-photo-cta, .photo-approve-row, .photo-pending-badge, .photo-remove-btn, .enrich-fab, .qhide")) return;
-    const photos = (d.photo_urls && d.photo_urls.length) ? d.photo_urls : (d.photo_url ? [d.photo_url] : []);
+    const photos = recipePhotoSlides(d).map((s) => s.url);
     const url = photos[photoIdx[d.id] || 0];
     if (url) openPhotoLightbox(url);
   });
@@ -4970,25 +4971,22 @@ function wireDetailOverlay(wrap, d) {
     }
     await requestRecipeTranslation(d);
   });
-  wrap.querySelector("#dtlEditToggle")?.addEventListener("click", () => {
+  wrap.querySelector("#dtlEditToggle")?.addEventListener("click", async () => {
     detailScaleTo = null; // editing always shows/edits the recipe's real base quantities
-    if (detailEditMode) { detailEditMode = false; detailDraft = null; }
-    else {
-      detailEditMode = true;
-      detailDraft = {
-        dish_role: d.dish_role, course_category: d.course_category,
-        meal_types: new Set(d.meals), techniques: new Set(d.techniques),
-        instructions: instructionSteps(d).map(s => ({ ...s })),
-        ingredients: d.ingredients.map(i => ({ ...i })),
-        titleEn: d.en, titleRu: d.ru, titleUk: d.uk, titleNl: d.nl,
-        cuisine: d.c === "family" ? "" : d.c,
-        cuisineMode: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? "new" : "pick",
-        cuisineCustom: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? cuisineLabel(d.c) : "",
-        difficulty: d.difficulty,
-        cookTimeMinutes: d.t,
-        servings: d.servings ?? null,
-      };
+    if (detailEditMode) {
+      detailEditMode = false;
+      detailDraft = null;
+      renderDetailOverlay();
+      return;
     }
+    if (!isRecipeOwner(d)) {
+      const fresh = await makeMyVersionAndEdit(d);
+      if (!fresh) return;
+      startDetailDraft(fresh);
+      renderDetailOverlay();
+      return;
+    }
+    startDetailDraft(d);
     renderDetailOverlay();
   });
   wrap.querySelector("#dtlCancel")?.addEventListener("click", () => { detailEditMode = false; detailDraft = null; renderDetailOverlay(); });
@@ -5063,8 +5061,6 @@ function wireDetailOverlay(wrap, d) {
     renderDetailOverlay();
   });
   wrap.querySelector("#dtlSave")?.addEventListener("click", () => saveDetailEdit(d));
-  wrap.querySelector("#dtlApprove")?.addEventListener("click", () => resolvePendingEdit(d, true));
-  wrap.querySelector("#dtlDecline")?.addEventListener("click", () => resolvePendingEdit(d, false));
   wrap.querySelector("#dtlActiveEye")?.addEventListener("click", () => toggleRecipeActive(d));
   wrap.querySelector("#dtlDelete")?.addEventListener("click", () => confirmDeleteRecipe(d));
 
@@ -5197,6 +5193,55 @@ function wireDetailOverlay(wrap, d) {
   });
 }
 
+function startDetailDraft(d) {
+  detailEditMode = true;
+  detailDraft = {
+    dish_role: d.dish_role, course_category: d.course_category,
+    meal_types: new Set(d.meals), techniques: new Set(d.techniques),
+    instructions: instructionSteps(d).map(s => ({ ...s })),
+    ingredients: d.ingredients.map(i => ({ ...i })),
+    titleEn: d.en, titleRu: d.ru, titleUk: d.uk, titleNl: d.nl,
+    cuisine: d.c === "family" ? "" : d.c,
+    cuisineMode: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? "new" : "pick",
+    cuisineCustom: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? cuisineLabel(d.c) : "",
+    difficulty: d.difficulty,
+    cookTimeMinutes: d.t,
+    servings: d.servings ?? null,
+  };
+}
+
+async function makeMyVersionAndEdit(d) {
+  const { data, error } = await sb.rpc("spin_food_make_my_version", { p_recipe_id: d.id });
+  if (error) {
+    toast(tr('makeMyVersion.failed') + error.message);
+    return null;
+  }
+  await loadCatalog();
+  const newId = data.recipe_id;
+  if (detailOpen === d.id) detailOpen = newId;
+  if (data.forked) {
+    promoteRecipeInDeck(newId);
+    toast(tr('saveDetailEdit.saved-to-your-cookbook-this-is-now-your-own-copy'));
+  }
+  if (tab === "spin") refreshDeck();
+  return dish(newId);
+}
+
+function confirmPhotoTarget() {
+  return new Promise((resolve) => {
+    const v = modal(`<h3 style="margin:0 0 8px">📷 ${tr('confirmPhotoTarget.title')}</h3>
+      <div style="font-size:14px;color:#666;line-height:1.45;margin-bottom:14px">${tr('confirmPhotoTarget.prompt')}</div>
+      <div class="mini-row" style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-primary" id="photoTargetGlobal" style="width:100%">${tr('confirmPhotoTarget.global-cookbook')}</button>
+        <button class="btn btn-ghost" id="photoTargetFamily" style="width:100%">${tr('confirmPhotoTarget.family-cookbook')}</button>
+        <button class="btn btn-ghost" id="photoTargetCancel" style="width:100%">${tr('confirmPhotoTarget.cancel')}</button>
+      </div>`);
+    v.querySelector("#photoTargetGlobal").onclick = () => { closeModal(); resolve("global"); };
+    v.querySelector("#photoTargetFamily").onclick = () => { closeModal(); resolve("family"); };
+    v.querySelector("#photoTargetCancel").onclick = () => { closeModal(); resolve(null); };
+  });
+}
+
 async function saveDetailEdit(d) {
   if (!detailDraft || detailSaving) return;
   const draftMeals = [...detailDraft.meal_types];
@@ -5313,7 +5358,6 @@ async function saveDetailEdit(d) {
   await loadCatalog();
   const editedId = forked ? forked.to : d.id;
   const fresh = dish(editedId);
-  const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
   detailEditMode = false; detailDraft = null;
   if (forked) {
     // "Make it mine": redirect the open detail view (and any active Spin
@@ -5323,8 +5367,6 @@ async function saveDetailEdit(d) {
   }
   toast(forked
     ? tr('saveDetailEdit.saved-to-your-cookbook-this-is-now-your-own-copy')
-    : wentPending
-    ? tr('saveDetailEdit.edit-sent-waiting-for-the-owning-cook-to-approve')
     : tr('saveDetailEdit.recipe-updated'));
   if (tab === "spin") refreshDeck();
   const editedDish = dish(editedId);
@@ -5335,28 +5377,7 @@ async function saveDetailEdit(d) {
   if (detailOpen) renderDetailOverlay();
 }
 
-async function resolvePendingEdit(d, approve) {
-  const pendingLocaleTitle = approve && d.pending_edit?.title_locale && d.pending_edit?.title_locale_value
-    ? { locale: d.pending_edit.title_locale, title: d.pending_edit.title_locale_value }
-    : null;
-  const ok = await applyEvent(approve ? "recipe_edit_accepted" : "recipe_edit_declined", { recipe_id: d.id });
-  if (!ok) return;
-  if (pendingLocaleTitle) {
-    await sb.rpc("spin_food_recipe_set_locale_title", {
-      p_recipe_id: d.id,
-      p_locale: pendingLocaleTitle.locale,
-      p_title: pendingLocaleTitle.title,
-    });
-  }
-  await loadCatalog();
-  toast(approve ? tr('resolvePendingEdit.edit-approved') : tr('resolvePendingEdit.edit-declined-a-new-recipe-was-created'));
-  if (tab === "spin") refreshDeck();
-  if (detailOpen) renderDetailOverlay();
-}
-
-// Instant, no-approval toggle (unlike recipe_edit_*/pending_edit above) - this is a
-// household preference, not a fact about the recipe, so any family member can flip
-// it and see it take effect immediately. See 20260804_food_recipe_active_toggle.sql.
+// Instant, no-approval toggle - household preference, not recipe truth.
 async function toggleRecipeActive(d) {
   if (detailSaving) return;
   const goingActive = !d.is_active;
@@ -5404,15 +5425,18 @@ function confirmDeleteRecipe(d) {
   };
 }
 
-// Uploads to the recipe-photos Storage bucket at <family_id>/<recipe_id>/<uuid>.<ext>
-// (RLS on storage.objects checks the first path segment against the caller's
-// family - 20260804020000 migration), then fires recipe_photo_added so
-// food.apply_event decides whether it lands live or waits for the family
-// admin (see the migration header for the exact rule).
+// Uploads to recipe-photos Storage, then recipe_photo_added (live for family rows;
+// platform rows prompt global vs family fork).
 async function uploadRecipePhoto(dishId, file) {
   const familyId = membership?.family_id;
   if (!familyId) { toast(tr('uploadRecipePhoto.sign-in-first')); return; }
   if (!checkPhotoUploadSize(file)) return;
+  const d = dish(dishId);
+  let photoTarget = null;
+  if (d && isPlatformRecipe(d)) {
+    photoTarget = await confirmPhotoTarget();
+    if (!photoTarget) return;
+  }
   const upload = await compressImageForUpload(file, DISPLAY_PHOTO_COMPRESS);
   const ext = upload === file ? ((file.name || "").split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg" : "jpg";
   const path = `${familyId}/${dishId}/${crypto.randomUUID()}.${ext}`;
@@ -5432,7 +5456,9 @@ async function uploadRecipePhoto(dishId, file) {
   const { data: pub } = sb.storage.from("recipe-photos").getPublicUrl(path);
   const photoUrl = pub?.publicUrl;
   if (!photoUrl) { toast(tr('uploadRecipePhoto.upload-failed-no-url-returned')); return; }
-  const ok = await applyEvent("recipe_photo_added", { recipe_id: dishId, photo_url: photoUrl });
+  const payload = { recipe_id: dishId, photo_url: photoUrl };
+  if (photoTarget) payload.photo_target = photoTarget;
+  const ok = await applyEvent("recipe_photo_added", payload);
   if (!ok) return;
   const forked = lastForkInfo;
   await loadCatalog();
@@ -5441,14 +5467,14 @@ async function uploadRecipePhoto(dishId, file) {
     if (detailOpen === forked.from) detailOpen = forked.to;
     promoteRecipeInDeck(forked.to);
   }
-  const d = dish(targetId);
-  const wentLive = Boolean(d && d.photo_urls.includes(photoUrl));
-  photoIdx[targetId] = wentLive ? Math.max(0, d.photo_urls.length - 1) : 0;
+  const fresh = dish(targetId);
+  const wentLive = Boolean(fresh && recipePhotoSlides(fresh).some((s) => s.url === photoUrl));
+  photoIdx[targetId] = wentLive ? Math.max(0, recipePhotoSlides(fresh).length - 1) : 0;
   toast(forked
     ? tr('uploadRecipePhoto.photo-added-to-your-own-copy-of-this-recipe')
-    : wentLive
-    ? tr('uploadRecipePhoto.photo-added')
-    : tr('uploadRecipePhoto.photo-sent-to-the-family-admin-for-approval'));
+    : photoTarget === "global"
+    ? tr('uploadRecipePhoto.photo-added-to-global-cookbook')
+    : tr('uploadRecipePhoto.photo-added'));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
@@ -5514,15 +5540,6 @@ async function removeStepPhotoLive(d, stepIndex, url) {
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
 }
-async function resolvePendingPhoto(dishId, approve) {
-  const ok = await applyEvent(approve ? "recipe_photo_approved" : "recipe_photo_declined", { recipe_id: dishId });
-  if (!ok) return;
-  await loadCatalog();
-  photoIdx[dishId] = 0;
-  toast(approve ? tr('resolvePendingPhoto.photo-approved') : tr('resolvePendingPhoto.photo-declined'));
-  if (tab === "spin") refreshDeck();
-  if (detailOpen) renderDetailOverlay();
-}
 
 // Uploads a per-step photo the same way uploadRecipePhoto() uploads a hero
 // photo (same bucket, same family-scoped path prefix so storage RLS applies
@@ -5580,11 +5597,8 @@ async function addStepPhotoLive(d, stepIndex, file) {
     promoteRecipeInDeck(forked.to);
   }
   const fresh = dish(editedId);
-  const wentPending = !!(fresh && fresh.pending_edit && fresh.added_by_member_id && fresh.added_by_member_id !== me);
   toast(forked
     ? tr('addStepPhotoLive.photo-added-to-your-own-copy-of-this-recipe')
-    : wentPending
-    ? tr('addStepPhotoLive.photo-sent-to-the-family-admin-for-approval')
     : tr('addStepPhotoLive.photo-added'));
   if (tab === "spin") refreshDeck();
   if (detailOpen) renderDetailOverlay();
