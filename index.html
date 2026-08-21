@@ -1466,8 +1466,14 @@ function dishIsVeg(d) {
 }
 function quickFilterRowHtml(idPrefix, f) {
   const chips = QUICK_FILTERS.map(q =>
-    `<div class="chip ${isQuickOn(f, q.key)?"on":""}" data-k="${q.key}">${q.ic} ${pairLabel(q)}</div>`).join("");
+    `<div class="chip ${isQuickOn(f, q.key)?"on":""}" data-k="${q.key}">${q.ic} ${quickFilterLabel(q.key)}</div>`).join("");
   return `<div class="filter-row" id="${idPrefix}Quick">${chips}</div>`;
+}
+function quickFilterLabel(key) {
+  return tr(`quickFilterLabel.${key}`);
+}
+function navTabLabel(key) {
+  return tr(`navTab.${key}`);
 }
 function wireQuickFilterRow(root, idPrefix, f, onChange) {
   root.querySelectorAll("#"+idPrefix+"Quick .chip").forEach(c => c.onclick = () => {
@@ -5468,8 +5474,8 @@ function nav() {
   // Order: Spin, Wish, Menu, Duel, Family. Menu sits dead center and gets the
   // raised "big" bubble treatment below - it's the weekly-plan home screen, the one
   // tab worth a second of extra visual weight versus the other four.
-  const tabs = [["spin","🎰","Spin","Крутить"],["wish","✨","Wish","Желание"],["menu","🗓","Menu","Меню"],["duel","⚔️","Duel","Дуэль"],["feed","📣","Family","Семья"]];
-  return `<div class="nav">${tabs.map(([k,ic,l,lru]) => `<button class="${tab===k?"on":""}${k==="menu"?" big":""}" data-tab="${k}"><span class="ic">${ic}</span>${pairLang(l, lru)}</button>`).join("")}</div>`;
+  const tabs = [["spin","🎰"],["wish","✨"],["menu","🗓"],["duel","⚔️"],["feed","📣"]];
+  return `<div class="nav">${tabs.map(([k,ic]) => `<button class="${tab===k?"on":""}${k==="menu"?" big":""}" data-tab="${k}"><span class="ic">${ic}</span>${navTabLabel(k)}</button>`).join("")}</div>`;
 }
 
 // ── wiring ──
