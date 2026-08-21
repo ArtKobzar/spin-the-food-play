@@ -417,7 +417,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=62c9376";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=8dce5a9";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -3973,7 +3973,15 @@ let deckPanel = { open: false };
 // Cuisine is free text (an LLM-classified slug from the dynamic food.cuisines list, thin/
 // unclassified cards fall back to the "family" sentinel) - derived from whatever the
 // family's cookbook actually contains, so the filter chip list never drifts from the ontology.
-function cuisineLabel(c) { return c.replace(/\b\w/g, ch => ch.toUpperCase()); }
+// Stored lower-case in DB; always title-case on display (italian -> Italian).
+function cuisineLabel(c) {
+  if (!c) return "";
+  return String(c).replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+}
+function cuisineDisplay(c) {
+  if (!c || c === "family") return "";
+  return cuisineLabel(c);
+}
 function availableCuisines() {
   return [...new Set(DISHES.map(d => d.c).filter(c => c && c !== "family"))].sort();
 }
@@ -4146,7 +4154,7 @@ function stackHtml(dk) {
     const photo = photoSlideHtml(d);
     s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
       <div class="ph" style="${photo.bgStyle}">${enrichBtn}${photo.inner}</div>
-      <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+      <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${cuisineDisplay(d.c)}</span></div></div>
       ${quickHide}
       <div class="stamp yes">${tr('anonymous.menu')}</div><div class="stamp no">${tr('anonymous.nope')}</div></div>`;
   });
@@ -4540,8 +4548,8 @@ function detailHeaderHtml(d) {
         ${detailEditMode
           ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${tr('detailHeaderHtml.min')}</span>
             <span id="dtlDiffPicker" style="display:inline-flex;gap:3px;cursor:pointer;margin-right:10px;vertical-align:middle">${[1, 2, 3].map(n => `<span data-diffval="${n}" style="opacity:${n <= detailDraft.difficulty ? "1" : "0.25"};font-size:15px">●</span>`).join("")}</span>
-            <input id="dtlCuisineInput" value="${(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.cuisine')}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
-          : `⏱ ${d.t} ${tr('detailHeaderHtml.min')} &nbsp; ${d.d} &nbsp; ${d.c}${d.added_by_member_id ? ` &nbsp; · ${tr('detailHeaderHtml.by')} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
+            <input id="dtlCuisineInput" value="${cuisineLabel(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.cuisine')}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
+          : `⏱ ${d.t} ${tr('detailHeaderHtml.min')} &nbsp; ${d.d} &nbsp; ${cuisineDisplay(d.c)}${d.added_by_member_id ? ` &nbsp; · ${tr('detailHeaderHtml.by')} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
       </div>
       ${d.youtube_url ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <a href="${d.youtube_url}" target="_blank" rel="noopener" style="font-size:13px;color:var(--amber);text-decoration:none;font-weight:700">▶️ ${tr('detailHeaderHtml.watch-video')}</a>
@@ -5343,7 +5351,7 @@ function renderWish() {
   if (!game.wishes.length) h += `<div class="hint">${tr('renderWish.no-wishes-yet-tap-below-to-make-one')}</div>`;
   game.wishes.forEach((w, i) => {
     const by = mem(w.by), commit = w.committed ? mem(w.committed) : null;
-    const title = w.kind === "dish" ? `${dishOr(w.dish).em} ${dName(dishOr(w.dish))}` : w.kind === "cuisine" ? `🌍 ${w.cuisine} ${tr('anonymous.night')}` : "🎁 " + tr('anonymous.cooks-choice');
+    const title = w.kind === "dish" ? `${dishOr(w.dish).em} ${dName(dishOr(w.dish))}` : w.kind === "cuisine" ? `🌍 ${cuisineLabel(w.cuisine)} ${tr('anonymous.night')}` : "🎁 " + tr('anonymous.cooks-choice');
     const want = w.wishCook === "any" ? tr('anonymous.anyone') : `${mName(mem(w.wishCook))} ${mem(w.wishCook).em}`;
     const iVoted = w.votes.includes(me);
     h += `<div class="card ${commit ? "granted" : ""}"><div class="wish-head">
@@ -5791,7 +5799,7 @@ function wishStep2(kind) {
       const photo = photoSlideHtml(d);
       s += `<div class="scard ${top ? "top" : ""}" data-dish="${d.id}" style="transform:translateY(${dep*-6}px) scale(${1-dep*.04});z-index:${10-dep}">
         <div class="ph" style="${photo.bgStyle}"></div>
-        <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+        <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${cuisineDisplay(d.c)}</span></div></div>
         <div class="stamp yes">${tr('anonymous.pick')}</div><div class="stamp no">${tr('anonymous.skip')}</div></div>`;
     });
     return s;
@@ -5829,7 +5837,7 @@ function wishStep2(kind) {
       const photo = photoSlideHtml(d);
       box.innerHTML = `<div class="scard" style="position:relative;height:auto">
           <div class="ph" style="${photo.bgStyle};height:120px"></div>
-          <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('renderWishPicker.min')}</span><span>${d.d}</span><span>${d.c}</span></div></div>
+          <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('renderWishPicker.min')}</span><span>${d.d}</span><span>${cuisineDisplay(d.c)}</span></div></div>
         </div>
         <button class="mini-btn" id="wishChange" style="margin-top:8px">🔄 ${tr('renderWishPicker.change-dish')}</button>`;
       const chg = box.querySelector("#wishChange");
@@ -6563,7 +6571,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       <div style="font-size:12px;color:#666;margin:8px 0 4px">${tr('taxHtml.appliances-needed')}</div>
       <div class="chips-wrap">${taxChip(APPLIANCES.map(a => [a, applianceLabel(a)]), v => taxonomy.required_appliances.has(v), "required_appliances")}</div>
       <div style="font-size:12px;color:#666;margin:8px 0 4px">${tr('taxHtml.cuisine')}</div>
-      <input id="revCuisine" value="${(taxonomy.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('taxHtml.cuisine-2')}" style="width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px">`;
+      <input id="revCuisine" value="${cuisineLabel(taxonomy.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('taxHtml.cuisine-2')}" style="width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px">`;
   };
   const wireTax = () => {
     if (!taxonomy) return;
