@@ -3334,6 +3334,52 @@ function mealShapeToShapes() {
   for (const m of MEALS) shapes[m.k] = COURSE_ROLES.filter(r => msCellOn(m.k, r));
   return shapes;
 }
+// Shared save path for meal-shape onboarding (standalone owner setup + embedded
+// member wizard). Prior handler only toggled the button back to "Next" on RPC
+// failure with a 2.2s toast users often missed - looked like a no-op stuck screen.
+async function submitMealShapeAndAdvance(btn, { onSuccess, idleLabelKey }) {
+  if (!btn || btn.disabled) return;
+  if (!mealShapeDraft) mealShapeDraft = mealShapeFromSaved(game?.defaultMealShapes || {});
+  btn.disabled = true;
+  const idleLabel = tr(idleLabelKey);
+  btn.textContent = tr('anonymous.saving');
+  let errEl = document.getElementById("msErr");
+  if (!errEl) {
+    errEl = document.createElement("div");
+    errEl.id = "msErr";
+    errEl.style.cssText = "font-size:12px;color:#b91c1c;margin-top:8px;min-height:16px";
+    btn.insertAdjacentElement("afterend", errEl);
+  }
+  errEl.textContent = "";
+  try {
+    await ensureAuthReady();
+    if (!membership?.family_id) await refreshMembershipWithRetry(6);
+    if (!membership?.family_id) {
+      errEl.textContent = tr('anonymous.couldnt-save-your-profile-check-your-connection-');
+      stickyToast(errEl.textContent);
+      btn.disabled = false;
+      btn.textContent = idleLabel;
+      return;
+    }
+    logClientDiagnostic("meal_shape_save_start", { meal_keys: Object.keys(mealShapeToShapes()) });
+    const ok = await applyEvent("meal_shape_edited", { shapes: mealShapeToShapes() });
+    if (!ok) {
+      errEl.textContent = tr('saveTimezoneAndThen.couldnt-save') + " " + tr('anonymous.try-again');
+      btn.disabled = false;
+      btn.textContent = idleLabel;
+      return;
+    }
+    await pullLatest();
+    mealShapeDraft = null;
+    onSuccess();
+  } catch (e) {
+    logClientDiagnostic("meal_shape_save_exception", { message: e?.message || String(e), stack: e?.stack || null });
+    errEl.textContent = tr('saveTimezoneAndThen.something-went-wrong-check-your-connection-and-t');
+    stickyToast(tr('anonymous.something-went-wrong-please-try-that-again'));
+    btn.disabled = false;
+    btn.textContent = idleLabel;
+  }
+}
 function wireMealShapeGrid() {
   document.querySelectorAll("[data-ms-row]").forEach(b => b.onclick = () => { msToggleRow(b.dataset.msRow); render(); });
   document.querySelectorAll("[data-ms-col]").forEach(b => b.onclick = () => { msToggleCol(b.dataset.msCol); render(); });
@@ -3359,19 +3405,10 @@ function renderMealShapeOnboarding() {
   </div>`;
   wireMealShapeGrid();
   const submit = document.getElementById("msSubmit");
-  if (submit) submit.onclick = async () => {
-    if (submit.disabled) return;
-    submit.disabled = true; submit.textContent = tr('anonymous.saving');
-    const ok = await applyEvent("meal_shape_edited", { shapes: mealShapeToShapes() });
-    if (ok) {
-      mealShapeDraft = null;
-      ownerSetupStep = "timezone";
-      renderOwnerSetup();
-    } else {
-      submit.disabled = false;
-      submit.textContent = tr('anonymous.set-up-my-kitchen');
-    }
-  };
+  if (submit) submit.onclick = () => submitMealShapeAndAdvance(submit, {
+    idleLabelKey: "renderMealShapeOnboarding.set-up-my-kitchen",
+    onSuccess: () => { ownerSetupStep = "timezone"; renderOwnerSetup(); },
+  });
 }
 // Matches food.allergen_classes exactly (EU FIC Annex II, 14 classes) so a member's
 // declared allergies compare 1:1 against a recipe's allergen_flags — no vocab drift.
@@ -3559,7 +3596,7 @@ function renderOnboard() {
       <button class="btn btn-primary ob-next" id="obNext">${tr('renderOnboard.next')}</button>`;
   } else if (cur === "allergies") {
     inner = `<div class="ob-q">${tr('renderOnboard.allergies')}</div>
-      <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k,en,ru]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${pairLang(en, ru)}</div>`).join("")}</div>
+      <div class="chips-wrap" style="margin-bottom:14px">${OB_ALG.map(([k]) => `<div class="chip ${ob.allergies.includes(k) ? "on" : ""}" data-al="${k}">${allergenLabel(k)}</div>`).join("")}</div>
       <button class="btn btn-primary ob-next" id="obNext" style="margin-top:8px${ob.allergies.length ? "" : ";opacity:.4"}" ${ob.allergies.length ? "" : "disabled"}>${tr('renderOnboard.next')}</button>`;
   } else if (cur === "eat") {
     inner = `<div class="ob-q">${tr('renderOnboard.how-do-you-eat-at-home')}</div>
@@ -3697,13 +3734,10 @@ function renderOnboard() {
   if (cur === "mealshape") {
     wireMealShapeGrid();
     const btn = document.getElementById("msNextOb");
-    if (btn) btn.onclick = async () => {
-      if (btn.disabled) return;
-      btn.disabled = true; btn.textContent = tr('anonymous.saving');
-      const ok = await applyEvent("meal_shape_edited", { shapes: mealShapeToShapes() });
-      if (ok) { mealShapeDraft = null; ob.step++; render(); }
-      else { btn.disabled = false; btn.textContent = tr('anonymous.next'); }
-    };
+    if (btn) btn.onclick = () => submitMealShapeAndAdvance(btn, {
+      idleLabelKey: "renderOnboard.next",
+      onSuccess: () => { ob.step++; render(); },
+    });
   }
   if (cur === "timezone") {
     wireTimezoneSelect();
@@ -4244,6 +4278,18 @@ function applianceLabel(v) {
     slow_cooker: tr('applianceLabel.slow-cooker'), pressure_cooker: tr('applianceLabel.pressure-cooker'),
     sous_vide: tr('applianceLabel.sous-vide'), microwave: tr('applianceLabel.microwave'),
     bread_maker: tr('applianceLabel.bread-maker'), blender_food_processor: tr('applianceLabel.blender-food-processor'),
+  })[v] || v;
+}
+function allergenLabel(v) {
+  return ({
+    none: tr('allergenLabel.none'), gluten: tr('allergenLabel.gluten'),
+    crustaceans: tr('allergenLabel.crustaceans'), eggs: tr('allergenLabel.eggs'),
+    fish: tr('allergenLabel.fish'), peanuts: tr('allergenLabel.peanuts'),
+    soybeans: tr('allergenLabel.soybeans'), milk: tr('allergenLabel.milk'),
+    tree_nuts: tr('allergenLabel.tree-nuts'), celery: tr('allergenLabel.celery'),
+    mustard: tr('allergenLabel.mustard'), sesame: tr('allergenLabel.sesame'),
+    sulphites: tr('allergenLabel.sulphites'), lupin: tr('allergenLabel.lupin'),
+    molluscs: tr('allergenLabel.molluscs'),
   })[v] || v;
 }
 // Formats a plain number for display, stripping trailing zeros (matches
