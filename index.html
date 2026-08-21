@@ -556,6 +556,54 @@ async function refreshMembership() {
   applyMembershipToFamily();
 }
 
+async function refreshMembershipWithRetry(maxAttempts = 4) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await refreshMembership();
+    if (membership?.member_id && membership?.family_id) return membership;
+    if (i < maxAttempts - 1) await new Promise(r => setTimeout(r, 400 * (i + 1)));
+  }
+  return membership;
+}
+
+// Shared post-join bootstrap for create-family and accept-invitation flows.
+// create_family commits server-side before this runs; failures here must not
+// look like "create failed" and must be safely retryable.
+async function bootstrapSessionAfterJoin({
+  memberId = null,
+  onboardLocaleOnly = false,
+  invitePrivateChef = false,
+  welcomeToast = true,
+} = {}) {
+  if (memberId) me = memberId;
+  await refreshMembershipWithRetry();
+  if (!membership?.member_id || !membership?.family_id) {
+    throw new Error("membership not found after join");
+  }
+  if (!me) me = membership.member_id;
+  if (lang && (!onboardLocaleOnly || needsOnboardLangGate(me))) {
+    saveLangChoice(lang, { forOnboard: true });
+    sb.rpc("spin_food_set_member_locale", { p_locale: lang }).catch((e) =>
+      console.warn("[stf-i18n] member locale save failed:", e)
+    );
+  }
+  const pendingTz = stfGet("stf_pending_tz");
+  if (pendingTz) {
+    try { await sb.rpc("spin_food_set_family_timezone", { p_timezone: pendingTz }); }
+    catch (tzErr) { logClientDiagnostic("pending_tz_apply_exception", { message: tzErr?.message || String(tzErr) }); }
+  }
+  joinPresence();
+  await load();
+  if (loadError) throw new Error(loadError);
+  subscribe();
+  startSyncWatchers();
+  render();
+  if (welcomeToast) toast(tr('anonymous.your-family-kitchen-is-ready'));
+  if (invitePrivateChef) {
+    try { openInviteFlow({ forPrivateChef: true }); }
+    catch (e) { console.warn("[stf-auth] chef invite flow:", e); }
+  }
+}
+
 // The invitation token in ?invite=<hex>. Present only for invitees arriving via
 // magic-link email. We stash it early so onAuthStateChange can pick it up.
 const inviteTokenInUrl = new URLSearchParams(location.search).get("invite");
@@ -2075,6 +2123,7 @@ function joinPresence() {
   // user-typed string - see docs/DECISION_LOG.md 2026-08-18 (retired the old
   // FAMILY_KEY/"kobzar-demo" default, which every un-invited new signup
   // silently shared, cross-contaminating presence between families).
+  if (!membership?.family_id || !me) return;
   presenceChan = sb.channel("presence-" + membership.family_id, { config: { presence: { key: me } } });
   presenceChan.on("presence", { event: "sync" }, () => {
     online = new Set(Object.values(presenceChan.presenceState()).flat().map(p => p.who));
@@ -2473,23 +2522,33 @@ function renderInvitationOnboarding(preset = null) {
     // forever with no feedback (2026-08-18: same class of bug as the create-
     // household hang below - see its comment for the full story).
     try {
-      await refreshMembership();
-      if (me === null) me = membership.member_id;
-      // If they already picked a device language before sign-in, stamp it for this member.
-      if (lang && needsOnboardLangGate(me)) saveLangChoice(lang, { forOnboard: true });
-      joinPresence();
-      await load();
-      subscribe();
-      startSyncWatchers();
-      render();
+      await bootstrapSessionAfterJoin({
+        memberId: data,
+        onboardLocaleOnly: true,
+        welcomeToast: false,
+      });
       toast("Welcome to the family kitchen 🍲");
     } catch (e) {
       logClientDiagnostic("accept_invitation_post_join_exception", { message: e?.message || String(e), stack: e?.stack || null });
-      note.textContent = tr('anonymous.joined-but-couldnt-finish-loading-tap-to-retry');
+      note.textContent = tr('anonymous.joined-but-couldnt-finish-loading-tap-to-retry')
+        + (e?.message ? ` (${e.message})` : "");
       note.style.color = "#ef4444";
       acceptBtn.disabled = false;
       acceptBtn.textContent = tr('anonymous.retry');
-      acceptBtn.onclick = async () => { await refreshMembership(); if (me === null) me = membership?.member_id; joinPresence(); await load(); subscribe(); startSyncWatchers(); render(); };
+      acceptBtn.onclick = async () => {
+        acceptBtn.disabled = true;
+        note.textContent = "";
+        try {
+          await bootstrapSessionAfterJoin({ memberId: me || data, onboardLocaleOnly: true, welcomeToast: false });
+          toast("Welcome to the family kitchen 🍲");
+        } catch (retryErr) {
+          logClientDiagnostic("accept_invitation_post_join_exception", { message: retryErr?.message || String(retryErr), stack: retryErr?.stack || null, retry: true });
+          note.textContent = tr('anonymous.joined-but-couldnt-finish-loading-tap-to-retry')
+            + (retryErr?.message ? ` (${retryErr.message})` : "");
+          note.style.color = "#ef4444";
+          acceptBtn.disabled = false;
+        }
+      };
     }
   };
 }
@@ -2677,42 +2736,31 @@ function renderCreateHouseholdOnboarding(preset = null) {
     // "Создаём..." on screen forever with no way to proceed or retry. Wrapped
     // so a failure here is always recoverable instead of looking like a hang.
     try {
-      await refreshMembership();
-      if (me === null) me = membership.member_id;
-      if (lang) {
-        saveLangChoice(lang, { forOnboard: true });
-        sb.rpc("spin_food_set_member_locale", { p_locale: lang }).catch((e) =>
-          console.warn("[stf-i18n] member locale save failed:", e)
-        );
-      }
-      // Apply the timezone confirmed at the pre-auth device gate (see
-      // needsDeviceTzGate/renderTzGate) now that a family finally exists to
-      // attach it to. Best-effort: a failure here shouldn't block the whole
-      // signup - the family just keeps the Europe/Amsterdam default and can
-      // be corrected later (renderOwnerSetup's standalone timezone step).
-      const pendingTz = stfGet("stf_pending_tz");
-      if (pendingTz) {
-        try { await sb.rpc("spin_food_set_family_timezone", { p_timezone: pendingTz }); }
-        catch (tzErr) { logClientDiagnostic("pending_tz_apply_exception", { message: tzErr?.message || String(tzErr) }); }
-      }
-      joinPresence();
-      await load();
-      subscribe();
-      startSyncWatchers();
-      render();
-      toast(tr('anonymous.your-family-kitchen-is-ready'));
-      // family.has_private_chef was captured above for future admin-handover
-      // logic (§ docs/DECISION_LOG.md 2026-08-18); this just gets the actual
-      // invite sent right away instead of leaving the founder to remember to
-      // do it later from Settings.
-      if (hasPrivateChef) openInviteFlow({ forPrivateChef: true });
+      await bootstrapSessionAfterJoin({
+        memberId: data,
+        onboardLocaleOnly: false,
+        invitePrivateChef: hasPrivateChef,
+      });
     } catch (e) {
       logClientDiagnostic("create_family_post_create_exception", { message: e?.message || String(e), stack: e?.stack || null });
-      note.textContent = tr('anonymous.kitchen-created-but-couldnt-finish-loading-tap-t');
+      note.textContent = tr('anonymous.kitchen-created-but-couldnt-finish-loading-tap-t')
+        + (e?.message ? ` (${e.message})` : "");
       note.style.color = "#ef4444";
       createBtn.disabled = false;
       createBtn.textContent = tr('anonymous.retry');
-      createBtn.onclick = async () => { await refreshMembership(); if (me === null) me = membership?.member_id; joinPresence(); await load(); subscribe(); startSyncWatchers(); render(); };
+      createBtn.onclick = async () => {
+        createBtn.disabled = true;
+        note.textContent = "";
+        try {
+          await bootstrapSessionAfterJoin({ memberId: me || data, invitePrivateChef: hasPrivateChef });
+        } catch (retryErr) {
+          logClientDiagnostic("create_family_post_create_exception", { message: retryErr?.message || String(retryErr), stack: retryErr?.stack || null, retry: true });
+          note.textContent = tr('anonymous.kitchen-created-but-couldnt-finish-loading-tap-t')
+            + (retryErr?.message ? ` (${retryErr.message})` : "");
+          note.style.color = "#ef4444";
+          createBtn.disabled = false;
+        }
+      };
     }
   };
 }
