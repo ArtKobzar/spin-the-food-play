@@ -2899,49 +2899,56 @@ function openInviteFlow({ forPrivateChef = false } = {}) {
 // RLS - no new permission model, just a client surface for it). One rule per
 // weekday, consumed by the Thursday scheduled AI pre-fill (§5.3/§9/§10) - never
 // affects manual assignment, Spin, Wish, or Duel.
-const DAY_RULE_KINDS = [
-  ["none", "No Rule", "Без правила"],
-  ["protein_type", "Protein Day", "День белка"],
-  ["diet_suitability", "Diet Day", "День диеты"],
-  ["cuisine", "Cuisine Day", "День кухни"],
-];
-const DAY_RULE_PROTEIN_VALUES = [
-  ["meat", "Meat", "Мясо"],
-  ["fish", "Fish", "Рыба"],
-  ["seafood", "Seafood", "Морепродукты"],
-  ["egg", "Egg", "Яйца"],
-  ["dairy", "Dairy", "Молочное"],
-];
-const DAY_RULE_DIET_VALUES = [
-  ["vegan", "Vegan", "Веганское"],
-  ["vegetarian", "Vegetarian", "Вегетарианское"],
-  ["pescatarian", "Pescatarian", "Пескетарианское"],
-  ["gluten-free", "Gluten-Free", "Без глютена"],
-  ["dairy-free", "Dairy-Free", "Без молочного"],
-];
+const DAY_RULE_KINDS = ["none", "protein_type", "diet_suitability", "cuisine"];
+const DAY_RULE_PROTEIN_VALUES = ["meat", "fish", "seafood", "egg", "dairy"];
+const DAY_RULE_DIET_VALUES = ["vegan", "vegetarian", "pescatarian", "gluten-free", "dairy-free"];
 // Canonical top-15 "world's most popular cuisines" default list - mirrors
 // food.cuisines' seed rows (20260819000000_food_day_rules_cuisine_v1.sql).
 // "Random World Cuisine" isn't a real cuisine - it's a sentinel rule_value
 // ('random') telling Auto-Menu to pick any recognized world cuisine rather
 // than pin the day to one specific kitchen.
 const WORLD_CUISINES = [
-  ["random", "Random World Cuisine", "Случайная кухня мира"],
-  ["italian", "Italian", "Итальянская"],
-  ["chinese", "Chinese", "Китайская"],
-  ["japanese", "Japanese", "Японская"],
-  ["mexican", "Mexican", "Мексиканская"],
-  ["indian", "Indian", "Индийская"],
-  ["thai", "Thai", "Тайская"],
-  ["french", "French", "Французская"],
-  ["greek", "Greek", "Греческая"],
-  ["spanish", "Spanish", "Испанская"],
-  ["korean", "Korean", "Корейская"],
-  ["vietnamese", "Vietnamese", "Вьетнамская"],
-  ["turkish", "Turkish", "Турецкая"],
-  ["middle_eastern", "Middle Eastern", "Ближневосточная"],
-  ["american", "American", "Американская"],
-  ["mediterranean", "Mediterranean", "Средиземноморская"],
+  "random", "italian", "chinese", "japanese", "mexican", "indian", "thai", "french",
+  "greek", "spanish", "korean", "vietnamese", "turkish", "middle_eastern", "american", "mediterranean",
 ];
+function dayRuleKindLabel(k) {
+  return ({
+    none: tr('dayRuleKind.none'),
+    protein_type: tr('dayRuleKind.protein-type'),
+    diet_suitability: tr('dayRuleKind.diet-day'),
+    cuisine: tr('dayRuleKind.cuisine-day'),
+  })[k] || k;
+}
+function dayRuleProteinLabel(v) {
+  return ({
+    meat: tr('dayRuleProtein.meat'), fish: tr('dayRuleProtein.fish'),
+    seafood: tr('dayRuleProtein.seafood'), egg: tr('dayRuleProtein.egg'),
+    dairy: tr('dayRuleProtein.dairy'),
+  })[v] || v;
+}
+function dayRuleDietLabel(v) {
+  return ({
+    vegan: tr('dayRuleDiet.vegan'), vegetarian: tr('dayRuleDiet.vegetarian'),
+    pescatarian: tr('dayRuleDiet.pescatarian'), "gluten-free": tr('dayRuleDiet.gluten-free'),
+    "dairy-free": tr('dayRuleDiet.dairy-free'),
+  })[v] || v;
+}
+function dayRuleValueLabel(kind, v) {
+  if (kind === "protein_type") return dayRuleProteinLabel(v);
+  if (kind === "diet_suitability") return dayRuleDietLabel(v);
+  return v;
+}
+function worldCuisineDayLabel(v) {
+  const key = v === "middle_eastern" ? "middle-eastern" : v;
+  return tr(`worldCuisineLabel.${key}`) || v;
+}
+function dayRuleKindNoteLabel(k) {
+  return ({
+    protein_type: tr('dayRuleKindNote.protein-type'),
+    cuisine: tr('dayRuleKindNote.cuisine-day'),
+    diet_suitability: tr('dayRuleKindNote.diet-day'),
+  })[k] || k;
+}
 // Factored out of openDayRules() (2026-08-18) so the exact same rows +
 // autosave-per-cell behavior can be mounted either in the Settings modal or
 // as a full-screen onboarding step (renderDayRulesOnboarding) without
@@ -2954,12 +2961,12 @@ function dayRulesRowHtml(rulesByDay, di) {
   return `<div class="day-block" style="margin-bottom:10px" data-drday="${di}">
     <div class="day-hd">${dayN(di)}</div>
     <div style="padding:10px 12px">
-      <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(([k, l, lru]) =>
-        `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${pairLang(l, lru)}</div>`).join("")}</div>
-      ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(([v, l, lru]) =>
-        `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${pairLang(l, lru)}</div>`).join("")}</div>` : ""}
+      <div class="chips-wrap" data-drkind="${di}">${DAY_RULE_KINDS.map(k =>
+        `<div class="chip ${r.rule_kind === k ? "on" : ""}" data-k="${k}">${dayRuleKindLabel(k)}</div>`).join("")}</div>
+      ${fixedValues ? `<div class="chips-wrap" data-drval="${di}" style="margin-top:6px">${fixedValues.map(v =>
+        `<div class="chip ${r.rule_value === v ? "on" : ""}" data-v="${v}">${dayRuleValueLabel(r.rule_kind, v)}</div>`).join("")}</div>` : ""}
       ${needsCuisineSelect ? `<select data-drcuisine="${di}" style="width:100%;margin-top:6px;padding:8px 10px;font-size:13px;border:1.5px solid #e5e7eb;border-radius:10px">
-        ${WORLD_CUISINES.map(([v, l, lru]) => `<option value="${v}" ${r.rule_value === v ? "selected" : ""}>${pairLang(l, lru)}</option>`).join("")}
+        ${WORLD_CUISINES.map(v => `<option value="${v}" ${r.rule_value === v ? "selected" : ""}>${worldCuisineDayLabel(v)}</option>`).join("")}
       </select>` : ""}
     </div>
   </div>`;
@@ -5589,16 +5596,10 @@ function closeModal() {
 }
 // SPEC_AI_PREFILL.md #19: translates food.meal_slots.ai_note's machine-readable
 // reason codes into the tap-to-expand explanation shown on a slot's badge.
-const DAY_RULE_KIND_LABEL = {
-  protein_type: ["protein day", "день белка"],
-  cuisine: ["cuisine day", "день кухни"],
-  diet_suitability: ["diet day", "день диеты"],
-};
 function aiNoteText(note) {
   if (!note) return "";
   if (note.reason === "day_rule_skipped") {
-    const kindPair = DAY_RULE_KIND_LABEL[note.rule_kind];
-    const kindLabel = kindPair ? pairLang(kindPair[0], kindPair[1]) : note.rule_kind;
+    const kindLabel = dayRuleKindNoteLabel(note.rule_kind);
     return tr("aiNoteText.day-rule-skipped", { kindLabel, ruleValue: note.rule_value });
   }
   if (note.reason === "no_safe_recipe") {
