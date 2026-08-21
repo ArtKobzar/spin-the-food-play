@@ -411,7 +411,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=a44dbe2";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=3ea36b5";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -424,20 +424,31 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
 });
 
 const LOCALE_EMOJI = { en: "🇬🇧", ru: "🇷🇺", uk: "🇺🇦", nl: "🇳🇱" };
-let UI_LOCALES = [
+// Product order for every language picker (sign-in, onboarding gate, settings).
+const LOCALE_UI_ORDER = ["en", "nl", "uk", "ru"];
+function sortUiLocales(rows) {
+  return [...rows].sort((a, b) => {
+    const ia = LOCALE_UI_ORDER.indexOf(a.code);
+    const ib = LOCALE_UI_ORDER.indexOf(b.code);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+  });
+}
+let UI_LOCALES = sortUiLocales([
   { code: "en", label_native: "English", emoji: "🇬🇧" },
+  { code: "nl", label_native: "Nederlands", emoji: "🇳🇱" },
+  { code: "uk", label_native: "Українська", emoji: "🇺🇦" },
   { code: "ru", label_native: "Русский", emoji: "🇷🇺" },
-];
+]);
 
 async function loadUiLocales() {
   try {
     const { data, error } = await sb.rpc("spin_food_locales_list", { p_ui_only: true });
     if (error || !Array.isArray(data) || !data.length) return;
-    UI_LOCALES = data.map((row) => ({
+    UI_LOCALES = sortUiLocales(data.map((row) => ({
       code: row.code,
       label_native: row.label_native || row.label_en || row.code,
       emoji: LOCALE_EMOJI[row.code] || "🌐",
-    }));
+    })));
   } catch (e) {
     console.warn("[stf-i18n] locales list failed:", e);
   }
