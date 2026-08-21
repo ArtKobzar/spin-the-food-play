@@ -411,7 +411,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=3ea36b5";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=6c197a2";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -538,6 +538,18 @@ function avatarRoleLabel(role) {
   const c = AVATAR_CHOICES.find((x) => x.r === role);
   if (lang === "nl" && c?.nl) return c.nl;
   return tr(`avatarRole.${role}`);
+}
+
+function createFamilyErrorText(rawMsg) {
+  const msg = (rawMsg || "").trim();
+  if (/already taken/i.test(msg)) return tr('anonymous.that-household-name-is-taken-try-another');
+  if (/already belongs/i.test(msg)) return tr('anonymous.this-account-already-has-a-family-reload-the-pag');
+  if (/may only contain letters and numbers/i.test(msg)) return tr('createFamilyError.household-letters-numbers-only');
+  if (/must be 3-20 characters/i.test(msg)) return tr('createFamilyError.household-length');
+  if (/display_name is required/i.test(msg)) return tr('createFamilyError.display-name-required');
+  if (/has_private_chef must be/i.test(msg)) return tr('createFamilyError.private-chef-required');
+  if (/other_label is required/i.test(msg)) return tr('createFamilyError.other-label-required');
+  return tr('anonymous.couldnt-create-the-family-kitchen') + msg;
 }
 
 // Household name rules (locked 2026-08-18, see
@@ -2735,13 +2747,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
     }
     const { data, error } = createResult;
     if (error) {
-      const taken = /already taken/i.test(error.message);
-      const already = /already belongs/i.test(error.message);
-      note.textContent = (taken
-        ? tr('anonymous.that-household-name-is-taken-try-another')
-        : already
-        ? tr('anonymous.this-account-already-has-a-family-reload-the-pag')
-        : tr('anonymous.couldnt-create-the-family-kitchen') + error.message);
+      note.textContent = createFamilyErrorText(error.message);
       note.style.color = "#ef4444";
       createBtn.disabled = false;
       createBtn.textContent = tr('anonymous.try-again');
