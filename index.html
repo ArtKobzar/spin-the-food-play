@@ -3553,7 +3553,7 @@ function renderOnboard() {
       <div class="chips-wrap stack">${MEALS.map(m => `<div class="chip ${ob.avail.includes(m.k) ? "on" : ""}" data-avail="${m.k}"><span style="font-size:22px;margin-right:4px;vertical-align:-4px">${m.ic}</span> ${mealN(m)}</div>`).join("")}</div>
       <div class="ob-q" style="margin-top:22px">${tr('renderOnboard.what-courses-can-you-cook')}</div>
       <div class="chips-wrap">
-        <div class="chip ${ob.courses.length === COURSE_CATEGORIES.length ? "on" : ""}" data-course-all>${tr('renderOnboard.all')}</div>
+        <div class="chip chip-full ${ob.courses.length === COURSE_CATEGORIES.length ? "on" : ""}" data-course-all>${tr('renderOnboard.all')}</div>
         ${COURSE_CATEGORIES.map(c => `<div class="chip ${ob.courses.includes(c) ? "on" : ""}" data-course="${c}">${obCourseLabel(c)}</div>`).join("")}
       </div>
       <button class="btn btn-primary ob-next" id="obNext" style="margin-top:22px${ob.avail.length ? "" : ";opacity:.4"}" ${ob.avail.length ? "" : "disabled"}>${tr('renderOnboard.next')}</button>`;
@@ -3580,12 +3580,12 @@ function renderOnboard() {
     inner = `<div class="ob-q">${tr('renderOnboard.your-kitchen-skills')}</div>
       <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.what-can-you-do-pick-your-skills')}</div>
       <div class="chips-wrap" style="margin-bottom:14px">
-        <div class="chip ${ob.techniques.length === TECHNIQUES.length ? "on" : ""}" data-tech-all>${tr('renderOnboard.all')}</div>
+        <div class="chip chip-full ${ob.techniques.length === TECHNIQUES.length ? "on" : ""}" data-tech-all>${tr('renderOnboard.all')}</div>
         ${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}
       </div>
       <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.which-appliances-do-you-have-and-you-can-use')}</div>
       <div class="chips-wrap">
-        <div class="chip ${ob.appliances.length === APPLIANCES.length ? "on" : ""}" data-appl-all>${tr('renderOnboard.all')}</div>
+        <div class="chip chip-full ${ob.appliances.length === APPLIANCES.length ? "on" : ""}" data-appl-all>${tr('renderOnboard.all')}</div>
         ${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}
       </div>
       <button class="btn btn-primary ob-next" id="obNext">${tr('renderOnboard.next')}</button>`;
