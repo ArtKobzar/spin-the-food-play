@@ -609,9 +609,9 @@ async function bootstrapSessionAfterJoin({
   if (!me) me = membership.member_id;
   if (lang && (!onboardLocaleOnly || needsOnboardLangGate(me))) {
     saveLangChoice(lang, { forOnboard: true });
-    sb.rpc("spin_food_set_member_locale", { p_locale: lang }).catch((e) =>
-      console.warn("[stf-i18n] member locale save failed:", e)
-    );
+    Promise.resolve(sb.rpc("spin_food_set_member_locale", { p_locale: lang })).then(({ error }) => {
+      if (error) console.warn("[stf-i18n] member locale save failed:", error);
+    }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
   const pendingTz = stfGet("stf_pending_tz");
   if (pendingTz) {
@@ -727,9 +727,9 @@ function pickLanguage(code) {
   saveLangChoice(code);
   refreshI18n();
   if (membership?.member_id) {
-    sb.rpc("spin_food_set_member_locale", { p_locale: code }).catch((e) =>
-      console.warn("[stf-i18n] member locale save failed:", e)
-    );
+    Promise.resolve(sb.rpc("spin_food_set_member_locale", { p_locale: code })).then(({ error }) => {
+      if (error) console.warn("[stf-i18n] member locale save failed:", error);
+    }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
   render();
 }
