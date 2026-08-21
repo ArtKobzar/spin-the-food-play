@@ -411,7 +411,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=32e636c";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=a44dbe2";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1350,6 +1350,10 @@ const MEALS = [
 const mealN = m => {
   if (lang === "uk") return m.nuk || m.n;
   if (lang === "ru") return m.nru || m.n;
+  if (lang === "nl") {
+    const label = filterMealLabel(m.k);
+    return label.replace(/^[^\p{L}\p{N}]+/u, "").trim() || m.n;
+  }
   return m.n;
 };
 const dish = id => DISHES.find(d => d.id === id);
