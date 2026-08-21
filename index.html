@@ -581,7 +581,7 @@ function applyMembershipToFamily(memberRow) {
 }
 
 async function refreshMembership() {
-  const { data, error } = await sb.rpc("spin_food_my_membership");
+  const { data, error } = await rpcWithTimeout("spin_food_my_membership", {}, 15000, "Membership");
   if (error) { console.error("[stf-auth] membership fetch failed:", error); membership = null; return; }
   membership = data;
   applyMembershipToFamily();
@@ -613,14 +613,16 @@ async function bootstrapSessionAfterJoin({
   if (!me) me = membership.member_id;
   if (lang && (!onboardLocaleOnly || needsOnboardLangGate(me))) {
     saveLangChoice(lang, { forOnboard: true });
-    Promise.resolve(sb.rpc("spin_food_set_member_locale", { p_locale: lang })).then(({ error }) => {
+    rpcWithTimeout("spin_food_set_member_locale", { p_locale: lang }, 10000, "Member locale").then(({ error }) => {
       if (error) console.warn("[stf-i18n] member locale save failed:", error);
     }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
   const pendingTz = stfGet("stf_pending_tz");
   if (pendingTz) {
-    try { await sb.rpc("spin_food_set_family_timezone", { p_timezone: pendingTz }); }
-    catch (tzErr) { logClientDiagnostic("pending_tz_apply_exception", { message: tzErr?.message || String(tzErr) }); }
+    try {
+      const { error } = await rpcWithTimeout("spin_food_set_family_timezone", { p_timezone: pendingTz }, 15000, "Timezone");
+      if (error) logClientDiagnostic("pending_tz_apply_error", { message: error.message || String(error) });
+    } catch (tzErr) { logClientDiagnostic("pending_tz_apply_exception", { message: tzErr?.message || String(tzErr) }); }
   }
   joinPresence();
   await load();
@@ -707,14 +709,13 @@ function needsOnboardLangGate(memberId) {
 }
 
 // ── unit system: separate preference from UI language (SPEC_RECIPE_I18N.md
-// decision #10) - defaults per-language (en -> imperial, ru -> metric) but
-// independently overridable via the Settings screen's "Units" section
-// (saveUnitsChoice). Client-local only, same storage pattern as stf_lang -
+// decision #10) - default metric for all locales; imperial opt-in only
+// (US-style). Client-local only, same storage pattern as stf_lang -
 // no server column, nothing to sync across devices for v1.
 function unitsSystem() {
   const stored = stfGet("stf_units");
   if (stored === "metric" || stored === "imperial") return stored;
-  return (lang === "ru" || lang === "uk") ? "metric" : "imperial";
+  return "metric";
 }
 function saveUnitsChoice(sys) {
   if (sys !== "metric" && sys !== "imperial") return;
@@ -731,7 +732,7 @@ function pickLanguage(code) {
   saveLangChoice(code);
   refreshI18n();
   if (membership?.member_id) {
-    Promise.resolve(sb.rpc("spin_food_set_member_locale", { p_locale: code })).then(({ error }) => {
+    Promise.resolve(rpcWithTimeout("spin_food_set_member_locale", { p_locale: code }, 10000, "Member locale")).then(({ error }) => {
       if (error) console.warn("[stf-i18n] member locale save failed:", error);
     }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
@@ -2544,12 +2545,12 @@ function renderInvitationOnboarding(preset = null) {
     // on "Присоединяемся..." forever with no way to retry.
     let joinResult;
     try {
-      joinResult = await withTimeout(sb.rpc("spin_food_accept_invitation", {
+      joinResult = await rpcWithTimeout("spin_food_accept_invitation", {
         p_token: inviteTokenInUrl,
         p_avatar_role: selRole,
         p_display_name: nameInput.value.trim(),
         p_other_label: selRole === "other" ? otherInput.value.trim() : null,
-      }), 15000, "Accept invitation");
+      }, 45000, "Accept invitation");
     } catch (e) {
       logClientDiagnostic("accept_invitation_call_exception", { message: e?.message || String(e), stack: e?.stack || null });
       note.textContent = tr('anonymous.couldnt-reach-the-server-check-your-connection-a');
@@ -2749,13 +2750,13 @@ function renderCreateHouseholdOnboarding(preset = null) {
     logClientDiagnostic("create_family_start", { household_name_len: householdLen, lang });
     try {
       await ensureAuthReady();
-      createResult = await withTimeout(sb.rpc("spin_food_create_family", {
+      createResult = await rpcWithTimeout("spin_food_create_family", {
         p_household_name: nameHouseholdInput.value.trim(),
         p_avatar_role: selRole,
         p_display_name: nameInput.value.trim(),
         p_other_label: selRole === "other" ? otherInput.value.trim() : null,
         p_has_private_chef: hasPrivateChef,
-      }), 45000, "Create family");
+      }, 45000, "Create family");
     } catch (e) {
       const rawMsg = e?.message || String(e);
       logClientDiagnostic("create_family_call_exception", { message: rawMsg, stack: e?.stack || null, household_name_len: householdLen });
@@ -6033,6 +6034,57 @@ async function ensureFreshAccessToken() {
   if (nowSec >= expAt - 60) await refreshAccessTokenWithTimeout();
 }
 const AUTH_ERROR_HINT_RE = /invalid session|invalid token|jwt|unauthorized|missing bearer/i;
+
+// PostgREST RPC via raw fetch - bypasses supabase-js navigator.locks wedge that
+// left spin_food_create_family / my_membership / accept_invitation hanging with
+// zero server trace (2026-08-18 through 2026-08-21). Same pattern as
+// invokeWithTimeout() for Edge Functions.
+async function rpcRaw(fnName, params = {}) {
+  await ensureFreshAccessToken();
+  const send = async () => {
+    const accessToken = authSession?.access_token;
+    if (!accessToken) return { data: null, error: { message: "not signed in" } };
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fnName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPABASE_ANON,
+          "Authorization": "Bearer " + accessToken,
+        },
+        body: JSON.stringify(params ?? {}),
+      });
+      const text = await resp.text();
+      let body = null;
+      if (text) {
+        try { body = JSON.parse(text); } catch { body = text; }
+      }
+      if (!resp.ok) {
+        const msg = (body && typeof body === "object" && body.message)
+          ? body.message
+          : `Request failed (${resp.status})`;
+        return { data: null, error: { message: msg } };
+      }
+      return { data: body, error: null };
+    } catch (e) {
+      return { data: null, error: { message: e?.message || String(e) } };
+    }
+  };
+  let res = await send();
+  if (res.error?.message && AUTH_ERROR_HINT_RE.test(res.error.message)) {
+    const refreshed = await refreshAccessTokenWithTimeout();
+    if (refreshed) res = await send();
+  }
+  return res;
+}
+
+async function rpcWithTimeout(fnName, params, ms, label) {
+  try {
+    return await withTimeout(rpcRaw(fnName, params), ms, label || fnName);
+  } catch (e) {
+    return { data: null, error: { message: e?.message || String(e) } };
+  }
+}
 
 function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
   console.log(`[invoke] -> ${fnName}`, opts?.body);
