@@ -850,6 +850,19 @@ async function loadUnits() {
   UNITS.forEach(u => { UNITS_BY_SLUG[u.slug] = u; });
   unitsLoaded = true;
 }
+
+// food.cuisines controlled vocabulary (labels_i18n per SPEC_I18N_PHASE2).
+let CUISINES_BY_SLUG = {};
+let filterVocabLoaded = false;
+async function loadFilterVocabulary() {
+  if (filterVocabLoaded) return;
+  const { data, error } = await sb.rpc("spin_food_filter_vocabulary");
+  if (error) { console.error("[stf-data] filter vocabulary:", error); return; }
+  CUISINES_BY_SLUG = {};
+  for (const c of (data?.cuisines || [])) CUISINES_BY_SLUG[c.slug] = c;
+  filterVocabLoaded = true;
+}
+
 const METRIC_UNIT_SLUGS = new Set(["gram", "kilogram", "milliliter", "liter", "celsius"]);
 
 function roundToIncrement(val, inc) {
@@ -1974,7 +1987,7 @@ async function load() {
   loadError = null;
   try {
     await withTimeout((async () => {
-      await Promise.all([loadCatalog(), loadUnits(), loadFamilyFeed()]);
+      await Promise.all([loadCatalog(), loadUnits(), loadFilterVocabulary(), loadFamilyFeed()]);
       const snap = await ensureActivePlan();
       game = snapshotToGame(snap);
       if (!game.profiles) game.profiles = {};
@@ -3068,11 +3081,12 @@ function dayRuleDietLabel(v) {
 function dayRuleValueLabel(kind, v) {
   if (kind === "protein_type") return dayRuleProteinLabel(v);
   if (kind === "diet_suitability") return dayRuleDietLabel(v);
+  if (kind === "cuisine") return v === "random" ? worldCuisineDayLabel(v) : cuisineVocabLabel(v);
   return v;
 }
 function worldCuisineDayLabel(v) {
-  const key = v === "middle_eastern" ? "middle-eastern" : v;
-  return tr(`worldCuisineLabel.${key}`) || v;
+  if (v === "random") return tr("worldCuisineLabel.random") || "Random";
+  return cuisineVocabLabel(v);
 }
 function dayRuleKindNoteLabel(k) {
   return ({
@@ -4056,13 +4070,23 @@ function renderMenu() {
 let deckSearch = "";
 let deckAdv = newAdvFilters();
 let deckPanel = { open: false };
-// Cuisine is free text (an LLM-classified slug from the dynamic food.cuisines list, thin/
-// unclassified cards fall back to the "family" sentinel) - derived from whatever the
-// family's cookbook actually contains, so the filter chip list never drifts from the ontology.
-// Stored lower-case in DB; always title-case on display (italian -> Italian).
+// Cuisine slug on recipe rows (food.family_cookbook_recipes.cuisine, lowercase).
+// Display labels come from food.cuisines.labels_i18n (SPEC_I18N_PHASE2), not slug title-casing.
+function cuisineVocabLabel(slug) {
+  if (!slug) return "";
+  const rec = CUISINES_BY_SLUG[slug];
+  const li = rec?.labels_i18n;
+  if (li && typeof li === "object" && li[lang]) return li[lang];
+  if (lang === "ru" && li?.ru) return li.ru;
+  if (rec?.label_en) return rec.label_en;
+  const key = slug === "middle_eastern" ? "middle-eastern" : slug;
+  const fromCatalog = tr(`worldCuisineLabel.${key}`);
+  if (fromCatalog && !fromCatalog.startsWith("worldCuisineLabel.")) return fromCatalog;
+  return String(slug).replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+}
 function cuisineLabel(c) {
-  if (!c) return "";
-  return String(c).replace(/_/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+  if (!c || c === "family") return "";
+  return cuisineVocabLabel(c);
 }
 function cuisineDisplay(c) {
   if (!c || c === "family") return "";
