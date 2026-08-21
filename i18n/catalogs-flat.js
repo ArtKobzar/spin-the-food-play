@@ -663,7 +663,9 @@ export const STF_I18N_CATALOGS = {
     "createFamilyError.household-length": "Household name must be 3-20 characters.",
     "createFamilyError.display-name-required": "Display name is required.",
     "createFamilyError.private-chef-required": "Please choose whether you have a private chef.",
-    "createFamilyError.other-label-required": "Please name this role."
+    "createFamilyError.other-label-required": "Please name this role.",
+    "createFamilyError.request-timeout": "Request timed out - check your connection and try again.",
+    "createFamilyError.not-signed-in": "Please sign in again to continue."
   },
   "ru": {
     "filterIconButtonHtml.filters": "Фильтры",
@@ -1329,7 +1331,9 @@ export const STF_I18N_CATALOGS = {
     "createFamilyError.household-length": "Имя семьи должно быть от 3 до 20 символов.",
     "createFamilyError.display-name-required": "Укажите имя для отображения.",
     "createFamilyError.private-chef-required": "Выберите, есть ли у вас личный повар.",
-    "createFamilyError.other-label-required": "Укажите название этой роли."
+    "createFamilyError.other-label-required": "Укажите название этой роли.",
+    "createFamilyError.request-timeout": "Превышено время ожидания - проверьте соединение и попробуйте снова.",
+    "createFamilyError.not-signed-in": "Войдите снова, чтобы продолжить."
   },
   "uk": {
     "filterIconButtonHtml.filters": "Фільтри",
@@ -1995,7 +1999,9 @@ export const STF_I18N_CATALOGS = {
     "createFamilyError.household-length": "Назва домогосподарства має бути від 3 до 20 символів.",
     "createFamilyError.display-name-required": "Потрібно вказати ім'я для відображення.",
     "createFamilyError.private-chef-required": "Оберіть, чи є у вас особистий кухар.",
-    "createFamilyError.other-label-required": "Вкажіть назву цієї ролі."
+    "createFamilyError.other-label-required": "Вкажіть назву цієї ролі.",
+    "createFamilyError.request-timeout": "Час очікування минув - перевірте з'єднання та спробуйте ще раз.",
+    "createFamilyError.not-signed-in": "Увійдіть знову, щоб продовжити."
   },
   "nl": {
     "filterIconButtonHtml.filters": "Filters",
@@ -2661,6 +2667,8 @@ export const STF_I18N_CATALOGS = {
     "createFamilyError.household-length": "Huishoudnaam moet 3-20 tekens zijn.",
     "createFamilyError.display-name-required": "Weergavenaam is verplicht.",
     "createFamilyError.private-chef-required": "Kies of je een privé-kok hebt.",
-    "createFamilyError.other-label-required": "Geef deze rol een naam."
+    "createFamilyError.other-label-required": "Geef deze rol een naam.",
+    "createFamilyError.request-timeout": "Time-out - controleer je verbinding en probeer opnieuw.",
+    "createFamilyError.not-signed-in": "Meld je opnieuw aan om verder te gaan."
   }
 };
