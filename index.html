@@ -417,7 +417,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=8dce5a9";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ee21f7d";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -736,7 +736,7 @@ function pickLanguage(code) {
       if (error) console.warn("[stf-i18n] member locale save failed:", error);
     }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
-  render();
+  hydrateRecipeContentForLocale(code).finally(() => render());
 }
 globalThis.stfPickLang = pickLanguage;
 
@@ -969,7 +969,68 @@ function ingredientDisplayName(ing) {
   const li = ing.labels_i18n;
   if (li && typeof li === "object" && li[lang]) return li[lang];
   if (lang === "ru" && ing.name_ru) return ing.name_ru;
-  return ing.name_en || ing.raw || "";
+  if (lang === "uk" && ing.name_uk) return ing.name_uk;
+  if (lang === "nl" && ing.name_nl) return ing.name_nl;
+  if (lang === "nl" && ing.name && ing.name !== ing.name_en) return ing.name;
+  return ing.name_en || ing.name || ing.raw || "";
+}
+
+function normalizeImportDraftClient(raw) {
+  if (raw?.source_lang && raw?.title && raw?.translations) return raw;
+  const titleEn = String(raw?.title_en ?? raw?.title ?? "").trim();
+  const titleRu = raw?.title_ru ? String(raw.title_ru).trim() : null;
+  const sourceLang = raw?.source_lang || (/[\u0400-\u04FF]/.test(titleRu || titleEn) ? "ru" : "en");
+  const title = sourceLang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu || "");
+  const ingredients = (raw?.ingredients || []).map((i) => {
+    const name = sourceLang === "ru" ? String(i.name_ru ?? i.name_en ?? i.name ?? "") : String(i.name_en ?? i.name ?? i.name_ru ?? "");
+    return { ...i, name, qty: i.qty ?? null, unit: i.unit ?? null, note: i.note ?? null, section: i.section ?? null };
+  });
+  const instructions = (raw?.instructions || []).map((s) => {
+    if (typeof s === "string") return { text: s, photo_urls: [] };
+    const text = sourceLang === "ru" ? String(s.text_ru ?? s.text_en ?? s.text ?? "") : String(s.text_en ?? s.text ?? s.text_ru ?? "");
+    return { text, photo_urls: stepPhotoUrls(s) };
+  });
+  return {
+    ...raw,
+    source_lang: sourceLang,
+    title,
+    ingredients,
+    instructions,
+    translations: {
+      en: { title: titleEn, ingredients: ingredients.map((ing, idx) => ({ name: String(raw.ingredients?.[idx]?.name_en ?? ing.name) })), instructions: instructions.map((step, idx) => ({ text: String(raw.instructions?.[idx]?.text_en ?? step.text) })) },
+      ru: { title: titleRu || titleEn, ingredients: ingredients.map((ing, idx) => ({ name: String(raw.ingredients?.[idx]?.name_ru ?? ing.name) })), instructions: instructions.map((step, idx) => ({ text: String(raw.instructions?.[idx]?.text_ru ?? step.text) })) },
+    },
+  };
+}
+function importDraftTitle(draft, locale) {
+  if (locale === draft.source_lang) return draft.title || "";
+  return draft.translations?.[locale]?.title || draft.title || "";
+}
+function importDraftIngName(draft, locale, idx, ing) {
+  if (locale === draft.source_lang) return ing.name || ing.name_en || "";
+  return draft.translations?.[locale]?.ingredients?.[idx]?.name || ing.name || ing.name_en || "";
+}
+function importDraftStepText(draft, locale, idx, step) {
+  if (locale === draft.source_lang) return step.text || step.text_en || "";
+  return draft.translations?.[locale]?.instructions?.[idx]?.text || step.text || step.text_en || "";
+}
+function ensureImportTranslationBlock(draft, locale) {
+  if (!draft.translations) draft.translations = {};
+  if (!draft.translations[locale]) {
+    draft.translations[locale] = {
+      title: importDraftTitle(draft, locale),
+      ingredients: (draft.ingredients || []).map((ing, idx) => ({ name: importDraftIngName(draft, locale, idx, ing) })),
+      instructions: (draft.instructions || []).map((step, idx) => ({ text: importDraftStepText(draft, locale, idx, step) })),
+    };
+  }
+  return draft.translations[locale];
+}
+function dishDisplayTitle(d) {
+  if (lang === "uk" && d.uk && !d.ukFallback) return d.uk;
+  if (lang === "nl" && d.nl && !d.nlFallback) return d.nl;
+  if (lang === "ru") return d.ru || d.title || d.en;
+  if (lang === "en") return d.en || d.title || d.ru;
+  return d.en || d.title || d.ru;
 }
 // Localizes a food.units slug (canonical, or a legacy/alias form like "kg")
 // for display in the viewer's UI language - shared by the persisted-recipe
@@ -1134,6 +1195,7 @@ async function loadCatalog() {
   const { data: recipes, error: re } = await sb.rpc("spin_food_list_recipes_for_family", { p_limit: 500, p_offset: 0 });
   if (re) console.error("[stf-data] cookbook:", re);
   DISHES = (recipes || []).map(recipeToDish);
+  await hydrateRecipeContentForLocale(lang);
   // Keep whatever relative order the user is already mid-swipe through
   // (any of these ids already in deckOrder), and only shuffle in the ids
   // that are new since the last load (freshly added recipes, or the very
@@ -1162,7 +1224,7 @@ async function loadCatalog() {
 }
 
 async function hydrateDishContent(d, locale) {
-  if (!d || (locale !== "uk" && locale !== "nl")) return;
+  if (!d || !["en", "ru", "uk", "nl"].includes(locale)) return;
   if (d._resolvedLocale === locale) return;
   const { data, error } = await sb.rpc("spin_food_recipe_content_resolve", {
     p_recipe_id: d.id,
@@ -1172,10 +1234,15 @@ async function hydrateDishContent(d, locale) {
   if (locale === "uk") {
     d.uk = data.title || d.en;
     d.ukFallback = !!data.title_is_fallback;
-  }
-  if (locale === "nl") {
+  } else if (locale === "nl") {
     d.nl = data.title || d.en;
     d.nlFallback = !!data.title_is_fallback;
+  } else if (locale === "en") {
+    d.en = data.title || d.en;
+    d.enFallback = !!data.title_is_fallback;
+  } else if (locale === "ru") {
+    d.ru = data.title || d.ru;
+    d.ruFallback = !!data.title_is_fallback;
   }
   if (Array.isArray(data.instructions) && data.instructions.length) {
     d.instructions = data.instructions.map((step, idx) => ({
@@ -1190,7 +1257,7 @@ async function hydrateDishContent(d, locale) {
 }
 
 async function hydrateRecipeContentForLocale(locale) {
-  if (locale !== "uk" && locale !== "nl") return;
+  if (!["en", "ru", "uk", "nl"].includes(locale)) return;
   const chunk = 8;
   for (let i = 0; i < DISHES.length; i += chunk) {
     const slice = DISHES.slice(i, i + chunk);
@@ -1459,8 +1526,8 @@ function translatedTitleReady(d) {
   const translated = translatedDishName(d, target);
   return translated && translated !== authored;
 }
-// Cards, spin deck, and menu always show the recipe as authored (SPEC_I18N.md §8).
-const dName = d => authoredDishName(d);
+// Cards, spin deck, and menu show the recipe in the viewer's UI locale.
+const dName = d => dishDisplayTitle(d);
 const mName = m => (lang === "uk" ? (m.uk || m.en) : lang === "ru" ? m.ru : m.en);
 // A slot/proposal's "by" always names the human accountable for it (who hand-picked
 // it, or who triggered the AI fill that picked it) - "viaAi" is a separate flag for
@@ -4396,17 +4463,19 @@ function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
 function stepLangText(s, l) {
   if (typeof s === "string") return s;
   if (!s) return "";
-  if ((l === "uk" || l === "nl") && s.text_resolved && detailShowTranslation) return s.text_resolved;
-  if (l === "ru") return s.text_ru || s.text || "";
+  if (l === "uk" && s.text_resolved) return s.text_resolved;
+  if (l === "nl" && s.text_resolved) return s.text_resolved;
+  if (l === "ru") return s.text_ru || s.text || s.text_en || "";
   if (l === "uk") return s.text_uk || s.text_en || s.text || "";
-  if (l === "nl") return s.text_en || s.text || "";
-  return s.text_en || s.text || "";
+  if (l === "nl") return s.text_nl || s.text || s.text_en || "";
+  return s.text_en || s.text || s.text_ru || "";
 }
 function detailContentLocale(d) {
-  return detailShowTranslation ? lang : dishSourceLang(d);
+  return detailShowTranslation ? dishSourceLang(d) : lang;
 }
 function detailTitleName(d) {
-  return detailShowTranslation ? translatedDishName(d, lang) : authoredDishName(d);
+  if (detailShowTranslation) return authoredDishName(d);
+  return dishDisplayTitle(d);
 }
 function detailTranslationBadge(d) {
   if (!detailShowTranslation || !recipeNeedsTranslation(d)) return "";
@@ -4424,7 +4493,7 @@ function detailTranslationBadge(d) {
 function detailTranslateBtnHtml(d) {
   if (detailEditMode || !recipeNeedsTranslation(d)) return "";
   const active = detailShowTranslation;
-  const label = active ? tr('detailHeaderHtml.show-original') : tr('detailHeaderHtml.translate-recipe');
+  const label = active ? tr('detailHeaderHtml.translate-recipe') : tr('detailHeaderHtml.show-original');
   const busy = detailTranslationLoading;
   return `<button class="dtl-translate-btn${active ? " on" : ""}" id="dtlTranslateBtn" title="${label}" aria-label="${label}" ${busy ? "disabled" : ""}>${busy ? "…" : TRANSLATE_SVG}</button>`;
 }
@@ -4442,20 +4511,27 @@ async function requestRecipeTranslation(d) {
   detailTranslationLoading = true;
   renderDetailOverlay();
   try {
-    if (lang === "uk" || lang === "nl") await hydrateDishContent(d, lang);
-    if (!translatedTitleReady(d) && (lang === "en" || lang === "ru")) {
-      const res = await invokeWithTimeout("spin-food-import", {
-        body: { source_type: "url", action: "ingest", payload: { recipe_id: d.id, stage: "translate" } },
-      }, INGEST_CLIENT_TIMEOUT_MS);
-      if (res.error || res.data?.warning) {
-        toast(tr('detailHeaderHtml.translation-failed'));
-      } else {
-        d._machineTranslated = true;
-        await refreshDishFromCatalog(d);
-        if (lang === "uk" || lang === "nl") await hydrateDishContent(d, lang);
-      }
+    if (!detailShowTranslation) {
+      detailShowTranslation = true;
+      return;
     }
-    detailShowTranslation = true;
+    detailShowTranslation = false;
+    await hydrateDishContent(d, lang);
+    if (dishSourceLang(d) === lang) return;
+    const fallback = (lang === "uk" && d.ukFallback) || (lang === "nl" && d.nlFallback)
+      || (lang === "en" && d.enFallback) || (lang === "ru" && d.ruFallback);
+    if (fallback || translatedTitleReady(d)) return;
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: { recipe_id: d.id, target_locale: lang },
+    }, INGEST_CLIENT_TIMEOUT_MS);
+    if (res.error || res.data?.ok === false) {
+      toast(tr('detailHeaderHtml.translation-failed'));
+    } else {
+      d._machineTranslated = true;
+      d._resolvedLocale = null;
+      await refreshDishFromCatalog(d);
+      await hydrateDishContent(d, lang);
+    }
   } finally {
     detailTranslationLoading = false;
     renderDetailOverlay();
@@ -4496,6 +4572,10 @@ function openDetail(id) {
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   detailShowTranslation = false; detailTranslationLoading = false;
   renderDetailOverlay();
+  const d = dish(detailOpen);
+  if (d && recipeNeedsTranslation(d)) {
+    hydrateDishContent(d, lang).then(() => { if (detailOpen === id) renderDetailOverlay(); });
+  }
 }
 function closeDetail() {
   const el = document.getElementById("detailOverlay");
@@ -6471,14 +6551,16 @@ async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
 // Editing writes back only into the language-matched field for whatever
 // the reviewer is currently looking at - the untouched language's
 // extracted translation is preserved, same convention as saveDetailEdit().
-function openImportReview(draft, jobId, targetRecipeId, sourceType) {
-  let titleEn = draft.title_en ?? draft.title ?? "";
-  let titleRu = draft.title_ru ?? null;
+function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
+  const draft = normalizeImportDraftClient(draftRaw);
+  let sourceLang = draft.source_lang || lang;
+  let title = draft.title || "";
+  let translations = draft.translations ? JSON.parse(JSON.stringify(draft.translations)) : {};
   let ingredients = (draft.ingredients || []).map(i => ({ ...i }));
   let instructions = (draft.instructions || []).map(s =>
     typeof s === "string"
-      ? { text_en: s, text_ru: null, photo_urls: [] }
-      : { text_en: s.text_en ?? "", text_ru: s.text_ru ?? null, photo_urls: stepPhotoUrls(s) }
+      ? { text: s, photo_urls: [] }
+      : { text: s.text ?? s.text_en ?? "", photo_urls: stepPhotoUrls(s) }
   );
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
@@ -6508,8 +6590,10 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     reasoning: draft.taxonomy.reasoning || null,
   } : null;
 
-  const ingName = (ing) => ingredientDisplayName(ing) || "";
-  const stepText = (s) => (lang === "ru" ? (s.text_ru || s.text_en) : (s.text_en || s.text_ru)) || "";
+  const reviewLocale = lang;
+  const ingName = (ing, idx) => importDraftIngName({ source_lang: sourceLang, title, translations, ingredients }, reviewLocale, idx, ing) || "";
+  const stepText = (s, idx) => importDraftStepText({ source_lang: sourceLang, title, translations, instructions }, reviewLocale, idx, s) || "";
+  const reviewTitle = () => importDraftTitle({ source_lang: sourceLang, title, translations }, reviewLocale);
   // unitDisplay()/unitFromInput() are shared top-level helpers (see convertQty
   // above) - the draft stores the canonical slug (e.g. "kg"), same as saved
   // recipes, so this reuses the exact same localization ingredientLine() does.
@@ -6519,14 +6603,14 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
         <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.unit')}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <input data-ingf="name" value="${ingName(ing).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        <input data-ingf="name" value="${ingName(ing, i).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-ingredients-found-add-them-manually-or-edit-t')}</div>`;
     v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
         <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
         ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
-        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s)}</textarea>
+        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s, i)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-instructions-found-add-them-manually')}</div>`;
     wireRows();
@@ -6612,7 +6696,7 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     </div>
     <div id="revHero">${heroHtml()}</div>
     <div class="sect">${tr('openImportReview.title')}</div>
-    <input id="revTitle" value="${((lang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu)) || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
+    <input id="revTitle" value="${(reviewTitle() || "").replace(/"/g, "&quot;")}" style="width:100%;border:2px solid #e5e7eb;border-radius:12px;padding:10px;font-size:15px">
     ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${tr('openImportReview.video-found-will-be-linked-on-the-recipe')}</a>${draft.creator_name ? ` <span style="color:#999">· ${tr('openImportReview.by')} ${draft.creator_name}</span>` : ""}</div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
@@ -6637,7 +6721,8 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   wireHero();
 
   v.querySelector("#revTitle").addEventListener("input", (e) => {
-    if (lang === "ru") titleRu = e.target.value; else titleEn = e.target.value;
+    if (reviewLocale === sourceLang) title = e.target.value;
+    else { ensureImportTranslationBlock({ translations }, reviewLocale); translations[reviewLocale].title = e.target.value; }
   });
   v.querySelector("#revServings").addEventListener("input", (e) => {
     servings = e.target.value === "" ? null : Number(e.target.value);
@@ -6649,7 +6734,15 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
       row.querySelectorAll("[data-ingf]").forEach(inp => inp.addEventListener("input", () => {
         const f = inp.dataset.ingf;
         if (f === "qty") { ingredients[i].qty = inp.value === "" ? null : Number(inp.value); return; }
-        if (f === "name") { if (lang === "ru") ingredients[i].name_ru = inp.value; else ingredients[i].name_en = inp.value; return; }
+        if (f === "name") {
+          if (reviewLocale === sourceLang) ingredients[i].name = inp.value;
+          else {
+            ensureImportTranslationBlock({ translations, ingredients, instructions }, reviewLocale);
+            if (!translations[reviewLocale].ingredients[i]) translations[reviewLocale].ingredients[i] = { name: "" };
+            translations[reviewLocale].ingredients[i].name = inp.value;
+          }
+          return;
+        }
         if (f === "unit") { ingredients[i].unit = unitFromInput(inp.value); return; }
         ingredients[i][f] = inp.value;
       }));
@@ -6659,7 +6752,12 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     }));
     v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
       const i = Number(ta.dataset.instrinput);
-      if (lang === "ru") instructions[i].text_ru = ta.value; else instructions[i].text_en = ta.value;
+      if (reviewLocale === sourceLang) instructions[i].text = ta.value;
+      else {
+        ensureImportTranslationBlock({ translations, ingredients, instructions }, reviewLocale);
+        if (!translations[reviewLocale].instructions[i]) translations[reviewLocale].instructions[i] = { text: "" };
+        translations[reviewLocale].instructions[i].text = ta.value;
+      }
     }));
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
       instructions.splice(Number(btn.dataset.instrdel), 1); render();
@@ -6667,8 +6765,8 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
   }
   render();
 
-  v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name_en: "", name_ru: null, qty: null, unit: null, note: null, section: null }); render(); };
-  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text_en: "", text_ru: null, photo_urls: [] }); render(); };
+  v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name: "", qty: null, unit: null, note: null, section: null }); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text: "", photo_urls: [] }); render(); };
 
   // 2026-08-10: save used to be one giant confirm call that also ran
   // ingredient classification + translation synchronously server-side -
@@ -6702,12 +6800,15 @@ function openImportReview(draft, jobId, targetRecipeId, sourceType) {
     saveBtn.textContent = "💾 " + tr('anonymous.saving');
     setSaveProgress(0, tr('anonymous.saving-recipe'));
     const finalDraft = {
-      title_en: (titleEn || "").trim(),
-      title_ru: (titleRu || "").trim() || null,
-      ingredients: ingredients.filter(i => (i.name_en || "").trim() || (i.name_ru || "").trim()),
+      source_lang: sourceLang,
+      title: (title || "").trim(),
+      translations,
+      title_en: (translations.en?.title || title || "").trim(),
+      title_ru: (translations.ru?.title || "").trim() || null,
+      ingredients: ingredients.filter(i => (i.name || "").trim()),
       instructions: instructions
-        .map(s => ({ text_en: (s.text_en || "").trim(), text_ru: (s.text_ru || "").trim() || null, photo_urls: s.photo_urls || [] }))
-        .filter(s => s.text_en || s.text_ru),
+        .map(s => ({ text: (s.text || "").trim(), photo_urls: s.photo_urls || [] }))
+        .filter(s => s.text),
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
