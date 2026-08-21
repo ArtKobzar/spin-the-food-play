@@ -411,7 +411,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=6c197a2";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=58f422d";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -776,14 +776,29 @@ function withTimeout(promise, ms, label) {
 
 // spin_food_create_family hung for 15s+ with zero server trace (2026-08-18, 2026-08-20
 // UA retest): supabase-js can block RPC behind a token refresh that never completes
-// on flaky networks. Resolve session explicitly before SECURITY DEFINER RPCs.
+// on flaky networks. Prefer cached authSession + raw refresh (see refreshAccessTokenRaw)
+// instead of sb.auth.getSession(), which wedges on navigator.locks in this SDK version.
 async function ensureAuthReady(ms = 12000) {
+  if (authSession?.access_token) {
+    await ensureFreshAccessToken();
+    if (authSession?.access_token) return authSession;
+  }
   const { data, error } = await withTimeout(sb.auth.getSession(), ms, "Auth session");
   if (error) throw error;
   const session = data?.session;
   if (!session?.access_token) throw new Error("not signed in");
   authSession = session;
-  return session;
+  await ensureFreshAccessToken();
+  return authSession;
+}
+
+function createFamilyConnectionErrorText(rawMsg) {
+  const msg = (rawMsg || "").trim();
+  if (/Auth session timed out|Create family timed out|timed out/i.test(msg)) {
+    return tr('createFamilyError.request-timeout');
+  }
+  if (/not signed in/i.test(msg)) return tr('createFamilyError.not-signed-in');
+  return tr('anonymous.couldnt-reach-the-server-check-your-connection-a');
 }
 
 // 2026-08-10 (SPEC gap: photo-upload timeouts with zero server-side trace -
@@ -2738,8 +2753,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
     } catch (e) {
       const rawMsg = e?.message || String(e);
       logClientDiagnostic("create_family_call_exception", { message: rawMsg, stack: e?.stack || null, household_name_len: householdLen });
-      note.textContent = tr('anonymous.couldnt-reach-the-server-check-your-connection-a')
-        + (rawMsg ? ` (${rawMsg})` : "");
+      note.textContent = createFamilyConnectionErrorText(rawMsg);
       note.style.color = "#ef4444";
       createBtn.disabled = false;
       createBtn.textContent = tr('anonymous.try-again');
