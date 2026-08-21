@@ -2628,7 +2628,7 @@ export const STF_I18N_CATALOGS = {
     "navTab.spin": "Draaien",
     "navTab.wish": "Wens",
     "navTab.menu": "Weekmenu",
-    "navTab.duel": "Duel (stemmen)",
+    "navTab.duel": "Duel",
     "navTab.feed": "Gezin",
     "quickFilterLabel.soup": "Soep",
     "quickFilterLabel.meat": "Vlees",
