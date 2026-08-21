@@ -40,8 +40,8 @@
   .who-btn small { display: block; font-weight: 400; color: #999; font-size: 13px; }
 
   /* onboarding */
-  .ob { flex: 1; display: flex; flex-direction: column; padding: 22px 24px 30px; }
-  .ob-nav { display: flex; align-items: center; gap: 10px; }
+  .ob { flex: 1; display: flex; flex-direction: column; padding: 22px 24px 30px; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .ob-nav { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
   .ob-back { background: none; border: none; font-size: 24px; cursor: pointer; color: #999; padding: 0 4px; }
   .ob-prog { display: flex; gap: 5px; flex: 1; }
   .ob-prog i { height: 4px; flex: 1; border-radius: 2px; background: #eee; }
@@ -50,8 +50,9 @@
   .ob-big { display: flex; flex-direction: column; gap: 12px; }
   .ob-big .btn { font-size: 17px; padding: 17px; }
   .ob-note { color: #999; font-size: 13px; padding-top: 12px; }
+  .ob .ob-note { color: #555; font-size: 14px; line-height: 1.35; }
   .ob-text { width: 100%; min-height: 110px; border: 2px solid #e5e7eb; border-radius: 16px; padding: 12px; font-size: 15px; font-family: inherit; resize: none; background: #fff; }
-  .ob-next { margin-top: auto; }
+  .ob-next { margin-top: 22px; flex-shrink: 0; }
   .mealgrid { display: grid; grid-template-columns: 52px repeat(3, 1fr); gap: 6px; font-size: 12px; }
   .mealgrid.two { grid-template-columns: 52px repeat(2, 1fr); }
   .mealgrid.one { grid-template-columns: 52px 1fr; }
@@ -92,6 +93,7 @@
   .btn-success { background: var(--green); color: #fff; box-shadow: 0 4px 0 #047857; }
   .btn-success:active { transform: translateY(3px); box-shadow: 0 1px 0 #047857; }
   .chip { background: #fff; border: 1.5px solid #e5e7eb; border-radius: 13px; padding: 8px 13px; font-size: 14px; cursor: pointer; user-select: none; }
+  .ob .chips-wrap .chip { font-size: 13px; }
   .chip.on { border-color: var(--amber); background: var(--amber-tint); font-weight: 600; }
   .chips-wrap { display: flex; flex-wrap: wrap; gap: 7px; }
   .chips-wrap.stack { flex-direction: column; }
@@ -165,7 +167,7 @@
   .dropdown-item.on { background: var(--amber-tint); font-weight: 600; }
   .dropdown-item .dd-check { color: var(--amber); opacity: 0; font-size: 13px; }
   /* edge-to-edge single-toggle chip (currently just hide-inactive) */
-  .chip-full { display: block; width: 100%; box-sizing: border-box; text-align: center; margin-bottom: 7px; }
+  .chip-full { flex: 0 0 100%; display: block; width: 100%; box-sizing: border-box; text-align: center; margin-bottom: 7px; }
   .dropdown-item.on .dd-check { opacity: 1; }
   /* search-bar typeahead suggestions - a floating list of matching recipe names under
      the input, so search isn't "type and hope the swipe deck updated somewhere below". */
@@ -3584,7 +3586,7 @@ function renderOnboard() {
         ${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}
       </div>
       <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.which-appliances-do-you-have-and-you-can-use')}</div>
-      <div class="chips-wrap">
+      <div class="chips-wrap" style="margin-bottom:18px">
         <div class="chip chip-full ${ob.appliances.length === APPLIANCES.length ? "on" : ""}" data-appl-all>${tr('renderOnboard.all')}</div>
         ${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}
       </div>
