@@ -481,7 +481,7 @@ function localeChipRowHtml(activeCode, dataAttr = "data-ol") {
 function applyMembershipLocale() {
   const lc = membership?.locale;
   if (lc && UI_LOCALES.some((l) => l.code === lc)) {
-    saveLangChoice(lc);
+    saveLangChoice(lc, { forOnboard: true });
     refreshI18n();
   }
 }
@@ -729,7 +729,7 @@ function saveUnitsChoice(sys) {
 // separate, always-available concern and don't need their own gate screen.
 function pickLanguage(code) {
   if (!UI_LOCALES.some((l) => l.code === code)) return;
-  saveLangChoice(code);
+  saveLangChoice(code, { forOnboard: Boolean(membership?.member_id || me) });
   refreshI18n();
   if (membership?.member_id) {
     Promise.resolve(rpcWithTimeout("spin_food_set_member_locale", { p_locale: code }, 10000, "Member locale")).then(({ error }) => {
@@ -4153,7 +4153,7 @@ function stackHtml(dk) {
   return s;
 }
 function renderSpin() {
-  return `<div class="screen-title"><h2>${tr('renderSpin.spin-the-food')}</h2></div>
+  return `<div class="screen-title"><h2>Spin The Food!</h2></div>
     <div style="display:flex;gap:8px;margin:0 20px 8px">
       <button class="filter-icon-btn" id="add" title="${tr('renderSpin.add-a-new-recipe')}" aria-label="${tr('renderSpin.add-a-new-recipe')}">➕</button>
       <div style="position:relative;flex:1 1 auto;min-width:0">
