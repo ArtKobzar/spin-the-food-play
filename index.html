@@ -411,7 +411,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=abeef77";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=32e636c";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1489,33 +1489,61 @@ function wireQuickFilterRow(root, idPrefix, f, onChange) {
 // below. Every group in the panel is multi-select (a home cook might want to see
 // breakfast-or-lunch options at once); each gets a short "Any" chip/item that clears
 // just that group rather than a per-group "Any meal"/"Any time" long-form label.
-const MEAL_FILTERS = [["breakfast","🍳 Breakfast","🍳 Завтрак"],["lunch","🍲 Lunch","🍲 Обед"],["dinner","🍗 Dinner","🍗 Ужин"]];
+const MEAL_FILTER_KEYS = ["breakfast", "lunch", "dinner"];
+const TIME_FILTER_KEYS = ["quick", "medium", "long"];
+const DIFF_FILTER_KEYS = ["easy", "medium", "hard"];
+const DIET_FILTER_KEYS = ["vegetarian", "vegan", "pescatarian", "gluten-free", "dairy-free", "halal", "kosher"];
+const PROTEIN_GROUP_KEYS = ["meat", "fish", "seafood", "egg", "dairy", "plant", "untagged"];
+const PROTEIN_GROUP_IC = { meat: "🥩", fish: "🐟", seafood: "🦐", egg: "🥚", dairy: "🧀", plant: "🥗", untagged: "❔" };
+function filterMealLabel(k) {
+  return ({ breakfast: tr('filterMeal.breakfast'), lunch: tr('filterMeal.lunch'), dinner: tr('filterMeal.dinner') })[k] || k;
+}
+function filterTimeLabel(k) {
+  return ({ quick: tr('filterTime.quick'), medium: tr('filterTime.medium'), long: tr('filterTime.long') })[k] || k;
+}
+function filterDiffLabel(k) {
+  return ({ easy: tr('filterDiff.easy'), medium: tr('filterDiff.medium'), hard: tr('filterDiff.hard') })[k] || k;
+}
+function proteinGroupLabel(k) {
+  if (k === "untagged") return tr('anonymous.not-yet-tagged');
+  return ({
+    meat: tr('proteinGroupLabel.meat'), fish: tr('proteinGroupLabel.fish'),
+    seafood: tr('proteinGroupLabel.seafood'), egg: tr('proteinGroupLabel.egg'),
+    dairy: tr('proteinGroupLabel.dairy'), plant: tr('proteinGroupLabel.plant'),
+  })[k] || k;
+}
+function dietFilterLabel(k) {
+  return ({
+    vegetarian: tr('dietFilterLabel.vegetarian'), vegan: tr('dietFilterLabel.vegan'),
+    pescatarian: tr('dietFilterLabel.pescatarian'), "gluten-free": tr('dietFilterLabel.gluten-free'),
+    "dairy-free": tr('dietFilterLabel.dairy-free'), halal: tr('dietFilterLabel.halal'),
+    kosher: tr('dietFilterLabel.kosher'),
+  })[k] || k;
+}
+function advFilterItems() {
+  const cuisineKeys = availableCuisines();
+  if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
+  return {
+    mealItems: MEAL_FILTER_KEYS.map(k => [k, filterMealLabel(k)]),
+    proteinItems: availableProteinGroups().map(k => [k, `${PROTEIN_GROUP_IC[k] || ""} ${proteinGroupLabel(k)}`.trim()]),
+    cuisineItems: cuisineKeys.map(c => [c, c === "family" ? tr('anonymous.not-yet-tagged') : cuisineLabel(c)]),
+    timeItems: TIME_FILTER_KEYS.map(k => [k, filterTimeLabel(k)]),
+    diffItems: DIFF_FILTER_KEYS.map(k => [k, filterDiffLabel(k)]),
+    dietItems: DIET_FILTER_KEYS.map(k => [k, dietFilterLabel(k)]),
+  };
+}
 // protein_groups[] (food.family_cookbook_recipes, Tier 1 ingredient rollup) is the
 // real, ingredient-derived field - replaces the legacy protein_type scalar that
 // nothing has written since the pre-pivot cutover. "untagged" is a UI-only bucket for
 // thin/unclassified cards, never a stored value - see dishProteinGroups() below.
-const PROTEIN_GROUP_META = {
-  meat:     { ic: "🥩", en: "Meat",          ru: "Мясо" },
-  fish:     { ic: "🐟", en: "Fish",          ru: "Рыба" },
-  seafood:  { ic: "🦐", en: "Seafood",       ru: "Морепродукты" },
-  egg:      { ic: "🥚", en: "Egg",           ru: "Яйца" },
-  dairy:    { ic: "🧀", en: "Dairy",         ru: "Молочное" },
-  plant:    { ic: "🥗", en: "Plant-based",   ru: "Растительное" },
-  untagged: { ic: "❔", en: "Not yet tagged", ru: "Без данных" },
-};
-// A thick card's empty protein_groups[] means "fully plant-based" (every ingredient
-// resolved, none carried a protein class) - a thin/unclassified card's empty array
-// means "we don't know," a different fact that must not be shown as "plant-based".
 function dishProteinGroups(d) {
   if (d.card_state !== "thick") return ["untagged"];
   return d.protein_groups.length ? d.protein_groups : ["plant"];
 }
 function availableProteinGroups() {
   const present = new Set(DISHES.flatMap(dishProteinGroups));
-  return Object.keys(PROTEIN_GROUP_META).filter(k => present.has(k));
+  return PROTEIN_GROUP_KEYS.filter(k => present.has(k));
 }
-const TIME_FILTERS = [["quick","⚡ <20 min","⚡ <20 мин"],["medium","⏱ 20-45 min","⏱ 20-45 мин"],["long","🕒 45+ min","🕒 45+ мин"]];
-const DIFF_FILTERS = [["easy","● Easy","● Легко"],["medium","●● Medium","●● Средне"],["hard","●●● Hard","●●● Сложно"]];
 const DIFF_LEVEL_KEY = { 1: "easy", 2: "medium", 3: "hard" };
 function diffLevel(d) { return (d.d.match(/●/g) || []).length; }
 function diffKey(d) { return DIFF_LEVEL_KEY[diffLevel(d)] || "easy"; }
@@ -1523,20 +1551,7 @@ function timeBucket(d) { return d.t <= 20 ? "quick" : d.t <= 45 ? "medium" : "lo
 // diet_compatible_with[] (Tier 1, schema.org RestrictedDiet-grounded) - which diets a
 // recipe suits. Only the family-relevant subset below is surfaced as chips; the field
 // itself carries the full schema.org list (keto/paleo/omnivore included too).
-const DIET_META = {
-  vegetarian:  { en: "Vegetarian",  ru: "Вегетарианское" },
-  vegan:       { en: "Vegan",       ru: "Веганское" },
-  pescatarian: { en: "Pescatarian", ru: "Пескетарианское" },
-  // Hyphenated, matching the one canonical vocabulary: live food.day_rules
-  // rule_values, food.ingredient_taxonomy.diet_compatible_with, and
-  // spin_food_filter_vocabulary()'s diet_options all use hyphens. These two
-  // keys were the only underscored ones anywhere, so a Day Rule of
-  // "gluten-free" could never match a recipe filtered on "gluten_free".
-  "gluten-free": { en: "Gluten-free", ru: "Без глютена" },
-  "dairy-free":  { en: "Dairy-free",  ru: "Без молочного" },
-  halal:       { en: "Halal",       ru: "Халяль" },
-  kosher:      { en: "Kosher",      ru: "Кошер" },
-};
+// Hyphenated diet keys match food.day_rules, ingredient_taxonomy, and spin_food_filter_vocabulary().
 // hideInactive defaults FALSE: marking a recipe inactive (About tab toggle, or the
 // quick-hide eye icon on a Spin card) opts it out of the automatic AI weekly fill,
 // but should NOT silently vanish it from Spin/Wish too - that surprised people into
@@ -1585,14 +1600,14 @@ function filterIconButtonHtml(idPrefix, open) {
 // current pick, opening a floating checklist with a leading short "Any" item (not
 // "Any meal"/"Any time" - just "Any") that clears the whole group in one tap. Every
 // group here is OR-within-group, so multiple non-"Any" picks combine together.
-function dropdownGroupHtml(idPrefix, id, sectEn, sectRu, items, setKey, f) {
+function dropdownGroupHtml(idPrefix, id, sectionKey, items, setKey, f) {
   const sel = items.filter(([k]) => f[setKey].has(k));
   const summary = sel.length ? sel.map(([,l]) => l).join(", ") : tr('dropdownGroupHtml.any');
   const any = `<div class="dropdown-item ${f[setKey].size?"":"on"}" data-k="__any__"><span>${tr('dropdownGroupHtml.any')}</span><span class="dd-check">✓</span></div>`;
   const rows = items.map(([k,label]) =>
     `<div class="dropdown-item ${f[setKey].has(k)?"on":""}" data-k="${k}"><span>${label}</span><span class="dd-check">✓</span></div>`).join("");
   return `
-    <div class="sect">${pairLang(sectEn, sectRu)}</div>
+    <div class="sect">${tr(sectionKey)}</div>
     <div class="filter-dropdown filter-dropdown-full" id="${idPrefix}${id}">
       <button type="button" class="dropdown-btn dropdown-btn-full${f[setKey].size?" on":""}" id="${idPrefix}${id}Btn"><span class="dropdown-summary">${summary}</span><span class="dd-arrow">▾</span></button>
       <div class="dropdown-menu dropdown-menu-full" id="${idPrefix}${id}Menu" style="display:none">${any}${rows}</div>
@@ -1639,26 +1654,16 @@ function closeFloatingPanels(root) {
 // then meal type, protein, cuisine, time, difficulty, then dietary needs. idPrefix
 // keeps ids unique per surface.
 function advFilterPanelHtml(idPrefix, f, open) {
-  const cuisineKeys = availableCuisines();
-  if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
-  const cuisineItems = cuisineKeys.map(c => [c, c === "family" ? tr('anonymous.not-yet-tagged') : cuisineLabel(c)]);
-  const proteinItems = availableProteinGroups().map(k => {
-    const m = PROTEIN_GROUP_META[k];
-    return [k, `${m.ic} ${pairLabel(m)}`];
-  });
-  const mealItems = MEAL_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const timeItems = TIME_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const diffItems = DIFF_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const dietItems = Object.entries(DIET_META).map(([k,m]) => [k, pairLabel(m)]);
+  const { mealItems, proteinItems, cuisineItems, timeItems, diffItems, dietItems } = advFilterItems();
   return `
     <div id="${idPrefix}Panel" style="display:${open ? "block" : "none"}">
       <div class="chip chip-full ${f.hideInactive?"on":""}" id="${idPrefix}ActiveOnly">${f.hideInactive ? "🙈 " + tr('advFilterPanelHtml.hide-inactive-recipes') : "👁 " + tr('advFilterPanelHtml.showing-inactive-recipes-too')}</div>
-      ${dropdownGroupHtml(idPrefix, "Meal", "Meal", "Приём пищи", mealItems, "meal", f)}
-      ${dropdownGroupHtml(idPrefix, "Protein", "Protein / main ingredient", "Белок / основной ингредиент", proteinItems, "proteins", f)}
-      ${dropdownGroupHtml(idPrefix, "Cuisine", "Cuisine", "Кухня", cuisineItems, "cuisines", f)}
-      ${dropdownGroupHtml(idPrefix, "Time", "Time", "Время", timeItems, "time", f)}
-      ${dropdownGroupHtml(idPrefix, "Diff", "Difficulty", "Сложность", diffItems, "diff", f)}
-      ${dropdownGroupHtml(idPrefix, "Diet", "Dietary needs", "Диетические потребности", dietItems, "diets", f)}
+      ${dropdownGroupHtml(idPrefix, "Meal", "filterSection.meal", mealItems, "meal", f)}
+      ${dropdownGroupHtml(idPrefix, "Protein", "filterSection.protein", proteinItems, "proteins", f)}
+      ${dropdownGroupHtml(idPrefix, "Cuisine", "filterSection.cuisine", cuisineItems, "cuisines", f)}
+      ${dropdownGroupHtml(idPrefix, "Time", "filterSection.time", timeItems, "time", f)}
+      ${dropdownGroupHtml(idPrefix, "Diff", "filterSection.difficulty", diffItems, "diff", f)}
+      ${dropdownGroupHtml(idPrefix, "Diet", "filterSection.diet", dietItems, "diets", f)}
     </div>`;
 }
 // Wires the filter icon button built by filterIconButtonHtml. `panelState` is
@@ -1730,17 +1735,7 @@ function wireSearchSuggest(root, searchId, idPrefix, getMatches, onPick) {
 // Wires every control inside the panel built by advFilterPanelHtml. onChange runs after any edit.
 // `items` passed to each dropdown must match what advFilterPanelHtml built its summary text from.
 function wireAdvFilterPanel(root, idPrefix, f, onChange) {
-  const cuisineKeys = availableCuisines();
-  if (DISHES.some(d => d.c === "family")) cuisineKeys.push("family");
-  const cuisineItems = cuisineKeys.map(c => [c, c === "family" ? tr('anonymous.not-yet-tagged') : cuisineLabel(c)]);
-  const proteinItems = availableProteinGroups().map(k => {
-    const m = PROTEIN_GROUP_META[k];
-    return [k, `${m.ic} ${pairLabel(m)}`];
-  });
-  const mealItems = MEAL_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const timeItems = TIME_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const diffItems = DIFF_FILTERS.map(([k,l,lru]) => [k, pairLang(l, lru)]);
-  const dietItems = Object.entries(DIET_META).map(([k,m]) => [k, pairLabel(m)]);
+  const { mealItems, proteinItems, cuisineItems, timeItems, diffItems, dietItems } = advFilterItems();
   wireDropdownGroup(root, idPrefix, "Meal", "meal", f, mealItems, onChange);
   wireDropdownGroup(root, idPrefix, "Protein", "proteins", f, proteinItems, onChange);
   wireDropdownGroup(root, idPrefix, "Cuisine", "cuisines", f, cuisineItems, onChange);
@@ -4557,7 +4552,7 @@ function detailView(d) {
     ${chipRow(tr('detailView.dish-role'), DISH_ROLES.map(r => [r, dishRoleLabel(r)]), v => roleVal === v, "dish_role")}
     ${chipRow(tr('detailView.course-category'), COURSE_CATEGORIES.map(c => [c, courseLabel(c)]), v => courseVal === v, "course_category")}
     ${chipRow(tr('detailView.techniques'), TECHNIQUES.map(t => [t, techLabel(t)]), v => techVal.has(v), "techniques")}
-    ${d.diet_compatible_with.length ? `<div class="sect">${tr('detailView.diet-compatible')}</div><div class="chips-wrap">${d.diet_compatible_with.map(v => `<div class="chip on">${DIET_META[v] ? pairLabel(DIET_META[v]) : v}</div>`).join("")}</div>` : ""}
+    ${d.diet_compatible_with.length ? `<div class="sect">${tr('detailView.diet-compatible')}</div><div class="chips-wrap">${d.diet_compatible_with.map(v => `<div class="chip on">${dietFilterLabel(v)}</div>`).join("")}</div>` : ""}
     ${d.allergens.length ? `<div class="sect">${tr('detailView.allergens')}</div><div class="chips-wrap">${d.allergens.map(a => `<div class="chip on" style="border-color:#ef4444;background:#fee2e2">⚠️ ${a}</div>`).join("")}</div>` : ""}
     ${linksHtml(d)}`;
 
