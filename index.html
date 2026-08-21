@@ -941,7 +941,10 @@ const UNIT_ALIASES = {
   cup: "cup", cups: "cup", "чашка": "cup", "чашки": "cup", "стакан": "cup", "стакана": "cup",
   "°c": "celsius", c: "celsius", celsius: "celsius",
   "°f": "fahrenheit", f: "fahrenheit", fahrenheit: "fahrenheit",
-  pc: "piece", pcs: "piece", piece: "piece", pieces: "piece", clove: "piece", cloves: "piece", "шт": "piece", "шт.": "piece", "штука": "piece", "штуки": "piece", "штук": "piece",
+  pc: "piece", pcs: "piece", piece: "piece", pieces: "piece", clove: "piece", cloves: "piece", pot: "piece", potje: "piece",
+  el: "tablespoon", eetlepel: "tablespoon", tl: "teaspoon", theelepel: "teaspoon",
+  takje: "sprig", takjes: "sprig", snufje: "pinch", snuf: "pinch",
+  "шт": "piece", "шт.": "piece", "штука": "piece", "штуки": "piece", "штук": "piece",
 };
 // Resolves any unit text (canonical slug, either language's name, or a known
 // alias/abbreviation) to the canonical food.units slug, or null if nothing
@@ -953,6 +956,14 @@ function matchUnitSlug(text) {
   if (UNITS_BY_SLUG[norm]) return norm;
   const byName = UNITS.find(u => (u.name_en || "").toLowerCase() === norm || (u.name_ru || "").toLowerCase() === norm);
   if (byName) return byName.slug;
+  const byAlias = UNITS.find(u => (u.aliases || []).some(a => String(a).toLowerCase() === norm));
+  if (byAlias) return byAlias.slug;
+  const byLabel = UNITS.find(u => {
+    const li = u.labels_i18n;
+    if (!li || typeof li !== "object") return false;
+    return Object.values(li).some(v => String(v).trim().toLowerCase() === norm);
+  });
+  if (byLabel) return byLabel.slug;
   const aliasSlug = UNIT_ALIASES[norm];
   if (aliasSlug && UNITS_BY_SLUG[aliasSlug]) return aliasSlug;
   return null;
@@ -997,6 +1008,19 @@ function ingredientDisplayNameForLocale(ing, locale) {
 function ingredientDisplayName(ing) {
   return ingredientDisplayNameForLocale(ing, lang);
 }
+function ingredientDisplayNoteForLocale(ing, locale) {
+  if (!ing) return "";
+  const raw = ing.note;
+  if (!raw && !ing.note_resolved) return "";
+  if (ing.note_resolved && ing.note_resolved_locale === locale && !ing.note_is_fallback) {
+    return ing.note_resolved;
+  }
+  if (ing.note_resolved && ing.note_resolved_locale === locale) return ing.note_resolved;
+  return raw || ing.note_resolved || "";
+}
+function ingredientDisplayNote(ing) {
+  return ingredientDisplayNoteForLocale(ing, lang);
+}
 
 function normalizeImportDraftClient(raw) {
   if (raw?.source_lang && raw?.title && raw?.translations) return raw;
@@ -1033,6 +1057,13 @@ function importDraftIngName(draft, locale, idx, ing) {
   if (locale === draft.source_lang) return ing.name || ing.name_en || "";
   return draft.translations?.[locale]?.ingredients?.[idx]?.name || ing.name || ing.name_en || "";
 }
+function importDraftIngNote(draft, locale, idx, ing) {
+  const sourceNote = ing.note ?? null;
+  if (locale === draft.source_lang) return sourceNote;
+  const translated = draft.translations?.[locale]?.ingredients?.[idx]?.note;
+  if (translated != null && String(translated).trim() !== "") return translated;
+  return sourceNote;
+}
 function importDraftStepText(draft, locale, idx, step) {
   if (locale === draft.source_lang) return step.text || step.text_en || "";
   return draft.translations?.[locale]?.instructions?.[idx]?.text || step.text || step.text_en || "";
@@ -1042,7 +1073,10 @@ function ensureImportTranslationBlock(draft, locale) {
   if (!draft.translations[locale]) {
     draft.translations[locale] = {
       title: importDraftTitle(draft, locale),
-      ingredients: (draft.ingredients || []).map((ing, idx) => ({ name: importDraftIngName(draft, locale, idx, ing) })),
+      ingredients: (draft.ingredients || []).map((ing, idx) => ({
+        name: importDraftIngName(draft, locale, idx, ing),
+        note: importDraftIngNote(draft, locale, idx, ing),
+      })),
       instructions: (draft.instructions || []).map((step, idx) => ({ text: importDraftStepText(draft, locale, idx, step) })),
     };
   }
@@ -1283,6 +1317,9 @@ async function hydrateDishContent(d, locale) {
       name_resolved: ing.name_resolved,
       resolved_locale: ing.resolved_locale,
       name_is_fallback: ing.name_is_fallback,
+      note_resolved: ing.note_resolved,
+      note_resolved_locale: ing.note_resolved_locale,
+      note_is_fallback: ing.note_is_fallback,
     }));
   }
   d._resolvedLocale = locale;
@@ -4477,7 +4514,9 @@ function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
   const name = nameLocale ? ingredientDisplayNameForLocale(ing, nameLocale) : ingredientDisplayName(ing);
-  const note = ing.note ? ` (${ing.note})` : "";
+  const noteLocale = nameLocale || lang;
+  const noteText = ingredientDisplayNoteForLocale(ing, noteLocale);
+  const note = noteText ? ` (${noteText})` : "";
   // Scaling (2026-08-09): scaleFactor = target servings / recipe.servings,
   // computed by the caller only when a real (non-null) servings baseline is
   // known - a purely display-time multiply, same non-destructive pattern as
