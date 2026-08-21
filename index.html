@@ -1082,6 +1082,26 @@ function ensureImportTranslationBlock(draft, locale) {
   }
   return draft.translations[locale];
 }
+function cuisineOptionsList() {
+  return Object.keys(CUISINES_BY_SLUG).sort((a, b) => cuisineLabel(a).localeCompare(cuisineLabel(b), lang || "en"));
+}
+function slugifyCuisine(label) {
+  let s = String(label || "").trim().toLowerCase();
+  s = s.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  return s.slice(0, 64) || "cuisine";
+}
+function detailEditTitleForDisplay(d, draft) {
+  if (lang === "ru") return draft.titleRu || d.ru || d.en || "";
+  if (lang === "uk") return draft.titleUk || dishDisplayTitle(d) || "";
+  if (lang === "nl") return draft.titleNl || dishDisplayTitle(d) || "";
+  return draft.titleEn || d.en || d.ru || "";
+}
+function detailCurrentTitleForCompare(d) {
+  if (lang === "ru") return d.ru || "";
+  if (lang === "uk") return (d.uk && !d.ukFallback) ? d.uk : "";
+  if (lang === "nl") return (d.nl && !d.nlFallback) ? d.nl : "";
+  return d.en || "";
+}
 function dishDisplayTitle(d) {
   if (lang === "uk" && d.uk && !d.ukFallback) return d.uk;
   if (lang === "nl" && d.nl && !d.nlFallback) return d.nl;
@@ -4693,7 +4713,7 @@ function detailHeaderHtml(d) {
   return `<div class="dtl-hero" style="${photo.bgStyle}">${photo.inner}${enrichBtn}${eyeBtn}</div>
     <div style="padding:14px 16px">
       ${detailEditMode
-        ? `<input id="dtlTitleInput" value="${((lang === "ru" ? (detailDraft.titleRu || detailDraft.titleEn) : (detailDraft.titleEn || detailDraft.titleRu)) || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.recipe-name')}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
+        ? `<input id="dtlTitleInput" value="${detailEditTitleForDisplay(d, detailDraft).replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.recipe-name')}" style="width:100%;font-weight:800;font-size:18px;border:2px solid #e5e7eb;border-radius:10px;padding:8px 10px;font-family:inherit">`
         : `<div style="display:flex;align-items:flex-start;gap:10px">
             <div style="flex:1;font-weight:800;font-size:24px;line-height:1.25">${detailTitleName(d)}</div>
             ${detailTranslateBtnHtml(d)}
@@ -4703,7 +4723,14 @@ function detailHeaderHtml(d) {
         ${detailEditMode
           ? `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px">⏱ <input id="dtlTimeInput" type="number" min="1" value="${detailDraft.cookTimeMinutes ?? ""}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px"> ${tr('detailHeaderHtml.min')}</span>
             <span id="dtlDiffPicker" style="display:inline-flex;gap:3px;cursor:pointer;margin-right:10px;vertical-align:middle">${[1, 2, 3].map(n => `<span data-diffval="${n}" style="opacity:${n <= detailDraft.difficulty ? "1" : "0.25"};font-size:15px">●</span>`).join("")}</span>
-            <input id="dtlCuisineInput" value="${cuisineLabel(detailDraft.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.cuisine')}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">`
+            <span id="dtlCuisineWrap" style="display:inline-flex;gap:4px;align-items:center">
+              <select id="dtlCuisineSelect" style="max-width:160px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px">
+                <option value="">${tr('detailHeaderHtml.cuisine')}</option>
+                ${cuisineOptionsList().map(slug => `<option value="${slug}" ${detailDraft.cuisine === slug ? "selected" : ""}>${cuisineLabel(slug)}</option>`).join("")}
+                <option value="__new__" ${detailDraft.cuisineMode === "new" ? "selected" : ""}>${tr('detailHeaderHtml.add-new-cuisine')}</option>
+              </select>
+              <input id="dtlCuisineInput" value="${(detailDraft.cuisineCustom || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.new-cuisine-name')}" style="width:110px;border:1px solid #eee;border-radius:8px;padding:4px 6px;font-size:13px;${detailDraft.cuisineMode === "new" ? "" : "display:none"}">
+            </span>`
           : `⏱ ${d.t} ${tr('detailHeaderHtml.min')} &nbsp; ${d.d} &nbsp; ${cuisineDisplay(d.c)}${d.added_by_member_id ? ` &nbsp; · ${tr('detailHeaderHtml.by')} ${mem(d.added_by_member_id).em} ${mName(mem(d.added_by_member_id))}` : ""}`}
       </div>
       ${d.youtube_url ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -4953,8 +4980,10 @@ function wireDetailOverlay(wrap, d) {
         meal_types: new Set(d.meals), techniques: new Set(d.techniques),
         instructions: instructionSteps(d).map(s => ({ ...s })),
         ingredients: d.ingredients.map(i => ({ ...i })),
-        titleEn: d.en, titleRu: d.ru,
+        titleEn: d.en, titleRu: d.ru, titleUk: d.uk, titleNl: d.nl,
         cuisine: d.c === "family" ? "" : d.c,
+        cuisineMode: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? "new" : "pick",
+        cuisineCustom: (d.c && d.c !== "family" && !CUISINES_BY_SLUG[d.c]) ? cuisineLabel(d.c) : "",
         difficulty: d.difficulty,
         cookTimeMinutes: d.t,
         servings: d.servings ?? null,
@@ -4984,15 +5013,31 @@ function wireDetailOverlay(wrap, d) {
   }));
   wrap.querySelector("#dtlTitleInput")?.addEventListener("input", (e) => {
     if (!detailDraft) return;
-    if (lang === "ru") detailDraft.titleRu = e.target.value; else detailDraft.titleEn = e.target.value;
+    if (lang === "ru") detailDraft.titleRu = e.target.value;
+    else if (lang === "uk") detailDraft.titleUk = e.target.value;
+    else if (lang === "nl") detailDraft.titleNl = e.target.value;
+    else detailDraft.titleEn = e.target.value;
   });
   wrap.querySelector("#dtlTimeInput")?.addEventListener("input", (e) => {
     if (!detailDraft) return;
     detailDraft.cookTimeMinutes = e.target.value === "" ? null : Number(e.target.value);
   });
+  wrap.querySelector("#dtlCuisineSelect")?.addEventListener("change", (e) => {
+    if (!detailDraft) return;
+    const v = e.target.value;
+    if (v === "__new__") {
+      detailDraft.cuisineMode = "new";
+      detailDraft.cuisineCustom = "";
+    } else {
+      detailDraft.cuisineMode = "pick";
+      detailDraft.cuisine = v;
+      detailDraft.cuisineCustom = "";
+    }
+    renderDetailOverlay();
+  });
   wrap.querySelector("#dtlCuisineInput")?.addEventListener("input", (e) => {
     if (!detailDraft) return;
-    detailDraft.cuisine = e.target.value;
+    detailDraft.cuisineCustom = e.target.value;
   });
   wrap.querySelector("#dtlServingsInput")?.addEventListener("input", (e) => {
     if (!detailDraft) return;
@@ -5169,16 +5214,45 @@ async function saveDetailEdit(d) {
   // Name/difficulty/time/cuisine - only the current UI language's title side
   // is touched (same convention as instruction steps, SPEC_RECIPE_I18N.md),
   // the other side's existing translation is left untouched.
-  const draftTitle = (lang === "ru" ? detailDraft.titleRu : detailDraft.titleEn) || "";
-  const currentTitle = (lang === "ru" ? d.ru : d.en) || "";
-  if (draftTitle.trim() && draftTitle.trim() !== currentTitle.trim()) {
-    if (lang === "ru") proposed.title_ru = draftTitle.trim(); else proposed.title_en = draftTitle.trim();
+  const draftTitle = detailEditTitleForDisplay(d, detailDraft).trim();
+  const currentTitle = detailCurrentTitleForCompare(d).trim();
+  if (draftTitle && draftTitle !== currentTitle) {
+    if (lang === "ru") proposed.title_ru = draftTitle;
+    else if (lang === "en") proposed.title_en = draftTitle;
+    else if (lang === "uk" || lang === "nl") {
+      proposed.title_locale = lang;
+      proposed.title_locale_value = draftTitle;
+    }
   }
   if (detailDraft.difficulty !== d.difficulty) proposed.difficulty = detailDraft.difficulty;
   if (detailDraft.cookTimeMinutes && detailDraft.cookTimeMinutes !== d.t) proposed.cook_time_minutes = detailDraft.cookTimeMinutes;
-  const draftCuisine = (detailDraft.cuisine || "").trim().toLowerCase();
+  const draftCuisine = detailDraft.cuisineMode === "new"
+    ? (detailDraft.cuisineCustom || "").trim()
+    : (detailDraft.cuisine || "").trim().toLowerCase();
   const currentCuisine = d.c === "family" ? "" : d.c;
-  if (draftCuisine && draftCuisine !== currentCuisine) proposed.cuisine = draftCuisine;
+  if (detailDraft.cuisineMode === "new" && draftCuisine) {
+    const slug = slugifyCuisine(draftCuisine);
+    const labels = { en: draftCuisine };
+    if (lang === "uk") labels.uk = draftCuisine;
+    if (lang === "nl") labels.nl = draftCuisine;
+    if (lang === "ru") labels.ru = draftCuisine;
+    const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
+      p_slug: slug,
+      p_label_en: draftCuisine,
+      p_labels_i18n: labels,
+    });
+    if (cuiErr) {
+      toast(tr('saveDetailEdit.cuisine-add-failed') + cuiErr.message);
+      detailSaving = false;
+      renderDetailOverlay();
+      return;
+    }
+    filterVocabLoaded = false;
+    await loadFilterVocabulary();
+    if (slug !== currentCuisine) proposed.cuisine = slug;
+  } else if (draftCuisine && draftCuisine !== currentCuisine) {
+    proposed.cuisine = draftCuisine;
+  }
   if (detailDraft.servings && detailDraft.servings !== d.servings) proposed.servings = detailDraft.servings;
 
   // Bilingual step diffing (SPEC_RECIPE_I18N.md): both text_en and text_ru
@@ -5253,12 +5327,27 @@ async function saveDetailEdit(d) {
     ? tr('saveDetailEdit.edit-sent-waiting-for-the-owning-cook-to-approve')
     : tr('saveDetailEdit.recipe-updated'));
   if (tab === "spin") refreshDeck();
+  const editedDish = dish(editedId);
+  if (editedDish) {
+    editedDish._resolvedLocale = null;
+    await hydrateDishContent(editedDish, lang);
+  }
   if (detailOpen) renderDetailOverlay();
 }
 
 async function resolvePendingEdit(d, approve) {
+  const pendingLocaleTitle = approve && d.pending_edit?.title_locale && d.pending_edit?.title_locale_value
+    ? { locale: d.pending_edit.title_locale, title: d.pending_edit.title_locale_value }
+    : null;
   const ok = await applyEvent(approve ? "recipe_edit_accepted" : "recipe_edit_declined", { recipe_id: d.id });
   if (!ok) return;
+  if (pendingLocaleTitle) {
+    await sb.rpc("spin_food_recipe_set_locale_title", {
+      p_recipe_id: d.id,
+      p_locale: pendingLocaleTitle.locale,
+      p_title: pendingLocaleTitle.title,
+    });
+  }
   await loadCatalog();
   toast(approve ? tr('resolvePendingEdit.edit-approved') : tr('resolvePendingEdit.edit-declined-a-new-recipe-was-created'));
   if (tab === "spin") refreshDeck();
