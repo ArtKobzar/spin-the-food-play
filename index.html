@@ -47,6 +47,8 @@
   .ob-prog i { height: 4px; flex: 1; border-radius: 2px; background: #eee; }
   .ob-prog i.done { background: var(--amber); }
   .ob-q { font-size: 24px; font-weight: 800; line-height: 1.25; margin: 18px 0 18px; }
+  .ob-sect { color: #111; font-size: 15px; font-weight: 700; line-height: 1.35; margin: 16px 0 8px; }
+  .ob-q + .ob-sect { margin-top: 0; }
   .ob-big { display: flex; flex-direction: column; gap: 12px; }
   .ob-big .btn { font-size: 17px; padding: 17px; }
   .ob-note { color: #999; font-size: 13px; padding-top: 12px; }
@@ -411,7 +413,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=58f422d";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=62c9376";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -3609,7 +3611,7 @@ function renderOnboard() {
     const chosen = obCookSlotsOn();
     const cls = chosen.length === 1 ? "one" : chosen.length === 2 ? "two" : "";
     inner = `<div class="ob-q">${tr('renderOnboard.your-cooking-week')}</div>
-      <div class="ob-note" style="padding:0 0 12px">${tr('renderOnboard.these-are-the-days-you-cook-tap-or-drag-across-c')}</div>
+      <div class="ob-sect" style="padding:0 0 6px">${tr('renderOnboard.these-are-the-days-you-cook-tap-or-drag-across-c')}</div>
       <div class="mealgrid ${cls}"><div></div>${chosen.map(m => {
         const allOn = DAYS.every((_, di) => obCookCellOn(di, m.k));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-cw-col="${m.k}" title="${tr('anonymous.toggle-all')} ${mealN(m)}">${m.ic}</div>`;
@@ -3626,12 +3628,12 @@ function renderOnboard() {
       <button class="btn btn-primary ob-next" id="obNext">${tr('renderOnboard.next')}</button>`;
   } else if (cur === "kit") {
     inner = `<div class="ob-q">${tr('renderOnboard.your-kitchen-skills')}</div>
-      <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.what-can-you-do-pick-your-skills')}</div>
+      <div class="ob-sect" style="padding:0 0 6px">${tr('renderOnboard.what-can-you-do-pick-your-skills')}</div>
       <div class="chips-wrap" style="margin-bottom:14px">
         <div class="chip chip-full ${ob.techniques.length === TECHNIQUES.length ? "on" : ""}" data-tech-all>${tr('renderOnboard.all')}</div>
         ${TECHNIQUES.map(k => `<div class="chip ${ob.techniques.includes(k) ? "on" : ""}" data-tech="${k}">${techLabel(k)}</div>`).join("")}
       </div>
-      <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.which-appliances-do-you-have-and-you-can-use')}</div>
+      <div class="ob-sect" style="padding:0 0 6px; margin-top:18px">${tr('renderOnboard.which-appliances-do-you-have-and-you-can-use')}</div>
       <div class="chips-wrap" style="margin-bottom:18px">
         <div class="chip chip-full ${ob.appliances.length === APPLIANCES.length ? "on" : ""}" data-appl-all>${tr('renderOnboard.all')}</div>
         ${APPLIANCES.map(k => `<div class="chip ${ob.appliances.includes(k) ? "on" : ""}" data-appl="${k}">${applianceLabel(k)}</div>`).join("")}
@@ -3648,7 +3650,7 @@ function renderOnboard() {
       <button class="btn btn-primary ob-next" id="obNext" style="margin-top:8px${ob.allergies.length ? "" : ";opacity:.4"}" ${ob.allergies.length ? "" : "disabled"}>${tr('renderOnboard.next')}</button>`;
   } else if (cur === "eat") {
     inner = `<div class="ob-q">${tr('renderOnboard.how-do-you-eat-at-home')}</div>
-      <div class="ob-note" style="padding:0 0 6px">${tr('renderOnboard.which-meals-are-you-home-for-tap-or-drag-across-')}</div>
+      <div class="ob-sect" style="padding:0 0 6px">${tr('renderOnboard.which-meals-are-you-home-for-tap-or-drag-across-')}</div>
       <div class="mealgrid"><div></div>${MEALS.map((m, mi) => {
         const allOn = DAYS.every((_, di) => obEatCellOn(di, mi));
         return `<div class="hd bulk ${allOn ? "" : "dim"}" data-eat-col="${mi}" title="${tr('anonymous.toggle-all')} ${mealN(m)}">${m.ic}</div>`;
