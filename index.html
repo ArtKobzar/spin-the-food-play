@@ -417,7 +417,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ee21f7d";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0b000b8";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -964,15 +964,25 @@ function vocabLabel(rec, fallbackEn) {
   if (lang === "ru") return rec.name_ru || rec.label_en || rec.name_en || fallbackEn || "";
   return rec.name_en || rec.label_en || rec.name_ru || fallbackEn || "";
 }
-function ingredientDisplayName(ing) {
+function ingredientDisplayNameForLocale(ing, locale) {
   if (!ing || typeof ing !== "object") return "";
+  // Recipe-level sidecar first (extract translations: fusilli -> фузіллі, not generic taxonomy).
+  if (ing.name_resolved && ing.resolved_locale === locale && !ing.name_is_fallback) {
+    return ing.name_resolved;
+  }
+  if (locale === "ru" && ing.name_ru) return ing.name_ru;
+  if (locale === "uk" && ing.name_uk) return ing.name_uk;
+  if (locale === "nl" && ing.name_nl) return ing.name_nl;
+  if (locale === "nl" && ing.name && ing.name !== ing.name_en) return ing.name;
+  if (locale === "en" && ing.name_en) return ing.name_en;
+  if (ing.name_resolved && ing.resolved_locale === locale) return ing.name_resolved;
+  // Taxonomy labels last - avoids generic OFF uk ("макаронні вироби") overriding shape names.
   const li = ing.labels_i18n;
-  if (li && typeof li === "object" && li[lang]) return li[lang];
-  if (lang === "ru" && ing.name_ru) return ing.name_ru;
-  if (lang === "uk" && ing.name_uk) return ing.name_uk;
-  if (lang === "nl" && ing.name_nl) return ing.name_nl;
-  if (lang === "nl" && ing.name && ing.name !== ing.name_en) return ing.name;
+  if (li && typeof li === "object" && li[locale]) return li[locale];
   return ing.name_en || ing.name || ing.raw || "";
+}
+function ingredientDisplayName(ing) {
+  return ingredientDisplayNameForLocale(ing, lang);
 }
 
 function normalizeImportDraftClient(raw) {
@@ -1251,6 +1261,15 @@ async function hydrateDishContent(d, locale) {
       text_resolved: step.text_resolved,
       resolved_locale: step.resolved_locale,
       is_fallback: step.is_fallback,
+    }));
+  }
+  if (Array.isArray(data.ingredients) && data.ingredients.length) {
+    d.ingredients = data.ingredients.map((ing, idx) => ({
+      ...(d.ingredients[idx] || {}),
+      ...ing,
+      name_resolved: ing.name_resolved,
+      resolved_locale: ing.resolved_locale,
+      name_is_fallback: ing.name_is_fallback,
     }));
   }
   d._resolvedLocale = locale;
@@ -4429,13 +4448,6 @@ function fmtQty(n) {
   // produce noisy values like 1.13333...; trailing ".0" is still stripped
   // so whole numbers print clean.
   return String(Math.round(n * 10) / 10).replace(/\.0$/, "");
-}
-function ingredientDisplayNameForLocale(ing, locale) {
-  if (!ing || typeof ing !== "object") return "";
-  const li = ing.labels_i18n;
-  if (li && typeof li === "object" && li[locale]) return li[locale];
-  if (locale === "ru" && ing.name_ru) return ing.name_ru;
-  return ing.name_en || ing.raw || "";
 }
 function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
   if (typeof ing === "string") return ing;
