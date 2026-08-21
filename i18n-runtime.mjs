@@ -2,7 +2,7 @@
  * FormatJS-backed i18n runtime for the play harness (browser ESM).
  */
 import { createIntl, createIntlCache } from "https://esm.sh/@formatjs/intl@3.1.3";
-import { STF_I18N_CATALOGS } from "./i18n/catalogs-flat.js?v=58f422d";
+import { STF_I18N_CATALOGS } from "./i18n/catalogs-flat.js?v=62c9376";
 
 const cache = createIntlCache();
 let intl = null;
