@@ -1161,6 +1161,41 @@ function normalizeImportDraftClient(raw) {
     title_ru: titleRu,
   };
 }
+function importDraftLocaleComplete(draft, locale) {
+  if (locale === draft.source_lang) return Boolean((draft.title || "").trim());
+  const block = draft.translations?.[locale];
+  if (!block?.title?.trim()) return false;
+  const ingCount = draft.ingredients?.length ?? 0;
+  for (let i = 0; i < ingCount; i++) {
+    if (!block.ingredients?.[i]?.name?.trim()) return false;
+    const sourceNote = draft.ingredients[i]?.note;
+    if (sourceNote && !block.ingredients?.[i]?.note?.trim()) return false;
+  }
+  const stepCount = draft.instructions?.length ?? 0;
+  for (let i = 0; i < stepCount; i++) {
+    if (!block.instructions?.[i]?.text?.trim()) return false;
+  }
+  return true;
+}
+async function hydrateImportDraftReviewLocale(draft, locale) {
+  if (!locale || locale === draft.source_lang) return null;
+  if (importDraftLocaleComplete(draft, locale)) return null;
+  const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+    body: {
+      target_locale: locale,
+      draft: {
+        source_lang: draft.source_lang,
+        title: draft.title,
+        ingredients: draft.ingredients,
+        instructions: draft.instructions,
+      },
+    },
+  }, 100_000);
+  if (res.error || res.data?.ok === false) {
+    throw new Error(res.error?.message || res.data?.error || "translation failed");
+  }
+  return res.data?.translation || null;
+}
 function importDraftTitle(draft, locale) {
   if (locale === draft.source_lang) return draft.title || "";
   return draft.translations?.[locale]?.title || draft.title || "";
@@ -7102,10 +7137,10 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
     <div class="sect">${tr('openImportReview.ingredients')}</div>
-    <div id="revIng"></div>
+    <div id="revIng"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('detailHeaderHtml.translating')}</div></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${tr('openImportReview.add-ingredient')}</button>
     <div class="sect" style="margin-top:12px">${tr('openImportReview.instructions')}</div>
-    <div id="revInstr"></div>
+    <div id="revInstr"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('detailHeaderHtml.translating')}</div></div>
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${tr('openImportReview.add-step')}</button>
     <div id="revTax">${taxHtml()}</div>
     <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${tr('openImportReview.save')}</button>
@@ -7164,7 +7199,25 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       instructions.splice(Number(btn.dataset.instrdel), 1); render();
     }));
   }
-  render();
+  const bootReviewLocale = async () => {
+    if (reviewLocale === sourceLang || importDraftLocaleComplete({ source_lang: sourceLang, title, translations, ingredients, instructions }, reviewLocale)) {
+      render();
+      return;
+    }
+    try {
+      const block = await hydrateImportDraftReviewLocale({ source_lang: sourceLang, title, translations, ingredients, instructions }, reviewLocale);
+      if (block?.title) {
+        translations[reviewLocale] = block;
+        const titleEl = v.querySelector("#revTitle");
+        if (titleEl) titleEl.value = reviewTitle();
+      }
+    } catch (e) {
+      console.error("[openImportReview] locale hydrate failed", e);
+      toast(tr('detailHeaderHtml.translation-failed'));
+    }
+    render();
+  };
+  bootReviewLocale();
 
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name: "", qty: null, unit: null, note: null, section: null }); render(); };
   v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text: "", photo_urls: [] }); render(); };
