@@ -431,7 +431,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=e7548a4";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ab7dd35";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1037,10 +1037,12 @@ function ingredientDisplayNote(ing) {
 }
 
 /** Import-review data-quality warnings (mirrors video_worker._detect_dq_issues). */
-function detectImportDqIssues(ingredients) {
+function detectImportDqIssues(ingredients, nameForIng) {
+  const nameOf = (ing, idx) => (nameForIng ? nameForIng(ing, idx) : ingredientDisplayName(ing)) || tr("dqIssues.unnamed-ingredient");
   const issues = [];
-  for (const ing of ingredients || []) {
-    const name = ingredientDisplayName(ing) || tr("dqIssues.unnamed-ingredient");
+  for (let idx = 0; idx < (ingredients || []).length; idx++) {
+    const ing = ingredients[idx];
+    const name = nameOf(ing, idx);
     const unit = ing.unit;
     if (unit != null && String(unit).trim() !== "" && /^\d+$/.test(String(unit).trim())) {
       issues.push(tr("dqIssues.stray-numeric-unit", { name, unit: String(unit).trim() }));
@@ -1050,8 +1052,8 @@ function detectImportDqIssues(ingredients) {
     }
   }
   const seenNames = {};
-  for (const ing of ingredients || []) {
-    const key = (ingredientDisplayName(ing) || "").trim().toLowerCase();
+  for (let idx = 0; idx < (ingredients || []).length; idx++) {
+    const key = (nameOf(ingredients[idx], idx) || "").trim().toLowerCase();
     if (key) seenNames[key] = (seenNames[key] || 0) + 1;
   }
   for (const [nameKey, count] of Object.entries(seenNames)) {
@@ -1161,10 +1163,21 @@ function normalizeImportDraftClient(raw) {
     title_ru: titleRu,
   };
 }
+function translationBlockMatchesLocale(block, locale) {
+  if (!block?.title?.trim()) return false;
+  const sample = [
+    block.title,
+    ...(block.ingredients || []).map((i) => i?.name || ""),
+    ...(block.instructions || []).slice(0, 2).map((s) => s?.text || ""),
+  ].join(" ");
+  if (locale === "uk" || locale === "ru") return /[\u0400-\u04FF]/.test(sample);
+  return true;
+}
 function importDraftLocaleComplete(draft, locale) {
   if (locale === draft.source_lang) return Boolean((draft.title || "").trim());
   const block = draft.translations?.[locale];
   if (!block?.title?.trim()) return false;
+  if (!translationBlockMatchesLocale(block, locale)) return false;
   const ingCount = draft.ingredients?.length ?? 0;
   for (let i = 0; i < ingCount; i++) {
     if (!block.ingredients?.[i]?.name?.trim()) return false;
@@ -1198,11 +1211,15 @@ async function hydrateImportDraftReviewLocale(draft, locale) {
 }
 function importDraftTitle(draft, locale) {
   if (locale === draft.source_lang) return draft.title || "";
-  return draft.translations?.[locale]?.title || draft.title || "";
+  const t = draft.translations?.[locale]?.title;
+  if (t) return t;
+  return locale === "en" ? (draft.title || "") : "";
 }
 function importDraftIngName(draft, locale, idx, ing) {
   if (locale === draft.source_lang) return ing.name || ing.name_en || "";
-  return draft.translations?.[locale]?.ingredients?.[idx]?.name || ing.name || ing.name_en || "";
+  const n = draft.translations?.[locale]?.ingredients?.[idx]?.name;
+  if (n) return n;
+  return locale === "en" ? (ing.name || ing.name_en || "") : "";
 }
 function importDraftIngNote(draft, locale, idx, ing) {
   const sourceNote = ing.note ?? null;
@@ -1213,7 +1230,9 @@ function importDraftIngNote(draft, locale, idx, ing) {
 }
 function importDraftStepText(draft, locale, idx, step) {
   if (locale === draft.source_lang) return step.text || step.text_en || "";
-  return draft.translations?.[locale]?.instructions?.[idx]?.text || step.text || step.text_en || "";
+  const t = draft.translations?.[locale]?.instructions?.[idx]?.text;
+  if (t) return t;
+  return locale === "en" ? (step.text || step.text_en || "") : "";
 }
 function ensureImportTranslationBlock(draft, locale) {
   if (!draft.translations) draft.translations = {};
@@ -7025,7 +7044,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   };
 
   const dqIssuesHtml = () => {
-    const dqIssues = detectImportDqIssues(ingredients);
+    const dqIssues = detectImportDqIssues(ingredients, (ing, idx) => ingName(ing, idx));
     if (!dqIssues.length) return "";
     return `
       <div style="margin-top:10px;padding:10px 12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:10px">
@@ -7202,7 +7221,10 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     }));
   }
   const bootReviewLocale = async () => {
-    if (reviewLocale === sourceLang || importDraftLocaleComplete({ source_lang: sourceLang, title, translations, ingredients, instructions }, reviewLocale)) {
+    const draftSnap = { source_lang: sourceLang, title, translations, ingredients, instructions };
+    const needsHydrate = reviewLocale !== sourceLang
+      && !importDraftLocaleComplete(draftSnap, reviewLocale);
+    if (!needsHydrate) {
       render();
       return;
     }
