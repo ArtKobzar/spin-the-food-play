@@ -6755,9 +6755,10 @@ function openImportSheet(targetRecipeId = null) {
     // via their standing platform grant, so we just refresh loadCatalog
     // and open the detail.
     if (/(?:youtube\.com|youtu\.be)/i.test(url)) {
+      syncLangFromStorage();
       setBusy(true, tr('anonymous.queuing-your-video'));
       const { data, error } = await invokeWithTimeout("spin-food-import", {
-        body: { source_type: "youtube", action: "extract", payload: { url, target_recipe_id: targetRecipeId } },
+        body: { source_type: "youtube", action: "extract", payload: { url, target_recipe_id: targetRecipeId, viewer_locale: lang } },
       });
       if (error || !data?.ok) {
         setBusy(false, "");
@@ -6912,8 +6913,9 @@ async function uploadImportPhoto(file, onStep = null) {
 const EXTRACT_CLIENT_TIMEOUT_MS = 75_000;
 
 async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
+  syncLangFromStorage();
   const { data, error } = await invokeWithTimeout("spin-food-import", {
-    body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId } },
+    body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId, viewer_locale: lang } },
   }, EXTRACT_CLIENT_TIMEOUT_MS);
   if (error) { setBusy(false, ""); toast(error.message || tr('runImportExtract.something-went-wrong')); return; }
   if (!data?.ok) { setBusy(false, ""); toast(data?.error || tr('runImportExtract.couldnt-read-that-recipe')); return; }
