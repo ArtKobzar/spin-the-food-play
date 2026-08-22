@@ -1087,9 +1087,20 @@ function cuisineOptionsList() {
   return Object.keys(CUISINES_BY_SLUG).sort((a, b) => cuisineLabel(a).localeCompare(cuisineLabel(b), lang || "en"));
 }
 function slugifyCuisine(label) {
-  let s = String(label || "").trim().toLowerCase();
+  const raw = String(label || "").trim();
+  if (!raw) return "";
+  const lower = raw.toLowerCase();
+  const cyrillicSlugMap = {
+    "украинская": "ukrainian",
+    "українська": "ukrainian",
+    "русская": "russian",
+    "голландская": "dutch",
+    "нідерландська": "dutch",
+  };
+  if (cyrillicSlugMap[lower]) return cyrillicSlugMap[lower];
+  let s = lower;
   s = s.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  return s.slice(0, 64) || "cuisine";
+  return s.slice(0, 64) || "";
 }
 function detailEditTitleForDisplay(d, draft) {
   if (lang === "ru") return draft.titleRu || d.ru || d.en || "";
