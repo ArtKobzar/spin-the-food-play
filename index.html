@@ -1023,6 +1023,32 @@ function ingredientDisplayNote(ing) {
   return ingredientDisplayNoteForLocale(ing, lang);
 }
 
+/** Import-review data-quality warnings (mirrors video_worker._detect_dq_issues). */
+function detectImportDqIssues(ingredients) {
+  const issues = [];
+  for (const ing of ingredients || []) {
+    const name = ingredientDisplayName(ing) || tr("dqIssues.unnamed-ingredient");
+    const unit = ing.unit;
+    if (unit != null && String(unit).trim() !== "" && /^\d+$/.test(String(unit).trim())) {
+      issues.push(tr("dqIssues.stray-numeric-unit", { name, unit: String(unit).trim() }));
+    }
+    if (ing.qty == null && !unit && !String(ing.note || "").trim()) {
+      issues.push(tr("dqIssues.no-qty-unit-note", { name }));
+    }
+  }
+  const seenNames = {};
+  for (const ing of ingredients || []) {
+    const key = (ingredientDisplayName(ing) || "").trim().toLowerCase();
+    if (key) seenNames[key] = (seenNames[key] || 0) + 1;
+  }
+  for (const [nameKey, count] of Object.entries(seenNames)) {
+    if (count > 1) {
+      issues.push(tr("dqIssues.duplicate-ingredient", { name: nameKey, count }));
+    }
+  }
+  return issues;
+}
+
 function normalizeImportDraftClient(raw) {
   if (raw?.source_lang && raw?.title && raw?.translations) return raw;
   const titleEn = String(raw?.title_en ?? raw?.title ?? "").trim();
@@ -6754,16 +6780,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
-  // Detected data-quality issues (2026-08-14 follow-up) - the YouTube
-  // worker's _detect_dq_issues() flags real extraction failure patterns
-  // (a stray numeric "unit" from a mis-parsed quantity range, a
-  // duplicate ingredient, a line with nothing captured at all) as
-  // human-readable warnings, so the user knows exactly what to
-  // double-check here instead of unknowingly saving garbled data.
-  // Review-only - never sent back on save (see finalDraft below), since
-  // there's no matching column on the saved recipe and a stale warning
-  // on an already-corrected recipe would be actively misleading.
-  const dqIssues = draft.dq_issues || [];
+  // Data-quality warnings: detect client-side in UI locale (worker draft
+  // dq_issues are English-only strings - never shown raw).
   // Taxonomy proposal (2026-08-09 follow-up) - server only attaches this when
   // the draft has ingredients/instructions to classify from (see
   // buildTaxonomyProposal in spin-food-import). Null means "nothing to show",
@@ -6824,6 +6842,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   };
 
   const dqIssuesHtml = () => {
+    const dqIssues = detectImportDqIssues(ingredients);
     if (!dqIssues.length) return "";
     return `
       <div style="margin-top:10px;padding:10px 12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:10px">
