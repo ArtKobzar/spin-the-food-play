@@ -5229,13 +5229,8 @@ function wireDetailOverlay(wrap, d) {
       renderDetailOverlay();
       return;
     }
-    if (!isRecipeOwner(d)) {
-      const fresh = await makeMyVersionAndEdit(d);
-      if (!fresh) return;
-      startDetailDraft(fresh);
-      renderDetailOverlay();
-      return;
-    }
+    // Fork happens on Save (recipe_edit_proposed → ensure_recipe_in_family), not on
+    // entering edit mode - so Cancel / Annuleren discards the draft without a copy.
     startDetailDraft(d);
     renderDetailOverlay();
   });
