@@ -4495,7 +4495,7 @@ let detailEditMode = false; // taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
-let detailShowTranslation = false; // detail read view: false = authored language, true = UI locale
+let detailShowTranslation = false; // false = viewer UI locale, true = authored source language
 let detailTranslationLoading = false;
 
 const DISH_ROLES = ["main", "side", "component"];
@@ -4623,7 +4623,7 @@ function detailTitleName(d) {
   return dishDisplayTitle(d);
 }
 function detailTranslationBadge(d) {
-  if (!detailShowTranslation || !recipeNeedsTranslation(d)) return "";
+  if (detailShowTranslation || !recipeNeedsTranslation(d)) return "";
   if (d._machineTranslated) {
     return `<div style="font-size:12px;color:#6b7280;margin-top:6px">${tr('detailView.machine-translated')}</div>`;
   }
@@ -4637,9 +4637,9 @@ function detailTranslationBadge(d) {
 }
 function detailTranslateBtnHtml(d) {
   if (detailEditMode || !recipeNeedsTranslation(d)) return "";
-  const active = detailShowTranslation;
-  const label = active ? tr('detailHeaderHtml.translate-recipe') : tr('detailHeaderHtml.show-original');
+  const label = tr('detailHeaderHtml.translate-recipe');
   const busy = detailTranslationLoading;
+  const active = !detailShowTranslation;
   return `<button class="dtl-translate-btn${active ? " on" : ""}" id="dtlTranslateBtn" title="${label}" aria-label="${label}" ${busy ? "disabled" : ""}>${busy ? "…" : TRANSLATE_SVG}</button>`;
 }
 async function refreshDishFromCatalog(d) {
@@ -4653,14 +4653,17 @@ async function refreshDishFromCatalog(d) {
 }
 async function requestRecipeTranslation(d) {
   const INGEST_CLIENT_TIMEOUT_MS = 100_000;
+  syncLangFromStorage();
+  const targetLocale = lang;
+  if (!targetLocale || !["en", "ru", "uk", "nl"].includes(targetLocale)) return;
   detailTranslationLoading = true;
   renderDetailOverlay();
   try {
     detailShowTranslation = false;
-    await hydrateDishContent(d, lang);
-    if (dishSourceLang(d) === lang) return;
+    await hydrateDishContent(d, targetLocale);
+    if (dishSourceLang(d) === targetLocale) return;
     const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
-      body: { recipe_id: d.id, target_locale: lang },
+      body: { recipe_id: d.id, target_locale: targetLocale },
     }, INGEST_CLIENT_TIMEOUT_MS);
     if (res.error || res.data?.ok === false) {
       toast(tr('detailHeaderHtml.translation-failed'));
@@ -4668,7 +4671,7 @@ async function requestRecipeTranslation(d) {
       d._machineTranslated = true;
       d._resolvedLocale = null;
       await refreshDishFromCatalog(d);
-      await hydrateDishContent(d, lang);
+      await hydrateDishContent(d, targetLocale);
     }
   } finally {
     detailTranslationLoading = false;
@@ -5003,11 +5006,6 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
   wrap.querySelector("#dtlTranslateBtn")?.addEventListener("click", async () => {
     if (detailTranslationLoading) return;
-    if (!detailShowTranslation) {
-      detailShowTranslation = true;
-      renderDetailOverlay();
-      return;
-    }
     await requestRecipeTranslation(d);
   });
   wrap.querySelector("#dtlEditToggle")?.addEventListener("click", async () => {
