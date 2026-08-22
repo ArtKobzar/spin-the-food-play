@@ -1666,9 +1666,6 @@ function translatedDishName(d, locale) {
   if (locale === "nl") return d.nl || d.en || d.title;
   return d.en || d.ru || d.title;
 }
-function recipeNeedsTranslation(d) {
-  return dishSourceLang(d) !== lang;
-}
 function translatedTitleReady(d) {
   const src = dishSourceLang(d);
   const target = lang;
@@ -1678,6 +1675,67 @@ function translatedTitleReady(d) {
   const authored = authoredDishName(d);
   const translated = translatedDishName(d, target);
   return translated && translated !== authored;
+}
+function recipeTitleCompleteInLocale(d, locale) {
+  const src = dishSourceLang(d);
+  if (locale === src) return String(d.title || authoredDishName(d) || "").trim() !== "";
+  if (locale === "uk") {
+    return d._resolvedLocale === "uk" && !d.ukFallback && String(d.uk || "").trim() !== "";
+  }
+  if (locale === "nl") {
+    return d._resolvedLocale === "nl" && !d.nlFallback && String(d.nl || "").trim() !== "";
+  }
+  if (locale === "ru") return String(d.ru || d.title || "").trim() !== "";
+  if (locale === "en") return String(d.en || d.title_en || "").trim() !== "";
+  return false;
+}
+function recipeIngredientCompleteInLocale(ing, locale, srcLang) {
+  if (!ing || typeof ing !== "object") return true;
+  if (locale === srcLang) {
+    return String(ing.name_ru || ing.name_en || ing.name || "").trim() !== "";
+  }
+  if (ing.name_resolved && ing.resolved_locale === locale) {
+    return !ing.name_is_fallback && String(ing.name_resolved).trim() !== "";
+  }
+  if (locale === "ru" && ing.name_ru) return true;
+  if (locale === "en" && ing.name_en) return true;
+  if (locale === "uk" && ing.name_uk) return true;
+  if (locale === "nl" && ing.name_nl) return true;
+  return false;
+}
+function recipeStepCompleteInLocale(step, locale, srcLang) {
+  if (typeof step === "string") return String(step).trim() !== "";
+  if (!step) return true;
+  if (locale === srcLang) {
+    return String(step.text_ru || step.text_en || step.text || "").trim() !== "";
+  }
+  if (step.text_resolved && step.resolved_locale === locale) {
+    return !step.is_fallback && String(step.text_resolved).trim() !== "";
+  }
+  const localized = step[`text_${locale}`];
+  if (localized && String(localized).trim()) return true;
+  return false;
+}
+function recipeContentCompleteInLocale(d, locale) {
+  if (!d || !locale) return false;
+  const src = dishSourceLang(d);
+  if (!recipeTitleCompleteInLocale(d, locale)) return false;
+  const ingredients = d.ingredients || [];
+  const instructions = d.instructions || [];
+  for (const ing of ingredients) {
+    if (!recipeIngredientCompleteInLocale(ing, locale, src)) return false;
+  }
+  for (const step of instructions) {
+    if (!recipeStepCompleteInLocale(step, locale, src)) return false;
+  }
+  return true;
+}
+function recipeNeedsTranslation(d) {
+  syncLangFromStorage();
+  const locale = lang;
+  if (!locale) return false;
+  if (recipeContentCompleteInLocale(d, locale)) return false;
+  return dishSourceLang(d) !== locale;
 }
 // Cards, spin deck, and menu show the recipe in the viewer's UI locale.
 const dName = d => dishDisplayTitle(d);
@@ -4715,7 +4773,13 @@ function openDetail(id) {
   renderDetailOverlay();
   const d = dish(detailOpen);
   if (d && recipeNeedsTranslation(d)) {
-    hydrateDishContent(d, lang).then(() => { if (detailOpen === id) renderDetailOverlay(); });
+    hydrateDishContent(d, lang).then(() => {
+      if (detailOpen === id) renderDetailOverlay();
+    });
+  } else if (d && d._resolvedLocale !== lang) {
+    hydrateDishContent(d, lang).then(() => {
+      if (detailOpen === id) renderDetailOverlay();
+    });
   }
 }
 function closeDetail() {
