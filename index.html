@@ -418,7 +418,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0b000b8";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=e7548a4";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -6759,7 +6759,9 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // not "loading" - there's no separate async fetch here, it rode along with
   // the extraction response.
   let taxonomy = draft.taxonomy ? {
-    cuisine: draft.taxonomy.cuisine || "",
+    cuisine: "",
+    cuisineMode: "pick",
+    cuisineCustom: "",
     dish_role: draft.taxonomy.dish_role || "main",
     course_category: draft.taxonomy.course_category || null,
     meal_types: new Set(draft.taxonomy.meal_types || []),
@@ -6767,6 +6769,22 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     required_appliances: new Set(draft.taxonomy.required_appliances || []),
     reasoning: draft.taxonomy.reasoning || null,
   } : null;
+  if (taxonomy) {
+    const rawCuisine = (draft.taxonomy.cuisine || "").trim().toLowerCase();
+    if (!rawCuisine) {
+      taxonomy.cuisine = "";
+      taxonomy.cuisineMode = "pick";
+      taxonomy.cuisineCustom = "";
+    } else if (CUISINES_BY_SLUG[rawCuisine]) {
+      taxonomy.cuisine = rawCuisine;
+      taxonomy.cuisineMode = "pick";
+      taxonomy.cuisineCustom = "";
+    } else {
+      taxonomy.cuisine = rawCuisine;
+      taxonomy.cuisineMode = "new";
+      taxonomy.cuisineCustom = cuisineLabel(rawCuisine) || draft.taxonomy.cuisine || "";
+    }
+  }
 
   const reviewLocale = lang;
   const ingName = (ing, idx) => importDraftIngName({ source_lang: sourceLang, title, translations, ingredients }, reviewLocale, idx, ing) || "";
@@ -6833,11 +6851,40 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       <div style="font-size:12px;color:#666;margin:8px 0 4px">${tr('taxHtml.appliances-needed')}</div>
       <div class="chips-wrap">${taxChip(APPLIANCES.map(a => [a, applianceLabel(a)]), v => taxonomy.required_appliances.has(v), "required_appliances")}</div>
       <div style="font-size:12px;color:#666;margin:8px 0 4px">${tr('taxHtml.cuisine')}</div>
-      <input id="revCuisine" value="${cuisineLabel(taxonomy.cuisine || "").replace(/"/g, "&quot;")}" placeholder="${tr('taxHtml.cuisine-2')}" style="width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px">`;
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="revCuisineSelect" style="min-width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px">
+          <option value="">${tr('detailHeaderHtml.cuisine')}</option>
+          ${cuisineOptionsList().map(slug => `<option value="${slug}" ${taxonomy.cuisineMode === "pick" && taxonomy.cuisine === slug ? "selected" : ""}>${cuisineLabel(slug)}</option>`).join("")}
+          <option value="__new__" ${taxonomy.cuisineMode === "new" ? "selected" : ""}>${tr('detailHeaderHtml.add-new-cuisine')}</option>
+        </select>
+        <input id="revCuisineInput" value="${(taxonomy.cuisineCustom || "").replace(/"/g, "&quot;")}" placeholder="${tr('detailHeaderHtml.new-cuisine-name')}" style="width:140px;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;${taxonomy.cuisineMode === "new" ? "" : "display:none"}">
+      </div>`;
   };
   const wireTax = () => {
     if (!taxonomy) return;
-    v.querySelector("#revCuisine")?.addEventListener("input", (e) => { taxonomy.cuisine = e.target.value; });
+    const cuisineSelect = v.querySelector("#revCuisineSelect");
+    const cuisineInput = v.querySelector("#revCuisineInput");
+    if (cuisineSelect) {
+      cuisineSelect.onchange = () => {
+        const val = cuisineSelect.value;
+        if (val === "__new__") {
+          taxonomy.cuisineMode = "new";
+          taxonomy.cuisine = "";
+          if (cuisineInput) {
+            cuisineInput.style.display = "";
+            cuisineInput.focus();
+          }
+        } else {
+          taxonomy.cuisineMode = "pick";
+          taxonomy.cuisine = val;
+          taxonomy.cuisineCustom = "";
+          if (cuisineInput) cuisineInput.style.display = "none";
+        }
+      };
+    }
+    if (cuisineInput) {
+      cuisineInput.oninput = () => { taxonomy.cuisineCustom = cuisineInput.value; };
+    }
     v.querySelectorAll("[data-revchip]").forEach(c => c.addEventListener("click", () => {
       const key = c.dataset.revchip, val = c.dataset.val;
       if (key === "dish_role") {
@@ -6977,6 +7024,36 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     cancelBtn.disabled = true; cancelBtn.style.opacity = .4;
     saveBtn.textContent = "💾 " + tr('anonymous.saving');
     setSaveProgress(0, tr('anonymous.saving-recipe'));
+    let confirmCuisine = null;
+    if (taxonomy) {
+      const draftCuisine = taxonomy.cuisineMode === "new"
+        ? (taxonomy.cuisineCustom || "").trim()
+        : (taxonomy.cuisine || "").trim().toLowerCase();
+      if (taxonomy.cuisineMode === "new" && draftCuisine) {
+        const slug = slugifyCuisine(draftCuisine);
+        const labels = { en: draftCuisine };
+        if (lang === "uk") labels.uk = draftCuisine;
+        if (lang === "nl") labels.nl = draftCuisine;
+        if (lang === "ru") labels.ru = draftCuisine;
+        const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
+          p_slug: slug,
+          p_label_en: draftCuisine,
+          p_labels_i18n: labels,
+        });
+        if (cuiErr) {
+          toast(tr('saveDetailEdit.cuisine-add-failed') + cuiErr.message);
+          saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
+          cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
+          saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
+          return;
+        }
+        filterVocabLoaded = false;
+        await loadFilterVocabulary();
+        confirmCuisine = slug;
+      } else if (draftCuisine) {
+        confirmCuisine = draftCuisine;
+      }
+    }
     const finalDraft = {
       source_lang: sourceLang,
       title: (title || "").trim(),
@@ -7008,7 +7085,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       source_url: draft.source_url ?? null,
       source_video_id: draft.source_video_id ?? null,
       taxonomy: taxonomy ? {
-        cuisine: (taxonomy.cuisine || "").trim().toLowerCase() || null,
+        cuisine: confirmCuisine,
         dish_role: taxonomy.dish_role || "main",
         course_category: taxonomy.course_category,
         meal_types: [...taxonomy.meal_types],
