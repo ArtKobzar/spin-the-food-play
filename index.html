@@ -360,15 +360,19 @@
   .swipe-tip {
     position: absolute; bottom: 16px; z-index: 20;
     border: none; cursor: pointer; background: none;
-    width: 60px; box-sizing: border-box;
-    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+    width: 104px; min-width: 104px; height: 50px; box-sizing: border-box;
+    display: block;
     font-size: 17px; font-weight: 800; color: #f59e0b;
   }
-  .swipe-tip.left { left: 38px; align-items: flex-start; }
-  .swipe-tip.right { right: 38px; align-items: flex-end; }
+  .swipe-tip.left { left: 38px; }
+  .swipe-tip.right { right: 38px; }
   /* No ✕/🗓 icon glyph anymore, per direct request - the arrow alone (3x
      bigger than before) is the entire hint now. */
-  .swipe-tip .tip-arrow { font-size: 27px; font-weight: 800; line-height: 1; opacity: .8; }
+  .swipe-tip .tip-arrow {
+    position: absolute; bottom: 22px; left: 0;
+    font-size: 27px; font-weight: 800; line-height: 1; opacity: .8;
+  }
+  .swipe-tip.right .tip-arrow { left: auto; right: 0; }
   /* 2026-08-11: the "Next"/"Onto menu" caption used to live in its own row
      below the whole card (`.spin-caption-row`, now removed) - once the card
      started flex-growing to fill the screen (see `.spin-stack-outer`), that
@@ -376,7 +380,12 @@
      bottom nav. Folded the label back into the same button as its arrow
      (stacked underneath, same flex column) - it's now physically impossible
      for the label to end up anywhere other than exactly next to its arrow. */
-  .swipe-tip .tip-label { font-size: 10.5px; font-weight: 700; line-height: 1.1; opacity: .85; }
+  .swipe-tip .tip-label {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    font-size: 10.5px; font-weight: 700; line-height: 1.1; opacity: .85;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .swipe-tip.right .tip-label { text-align: right; }
 
   /* 2026-08-11: bumped above .veil's new 150 - toasts (e.g. "Save failed")
      routinely fire while a modal is open and must stay visible on top of it. */
