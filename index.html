@@ -1062,31 +1062,103 @@ function detectImportDqIssues(ingredients) {
   return issues;
 }
 
-function normalizeImportDraftClient(raw) {
-  if (raw?.source_lang && raw?.title && raw?.translations) return raw;
+function normalizeAppLocaleClient(s) {
+  const b = String(s || "").trim().toLowerCase();
+  if (b === "en" || b === "ru" || b === "uk" || b === "nl") return b;
+  if (b === "ua") return "uk";
+  return null;
+}
+
+function legacyDraftToSourceFirstClient(raw) {
   const titleEn = String(raw?.title_en ?? raw?.title ?? "").trim();
   const titleRu = raw?.title_ru ? String(raw.title_ru).trim() : null;
-  const sourceLang = raw?.source_lang || (/[\u0400-\u04FF]/.test(titleRu || titleEn) ? "ru" : "en");
-  const title = sourceLang === "ru" ? (titleRu || titleEn) : (titleEn || titleRu || "");
-  const ingredients = (raw?.ingredients || []).map((i) => {
-    const name = sourceLang === "ru" ? String(i.name_ru ?? i.name_en ?? i.name ?? "") : String(i.name_en ?? i.name ?? i.name_ru ?? "");
-    return { ...i, name, qty: i.qty ?? null, unit: i.unit ?? null, note: i.note ?? null, section: i.section ?? null };
+  let sourceLang = normalizeAppLocaleClient(raw?.source_lang) || normalizeAppLocaleClient(raw?.source_language);
+  if (!sourceLang) {
+    const probe = titleRu || titleEn;
+    if (/[\u0400-\u04FF]/.test(probe)) {
+      sourceLang = /[іїєґІЇЄҐ]/.test(probe) ? "uk" : "ru";
+    } else {
+      sourceLang = "en";
+    }
+  }
+  const title = sourceLang === "ru" ? (titleRu || titleEn)
+    : sourceLang === "uk" ? (titleRu || titleEn)
+    : (titleEn || titleRu || "");
+  const rawIngredients = raw?.ingredients || [];
+  const ingredients = rawIngredients.map((i) => {
+    const ing = i || {};
+    let name = "";
+    if (sourceLang === "ru") name = String(ing.name_ru ?? ing.name_en ?? ing.name ?? "");
+    else if (sourceLang === "uk") name = String(ing.name_uk ?? ing.name_ru ?? ing.name_en ?? ing.name ?? "");
+    else if (sourceLang === "nl") name = String(ing.name_nl ?? ing.name_en ?? ing.name ?? "");
+    else name = String(ing.name_en ?? ing.name ?? ing.name_ru ?? "");
+    return { ...ing, name, qty: ing.qty ?? null, unit: ing.unit ?? null, note: ing.note ?? null, section: ing.section ?? null };
   });
-  const instructions = (raw?.instructions || []).map((s) => {
+  const rawInstructions = raw?.instructions || [];
+  const instructions = rawInstructions.map((s) => {
     if (typeof s === "string") return { text: s, photo_urls: [] };
-    const text = sourceLang === "ru" ? String(s.text_ru ?? s.text_en ?? s.text ?? "") : String(s.text_en ?? s.text ?? s.text_ru ?? "");
+    let text = "";
+    if (sourceLang === "ru") text = String(s.text_ru ?? s.text_en ?? s.text ?? "");
+    else if (sourceLang === "uk") text = String(s.text_uk ?? s.text_ru ?? s.text_en ?? s.text ?? "");
+    else if (sourceLang === "nl") text = String(s.text_nl ?? s.text_en ?? s.text ?? "");
+    else text = String(s.text_en ?? s.text ?? s.text_ru ?? "");
     return { text, photo_urls: stepPhotoUrls(s) };
   });
+  const translations = {
+    en: {
+      title: titleEn,
+      ingredients: ingredients.map((ing, idx) => ({ name: String(rawIngredients[idx]?.name_en ?? ing.name), note: ing.note })),
+      instructions: instructions.map((step, idx) => ({ text: String(rawInstructions[idx]?.text_en ?? step.text) })),
+    },
+    ru: {
+      title: titleRu || titleEn,
+      ingredients: ingredients.map((ing, idx) => ({ name: String(rawIngredients[idx]?.name_ru ?? ing.name), note: ing.note })),
+      instructions: instructions.map((step, idx) => ({ text: String(rawInstructions[idx]?.text_ru ?? step.text) })),
+    },
+  };
+  return { ...raw, source_lang: sourceLang, title, ingredients, instructions, translations, title_en: titleEn, title_ru: titleRu };
+}
+
+function normalizeImportDraftClient(raw) {
+  const base = raw?.source_lang && raw?.title && raw?.translations && !raw?.translation_en
+    ? raw
+    : legacyDraftToSourceFirstClient(raw);
+  const sourceLang = normalizeAppLocaleClient(base.source_lang) || base.source_lang || "en";
+  const title = String(base.title ?? "").trim();
+  const translations = { ...(base.translations || {}) };
+  for (const loc of ["en", "ru", "uk", "nl"]) {
+    const block = raw?.[`translation_${loc}`];
+    if (block?.title) translations[loc] = block;
+    if (translations[loc]?.title) continue;
+    if (base.translations?.[loc]?.title) translations[loc] = base.translations[loc];
+  }
+  if (sourceLang === "en" && title && !translations.en?.title) {
+    translations.en = {
+      title,
+      ingredients: (base.ingredients || []).map((i) => ({ name: i.name, note: i.note })),
+      instructions: (base.instructions || []).map((s) => ({ text: s.text })),
+    };
+  }
+  for (const loc of ["en", "ru", "uk", "nl"]) {
+    if (loc === sourceLang) {
+      translations[loc] = {
+        title,
+        ingredients: (base.ingredients || []).map((i) => ({ name: i.name, note: i.note })),
+        instructions: (base.instructions || []).map((s) => ({ text: s.text })),
+      };
+    }
+  }
+  const titleEn = translations.en?.title ?? base.title_en ?? title;
+  const titleRu = translations.ru?.title ?? base.title_ru ?? null;
   return {
-    ...raw,
+    ...base,
     source_lang: sourceLang,
     title,
-    ingredients,
-    instructions,
-    translations: {
-      en: { title: titleEn, ingredients: ingredients.map((ing, idx) => ({ name: String(raw.ingredients?.[idx]?.name_en ?? ing.name) })), instructions: instructions.map((step, idx) => ({ text: String(raw.instructions?.[idx]?.text_en ?? step.text) })) },
-      ru: { title: titleRu || titleEn, ingredients: ingredients.map((ing, idx) => ({ name: String(raw.ingredients?.[idx]?.name_ru ?? ing.name) })), instructions: instructions.map((step, idx) => ({ text: String(raw.instructions?.[idx]?.text_ru ?? step.text) })) },
-    },
+    ingredients: base.ingredients || [],
+    instructions: base.instructions || [],
+    translations,
+    title_en: titleEn,
+    title_ru: titleRu,
   };
 }
 function importDraftTitle(draft, locale) {
@@ -6840,6 +6912,7 @@ async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
 // the reviewer is currently looking at - the untouched language's
 // extracted translation is preserved, same convention as saveDetailEdit().
 function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
+  syncLangFromStorage();
   const draft = normalizeImportDraftClient(draftRaw);
   let sourceLang = draft.source_lang || lang;
   let title = draft.title || "";
@@ -6848,7 +6921,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   let instructions = (draft.instructions || []).map(s =>
     typeof s === "string"
       ? { text: s, photo_urls: [] }
-      : { text: s.text ?? s.text_en ?? "", photo_urls: stepPhotoUrls(s) }
+      : { text: s.text ?? "", photo_urls: stepPhotoUrls(s) }
   );
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
