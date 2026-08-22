@@ -1002,6 +1002,9 @@ function vocabLabel(rec, fallbackEn) {
   if (lang === "ru") return rec.name_ru || rec.label_en || rec.name_en || fallbackEn || "";
   return rec.name_en || rec.label_en || rec.name_ru || fallbackEn || "";
 }
+function looksCyrillicText(s) {
+  return /[\u0400-\u04FF]/.test(String(s || ""));
+}
 function ingredientDisplayNameForLocale(ing, locale) {
   if (!ing || typeof ing !== "object") return "";
   // Recipe-level sidecar first (extract translations: fusilli -> фузіллі, not generic taxonomy).
@@ -1011,9 +1014,15 @@ function ingredientDisplayNameForLocale(ing, locale) {
   if (locale === "ru" && ing.name_ru) return ing.name_ru;
   if (locale === "uk" && ing.name_uk) return ing.name_uk;
   if (locale === "nl" && ing.name_nl) return ing.name_nl;
-  if (locale === "nl" && ing.name && ing.name !== ing.name_en) return ing.name;
+  // `name` holds source-language text on imports - never treat Cyrillic as Dutch.
+  if (locale === "nl" && ing.name && ing.name !== ing.name_en && !looksCyrillicText(ing.name)) return ing.name;
   if (locale === "en" && ing.name_en) return ing.name_en;
   if (ing.name_resolved && ing.resolved_locale === locale) return ing.name_resolved;
+  // Taxonomy / hydrate bridge before showing source script in a Latin UI locale.
+  if ((locale === "nl" || locale === "en") && ing.name_resolved && !looksCyrillicText(ing.name_resolved)) {
+    return ing.name_resolved;
+  }
+  if ((locale === "nl" || locale === "en") && ing.name_en) return ing.name_en;
   // Taxonomy labels last - avoids generic OFF uk ("макаронні вироби") overriding shape names.
   const li = ing.labels_i18n;
   if (li && typeof li === "object" && li[locale]) return li[locale];
@@ -5465,7 +5474,9 @@ async function makeMyVersionAndEdit(d) {
     toast(tr('saveDetailEdit.saved-to-your-cookbook-this-is-now-your-own-copy'));
   }
   if (tab === "spin") refreshDeck();
-  return dish(newId);
+  const fresh = dish(newId);
+  if (fresh) await hydrateDishContent(fresh, lang);
+  return fresh;
 }
 
 function confirmPhotoTarget() {
