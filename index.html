@@ -1280,6 +1280,8 @@ function detailCurrentTitleForCompare(d) {
   return d.en || "";
 }
 function dishDisplayTitle(d) {
+  const src = dishSourceLang(d);
+  if (lang === src) return authoredDishName(d);
   if (lang === "uk" && d.uk && !d.ukFallback) return d.uk;
   if (lang === "nl" && d.nl && !d.nlFallback) return d.nl;
   if (lang === "ru") return d.ru || d.title || d.en;
@@ -1367,8 +1369,8 @@ function recipeToDish(r) {
     source_lang: r.source_lang || null,
     en: r.title_en || r.title,
     ru: r.title_ru || r.title,
-    uk: r.title_en || r.title,
-    nl: r.title_en || r.title,
+    uk: r.source_lang === "uk" ? (r.title || r.title_en || "") : (r.title_en || r.title),
+    nl: r.source_lang === "nl" ? (r.title || r.title_en || "") : (r.title_en || r.title),
     ukFallback: false,
     nlFallback: false,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
@@ -1785,7 +1787,10 @@ const mem = id => {
 function dishSourceLang(d) {
   if (d?.source_lang) return d.source_lang;
   const probe = d?.title || d?.en || d?.ru || "";
-  if (/[\u0400-\u04FF]/.test(probe)) return "ru";
+  if (/[\u0400-\u04FF]/.test(probe)) {
+    if (/[іїєґІЇЄҐ]/.test(probe)) return "uk";
+    return "ru";
+  }
   return "en";
 }
 function authoredDishName(d) {
@@ -7307,11 +7312,12 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         confirmCuisine = draftCuisine;
       }
     }
+    const sourceTitle = importDraftTitle({ source_lang: sourceLang, title, translations }, sourceLang);
     const finalDraft = {
       source_lang: sourceLang,
-      title: (title || "").trim(),
+      title: sourceTitle,
       translations,
-      title_en: (translations.en?.title || title || "").trim(),
+      title_en: (translations.en?.title || sourceTitle || "").trim(),
       title_ru: (translations.ru?.title || "").trim() || null,
       ingredients: ingredients.filter(i => (i.name || "").trim()),
       instructions: instructions
