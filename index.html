@@ -4607,8 +4607,9 @@ function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
 function stepLangText(s, l) {
   if (typeof s === "string") return s;
   if (!s) return "";
-  if (l === "uk" && s.text_resolved) return s.text_resolved;
-  if (l === "nl" && s.text_resolved) return s.text_resolved;
+  if (s.text_resolved && (s.resolved_locale === l || s.resolved_locale === s.requested_locale)) {
+    return s.text_resolved;
+  }
   if (l === "ru") return s.text_ru || s.text || s.text_en || "";
   if (l === "uk") return s.text_uk || s.text_en || s.text || "";
   if (l === "nl") return s.text_nl || s.text || s.text_en || "";
@@ -4655,16 +4656,9 @@ async function requestRecipeTranslation(d) {
   detailTranslationLoading = true;
   renderDetailOverlay();
   try {
-    if (!detailShowTranslation) {
-      detailShowTranslation = true;
-      return;
-    }
     detailShowTranslation = false;
     await hydrateDishContent(d, lang);
     if (dishSourceLang(d) === lang) return;
-    const fallback = (lang === "uk" && d.ukFallback) || (lang === "nl" && d.nlFallback)
-      || (lang === "en" && d.enFallback) || (lang === "ru" && d.ruFallback);
-    if (fallback || translatedTitleReady(d)) return;
     const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
       body: { recipe_id: d.id, target_locale: lang },
     }, INGEST_CLIENT_TIMEOUT_MS);
@@ -5009,8 +5003,8 @@ function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
   wrap.querySelector("#dtlTranslateBtn")?.addEventListener("click", async () => {
     if (detailTranslationLoading) return;
-    if (detailShowTranslation) {
-      detailShowTranslation = false;
+    if (!detailShowTranslation) {
+      detailShowTranslation = true;
       renderDetailOverlay();
       return;
     }
