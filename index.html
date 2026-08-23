@@ -431,7 +431,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ab7dd35";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0a0dbe2";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -750,7 +750,18 @@ function pickLanguage(code) {
       if (error) console.warn("[stf-i18n] member locale save failed:", error);
     }).catch((e) => console.warn("[stf-i18n] member locale save failed:", e));
   }
-  hydrateRecipeContentForLocale(code).finally(() => render());
+  // Force re-resolve recipe content for the new UI locale (hydrate skips when _resolvedLocale matches).
+  DISHES.forEach((d) => { d._resolvedLocale = null; });
+  hydrateRecipeContentForLocale(code).finally(async () => {
+    render();
+    if (detailOpen) {
+      const d = dish(detailOpen);
+      if (d) {
+        renderDetailOverlay();
+        if (recipeNeedsTranslation(d)) await requestRecipeTranslation(d);
+      }
+    }
+  });
 }
 globalThis.stfPickLang = pickLanguage;
 
@@ -1005,11 +1016,27 @@ function vocabLabel(rec, fallbackEn) {
 function looksCyrillicText(s) {
   return /[\u0400-\u04FF]/.test(String(s || ""));
 }
-function ingredientDisplayNameForLocale(ing, locale) {
+/** True when the recipe title is fully available in the viewer locale (not English fallback). */
+function recipeTitleReadyInLocale(d, locale) {
+  if (!d || !locale) return false;
+  if (locale === "uk") return d._resolvedLocale === "uk" && !d.ukFallback && String(d.uk || "").trim() !== "";
+  if (locale === "nl") return d._resolvedLocale === "nl" && !d.nlFallback && String(d.nl || "").trim() !== "";
+  if (locale === "ru") return String(d.ru || d.title || "").trim() !== "";
+  if (locale === "en") return String(d.en || d.title_en || "").trim() !== "";
+  return false;
+}
+function ingredientDisplayNameForLocale(ing, locale, dish = null) {
   if (!ing || typeof ing !== "object") return "";
+  const titleReady = dish ? recipeTitleReadyInLocale(dish, locale) : false;
   // Recipe-level sidecar first (extract translations: fusilli -> фузіллі, not generic taxonomy).
   if (ing.name_resolved && ing.resolved_locale === locale && !ing.name_is_fallback) {
-    return ing.name_resolved;
+    // Taxonomy labels alone are generic OFF strings - only use them once the
+    // recipe title is translated into this locale (or user ran machine translate).
+    if (!titleReady && !dish?._machineTranslated) {
+      // fall through to English bridge below
+    } else {
+      return ing.name_resolved;
+    }
   }
   if (locale === "ru" && ing.name_ru) return ing.name_ru;
   if (locale === "uk" && ing.name_uk) return ing.name_uk;
@@ -1017,32 +1044,37 @@ function ingredientDisplayNameForLocale(ing, locale) {
   // `name` holds source-language text on imports - never treat Cyrillic as Dutch.
   if (locale === "nl" && ing.name && ing.name !== ing.name_en && !looksCyrillicText(ing.name)) return ing.name;
   if (locale === "en" && ing.name_en) return ing.name_en;
-  if (ing.name_resolved && ing.resolved_locale === locale) return ing.name_resolved;
+  if (ing.name_resolved && ing.resolved_locale === locale && titleReady) return ing.name_resolved;
   // Taxonomy / hydrate bridge before showing source script in a Latin UI locale.
   if ((locale === "nl" || locale === "en") && ing.name_resolved && !looksCyrillicText(ing.name_resolved)) {
     return ing.name_resolved;
   }
   if ((locale === "nl" || locale === "en") && ing.name_en) return ing.name_en;
+  // Until full recipe translation exists, prefer English bridge over source Dutch.
+  if ((locale === "uk" || locale === "nl") && ing.name_en) return ing.name_en;
   // Taxonomy labels last - avoids generic OFF uk ("макаронні вироби") overriding shape names.
   const li = ing.labels_i18n;
-  if (li && typeof li === "object" && li[locale]) return li[locale];
+  if (li && typeof li === "object" && li[locale] && titleReady) return li[locale];
   return ing.name_en || ing.name || ing.raw || "";
 }
-function ingredientDisplayName(ing) {
-  return ingredientDisplayNameForLocale(ing, lang);
+function ingredientDisplayName(ing, dish = null) {
+  return ingredientDisplayNameForLocale(ing, lang, dish);
 }
-function ingredientDisplayNoteForLocale(ing, locale) {
+function ingredientDisplayNoteForLocale(ing, locale, dish = null) {
   if (!ing) return "";
   const raw = ing.note;
   if (!raw && !ing.note_resolved) return "";
+  const src = dish ? dishSourceLang(dish) : null;
   if (ing.note_resolved && ing.note_resolved_locale === locale && !ing.note_is_fallback) {
     return ing.note_resolved;
   }
   if (ing.note_resolved && ing.note_resolved_locale === locale) return ing.note_resolved;
+  // Do not leak source-language prep notes (e.g. Dutch on a UK UI) until translated.
+  if (src && locale !== src && ing.note_is_fallback) return "";
   return raw || ing.note_resolved || "";
 }
-function ingredientDisplayNote(ing) {
-  return ingredientDisplayNoteForLocale(ing, lang);
+function ingredientDisplayNote(ing, dish = null) {
+  return ingredientDisplayNoteForLocale(ing, lang, dish);
 }
 
 /** Import-review data-quality warnings (mirrors video_worker._detect_dq_issues). */
@@ -4786,12 +4818,13 @@ function fmtQty(n) {
   // so whole numbers print clean.
   return String(Math.round(n * 10) / 10).replace(/\.0$/, "");
 }
-function ingredientLine(ing, scaleFactor = 1, nameLocale = null) {
+function ingredientLine(ing, scaleFactor = 1, nameLocale = null, dishCtx = null) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
-  const name = nameLocale ? ingredientDisplayNameForLocale(ing, nameLocale) : ingredientDisplayName(ing);
+  const d = dishCtx || (detailOpen ? dish(detailOpen) : null);
+  const name = nameLocale ? ingredientDisplayNameForLocale(ing, nameLocale, d) : ingredientDisplayName(ing, d);
   const noteLocale = nameLocale || lang;
-  const noteText = ingredientDisplayNoteForLocale(ing, noteLocale);
+  const noteText = ingredientDisplayNoteForLocale(ing, noteLocale, d);
   const note = noteText ? ` (${noteText})` : "";
   // Scaling (2026-08-09): scaleFactor = target servings / recipe.servings,
   // computed by the caller only when a real (non-null) servings baseline is
@@ -4921,14 +4954,17 @@ function openDetail(id) {
   detailShowTranslation = false; detailTranslationLoading = false;
   renderDetailOverlay();
   const d = dish(detailOpen);
-  if (d && recipeNeedsTranslation(d)) {
-    hydrateDishContent(d, lang).then(() => {
-      if (detailOpen === id) renderDetailOverlay();
-    });
-  } else if (d && d._resolvedLocale !== lang) {
-    hydrateDishContent(d, lang).then(() => {
-      if (detailOpen === id) renderDetailOverlay();
-    });
+  const afterHydrate = async () => {
+    if (detailOpen !== id) return;
+    const cur = dish(detailOpen);
+    if (!cur) return;
+    renderDetailOverlay();
+    if (recipeNeedsTranslation(cur)) {
+      await requestRecipeTranslation(cur);
+    }
+  };
+  if (d && (recipeNeedsTranslation(d) || d._resolvedLocale !== lang)) {
+    hydrateDishContent(d, lang).then(afterHydrate);
   }
 }
 function closeDetail() {
@@ -5060,7 +5096,7 @@ function detailView(d) {
     if (detailEditMode) {
       const ings = detailDraft.ingredients;
       ingHtml = `<div id="ingList">${ings.map((ing, i) => {
-        const name = ingredientDisplayName(ing) || "";
+        const name = ingredientDisplayName(ing, d) || "";
         return `
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
           <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
@@ -5074,7 +5110,7 @@ function detailView(d) {
       const scaleFactor = detailScaleTo ? detailScaleTo / baseServings : 1;
       const ingLocale = detailContentLocale(d);
       ingHtml = d.ingredients.length
-        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale)}</li>`).join("")}</ul>`
+        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale, d)}</li>`).join("")}</ul>`
         : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${tr('detailView.no-ingredients-recorded-for-this-recipe-yet')}</div>`);
     }
 
