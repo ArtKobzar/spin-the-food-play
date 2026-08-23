@@ -1154,19 +1154,22 @@ function legacyDraftToSourceFirstClient(raw) {
     else text = String(s.text_en ?? s.text ?? s.text_ru ?? "");
     return { text, photo_urls: stepPhotoUrls(s) };
   });
+  const tips = Array.isArray(raw?.tips) ? raw.tips.map((t) => String(t)) : [];
   const translations = {
     en: {
       title: titleEn,
       ingredients: ingredients.map((ing, idx) => ({ name: String(rawIngredients[idx]?.name_en ?? ing.name), note: ing.note })),
       instructions: instructions.map((step, idx) => ({ text: String(rawInstructions[idx]?.text_en ?? step.text) })),
+      tips,
     },
     ru: {
       title: titleRu || titleEn,
       ingredients: ingredients.map((ing, idx) => ({ name: String(rawIngredients[idx]?.name_ru ?? ing.name), note: ing.note })),
       instructions: instructions.map((step, idx) => ({ text: String(rawInstructions[idx]?.text_ru ?? step.text) })),
+      tips,
     },
   };
-  return { ...raw, source_lang: sourceLang, title, ingredients, instructions, translations, title_en: titleEn, title_ru: titleRu };
+  return { ...raw, source_lang: sourceLang, title, ingredients, instructions, tips, translations, title_en: titleEn, title_ru: titleRu };
 }
 
 function normalizeImportDraftClient(raw) {
@@ -1175,18 +1178,20 @@ function normalizeImportDraftClient(raw) {
     : legacyDraftToSourceFirstClient(raw);
   const sourceLang = normalizeAppLocaleClient(base.source_lang) || base.source_lang || "en";
   const title = String(base.title ?? "").trim();
+  const tips = Array.isArray(raw?.tips) ? raw.tips.map((t) => String(t)) : (base.tips || []);
   const translations = { ...(base.translations || {}) };
   for (const loc of ["en", "ru", "uk", "nl"]) {
     const block = raw?.[`translation_${loc}`];
-    if (block?.title) translations[loc] = block;
+    if (block?.title) translations[loc] = { tips: [], ...block };
     if (translations[loc]?.title) continue;
-    if (base.translations?.[loc]?.title) translations[loc] = base.translations[loc];
+    if (base.translations?.[loc]?.title) translations[loc] = { tips: [], ...base.translations[loc] };
   }
   if (sourceLang === "en" && title && !translations.en?.title) {
     translations.en = {
       title,
       ingredients: (base.ingredients || []).map((i) => ({ name: i.name, note: i.note })),
       instructions: (base.instructions || []).map((s) => ({ text: s.text })),
+      tips,
     };
   }
   for (const loc of ["en", "ru", "uk", "nl"]) {
@@ -1195,6 +1200,7 @@ function normalizeImportDraftClient(raw) {
         title,
         ingredients: (base.ingredients || []).map((i) => ({ name: i.name, note: i.note })),
         instructions: (base.instructions || []).map((s) => ({ text: s.text })),
+        tips,
       };
     }
   }
@@ -1206,6 +1212,7 @@ function normalizeImportDraftClient(raw) {
     title,
     ingredients: base.ingredients || [],
     instructions: base.instructions || [],
+    tips,
     translations,
     title_en: titleEn,
     title_ru: titleRu,
@@ -1236,6 +1243,10 @@ function importDraftLocaleComplete(draft, locale) {
   for (let i = 0; i < stepCount; i++) {
     if (!block.instructions?.[i]?.text?.trim()) return false;
   }
+  const tipCount = draft.tips?.length ?? 0;
+  for (let i = 0; i < tipCount; i++) {
+    if (!(block.tips?.[i] || "").trim()) return false;
+  }
   return true;
 }
 async function hydrateImportDraftReviewLocale(draft, locale) {
@@ -1249,6 +1260,7 @@ async function hydrateImportDraftReviewLocale(draft, locale) {
         title: draft.title,
         ingredients: draft.ingredients,
         instructions: draft.instructions,
+        tips: draft.tips,
       },
     },
   }, 100_000);
@@ -1282,6 +1294,13 @@ function importDraftStepText(draft, locale, idx, step) {
   if (t) return t;
   return locale === "en" ? (step.text || step.text_en || "") : "";
 }
+function importDraftTipText(draft, locale, idx, tip) {
+  const sourceText = typeof tip === "string" ? tip : (tip?.text ?? "");
+  if (locale === draft.source_lang) return sourceText;
+  const t = draft.translations?.[locale]?.tips?.[idx];
+  if (t) return t;
+  return locale === "en" ? sourceText : "";
+}
 function ensureImportTranslationBlock(draft, locale) {
   if (!draft.translations) draft.translations = {};
   if (!draft.translations[locale]) {
@@ -1292,7 +1311,11 @@ function ensureImportTranslationBlock(draft, locale) {
         note: importDraftIngNote(draft, locale, idx, ing),
       })),
       instructions: (draft.instructions || []).map((step, idx) => ({ text: importDraftStepText(draft, locale, idx, step) })),
+      tips: (draft.tips || []).map((tip, idx) => importDraftTipText(draft, locale, idx, tip)),
     };
+  }
+  if (!draft.translations[locale].tips) {
+    draft.translations[locale].tips = (draft.tips || []).map((tip, idx) => importDraftTipText(draft, locale, idx, tip));
   }
   return draft.translations[locale];
 }
@@ -1476,6 +1499,7 @@ function recipeToDish(r) {
     // "scale this recipe" math is future work (2026-08-09 decision).
     servings: Number.isFinite(r.servings) ? r.servings : null,
     instructions: Array.isArray(r.instructions) ? r.instructions : [],
+    tips: Array.isArray(r.tips) ? r.tips : [],
     added_by_member_id: r.added_by_member_id || null,
     pending_edit: r.pending_edit || null,
     forked_from_id: r.forked_from_id || null,
@@ -1591,6 +1615,15 @@ async function hydrateDishContent(d, locale) {
       note_resolved: ing.note_resolved,
       note_resolved_locale: ing.note_resolved_locale,
       note_is_fallback: ing.note_is_fallback,
+    }));
+  }
+  if (Array.isArray(data.tips) && data.tips.length) {
+    d.tips = data.tips.map((tip, idx) => ({
+      ...(d.tips?.[idx] || {}),
+      ...tip,
+      text_resolved: tip.text_resolved,
+      resolved_locale: tip.resolved_locale,
+      is_fallback: tip.is_fallback,
     }));
   }
   d._resolvedLocale = locale;
@@ -4971,6 +5004,17 @@ function instructionSteps(d) {
       }
   ).filter(s => s.text);
 }
+// Same locale-resolution discipline as instructionSteps(), minus step
+// photos - tips (Tip/Opmaaktip/serving suggestions/etc., split out of
+// instructions[] 2026-08-23) never carry their own photos.
+function tipSteps(d) {
+  if (!Array.isArray(d.tips) || !d.tips.length) return [];
+  const contentL = detailOpen === d.id && !detailEditMode ? detailContentLocale(d) : lang;
+  return d.tips.map(t => typeof t === "string"
+    ? { text: t }
+    : { text: stepLangText(t, contentL) }
+  ).filter(t => t.text);
+}
 
 function openDetail(id) {
   if (!dish(id)) return;
@@ -5200,6 +5244,15 @@ function detailView(d) {
         : `<div style="font-size:13px;color:#aaa">${tr('detailView.no-instructions-recorded-for-this-recipe-yet')}</div>`;
     }
 
+    // Tips & Serving Suggestions (2026-08-23) - read-only for now, same as
+    // every other section until the edit-mode wiring for this new field
+    // is added in a follow-up.
+    const tips = tipSteps(d);
+    const tipsHtml = tips.length
+      ? `<div class="sect" style="margin-top:18px">💡 ${tr('detailView.tips-and-serving-suggestions')}</div>
+         <ul style="padding-left:18px;font-size:14px;line-height:1.9;margin:0">${tips.map(t => `<li style="margin-bottom:8px">${t.text}</li>`).join("")}</ul>`
+      : "";
+
   // Delete (2026-08-10) - deliberately at the very bottom of the card and
   // only ever rendered in edit mode, per request: a destructive action
   // should never be one accidental tap away from the read view, and should
@@ -5225,6 +5278,7 @@ function detailView(d) {
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${tr('detailView.instructions')}</div>
       ${instrHtml}
+      ${tipsHtml}
       ${aboutHtml}
       ${deleteHtml}
     </div>`;
@@ -6738,9 +6792,31 @@ function openImportSheet(targetRecipeId = null) {
     </div>
     <button class="btn btn-primary" id="impGo" style="width:100%;margin-top:16px;opacity:.4" disabled>${tr('openImportSheet.continue')}</button>
     <div id="impStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px"></div>
-    <div id="impProgressTrack" style="height:4px;background:#eee;border-radius:2px;margin-top:2px;overflow:hidden;display:none"><div id="impProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`,
+    <div id="impProgressTrack" style="height:4px;background:#eee;border-radius:2px;margin-top:2px;overflow:hidden;display:none"><div id="impProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>
+    <button class="btn btn-ghost" id="impBgBtn" style="width:100%;margin-top:8px;display:none">📤 ${tr('openImportSheet.send-to-background')}</button>`,
     { preventBackdropClose: true });
-  v.querySelector("#impCancel").onclick = () => closeModal();
+
+  // 2026-08-23: a YouTube import waits here in the foreground by default,
+  // same as URL/photo (see videoPollTimer below) - but unlike those, it can
+  // legitimately take a couple of minutes, so there's an explicit escape
+  // hatch. Either exit (this button, or plain ✕ Cancel below) just stops
+  // *this sheet* watching the job - the server-side worker was never
+  // waiting on the sheet to begin with, so nothing is actually cancelled;
+  // the family feed + the existing subscribe() toast (further down this
+  // file) pick up the result whenever it lands either way.
+  let videoPollTimer = null;
+  let videoPollStopped = false;
+  const stopVideoPoll = () => {
+    videoPollStopped = true;
+    if (videoPollTimer) { clearInterval(videoPollTimer); videoPollTimer = null; }
+  };
+  const bgBtn = v.querySelector("#impBgBtn");
+  bgBtn.addEventListener("click", () => {
+    stopVideoPoll();
+    closeModal();
+    stickyToast(tr('anonymous.well-keep-working-on-it-check-the-family-feed-any'));
+  });
+  v.querySelector("#impCancel").onclick = () => { stopVideoPoll(); closeModal(); };
 
   const urlInput = v.querySelector("#impUrl");
   const goBtn = v.querySelector("#impGo");
@@ -6836,7 +6912,7 @@ function openImportSheet(targetRecipeId = null) {
     const url = urlInput.value.trim();
     if (!url) return;
     // YouTube auto-detect (map #20/#21) - no separate tab, the URL field
-    // itself routes here. Async per #33: queue and close, no spinner wait.
+    // itself routes here.
     //
     // Session A (T6 dedup): the server now runs an upfront lookup by
     // source_video_id against the platform cookbook. On a cache hit the
@@ -6845,6 +6921,13 @@ function openImportSheet(targetRecipeId = null) {
     // the worker" flow - the recipe is already in the family's binder
     // via their standing platform grant, so we just refresh loadCatalog
     // and open the detail.
+    //
+    // 2026-08-23: was fire-and-forget (queue, close, generic "we'll notify
+    // you" toast) - that read as a black box and, worse, was inconsistent
+    // with URL/photo which both wait in the sheet and drop the user
+    // straight into review. Now it waits here too by default, with live
+    // stage progress, and only hands off to the background if the user
+    // explicitly asks (bgBtn above) or just dismisses the sheet.
     if (/(?:youtube\.com|youtu\.be)/i.test(url)) {
       syncLangFromStorage();
       setBusy(true, tr('anonymous.queuing-your-video'));
@@ -6856,15 +6939,65 @@ function openImportSheet(targetRecipeId = null) {
         toast((error && error.message) || data?.error || tr('anonymous.couldnt-queue-that-video'));
         return;
       }
-      closeModal();
       if (data.dedup && data.recipe_id) {
+        closeModal();
         lastDedupToastAt = Date.now();
         stickyToast(tr('anonymous.already-in-your-library-duplicate-skipped'));
         await loadCatalog();
         focusRecipeInSpin(data.recipe_id, { showDetail: true });
-      } else {
-        toast(tr('anonymous.got-it-well-notify-you-when-your-recipe-is-ready'));
+        return;
       }
+      bgBtn.style.display = "block";
+      const stageLabel = (stage) => ({
+        downloading: tr('global.downloading-video'),
+        transcribing: tr('global.transcribing-captions-or-whisper'),
+        extracting: tr('global.ai-is-extracting-the-recipe'),
+      }[stage] || tr('anonymous.queuing-your-video'));
+      const pollJob = async () => {
+        if (videoPollStopped) return;
+        // Sheet may have been torn down by some other modal() call (e.g. the
+        // user navigated elsewhere and triggered a different dialog) without
+        // going through impCancel/bgBtn - treat that the same as backgrounding
+        // rather than risk popping the review screen on top of whatever the
+        // user is looking at now.
+        if (!document.body.contains(v)) { stopVideoPoll(); return; }
+        const { data: jobs, error: pollErr } = await sb.rpc("spin_food_list_import_jobs", { p_limit: 30 });
+        if (videoPollStopped) return;
+        if (pollErr) return; // transient - next tick retries
+        const job = (jobs || []).find(j => j.id === data.job_id);
+        if (!job || job.status === "queued") { setBusy(true, tr('anonymous.queuing-your-video')); return; }
+        if (job.status === "processing") {
+          const stageIdx = IMPORT_PROGRESS_STAGES.indexOf(job.progress_stage);
+          const step = stageIdx >= 0 ? stageIdx + 1 : 1;
+          setBusy(true, stageLabel(job.progress_stage), step, IMPORT_PROGRESS_STAGES.length);
+          return;
+        }
+        stopVideoPoll();
+        if (job.status === "failed") {
+          setBusy(false, "");
+          bgBtn.style.display = "none";
+          toast(job.error || tr('anonymous.couldnt-extract-a-recipe-from-that-video'));
+          return;
+        }
+        // ready
+        if (job.result_recipe_id && !job.draft) {
+          closeModal();
+          lastDedupToastAt = Date.now();
+          stickyToast(tr('anonymous.already-in-your-library-duplicate-skipped'));
+          await loadCatalog();
+          focusRecipeInSpin(job.result_recipe_id, { showDetail: true });
+          return;
+        }
+        closeModal();
+        try {
+          openImportReview(job.draft, job.id, targetRecipeId, "youtube");
+        } catch (e) {
+          console.error("[openImportReview] render failed", e, job.draft);
+          toast(tr('runImportExtract.something-went-wrong-showing-the-review-screen-o'));
+        }
+      };
+      await pollJob();
+      if (!videoPollStopped) videoPollTimer = setInterval(pollJob, 3000);
       return;
     }
     setBusy(true, tr('anonymous.reading-the-recipe'));
@@ -7051,6 +7184,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       ? { text: s, photo_urls: [] }
       : { text: s.text ?? "", photo_urls: stepPhotoUrls(s) }
   );
+  let tips = (draft.tips || []).map(t => (typeof t === "string" ? t : (t?.text ?? "")));
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
@@ -7092,6 +7226,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   const reviewLocale = lang;
   const ingName = (ing, idx) => importDraftIngName({ source_lang: sourceLang, title, translations, ingredients }, reviewLocale, idx, ing) || "";
   const stepText = (s, idx) => importDraftStepText({ source_lang: sourceLang, title, translations, instructions }, reviewLocale, idx, s) || "";
+  const tipText = (t, idx) => importDraftTipText({ source_lang: sourceLang, translations, tips }, reviewLocale, idx, t) || "";
   const reviewTitle = () => importDraftTitle({ source_lang: sourceLang, title, translations }, reviewLocale);
   // unitDisplay()/unitFromInput() are shared top-level helpers (see convertQty
   // above) - the draft stores the canonical slug (e.g. "kg"), same as saved
@@ -7112,6 +7247,12 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s, i)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-instructions-found-add-them-manually')}</div>`;
+    v.querySelector("#revTips").innerHTML = tips.map((t, i) => `
+      <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-tipidx="${i}">
+        <div style="flex:0 0 18px;padding-top:8px">💡</div>
+        <textarea data-tipinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${tipText(t, i)}</textarea>
+        <button class="dtl-back" data-tipdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+      </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-tips-found')}</div>`;
     wireRows();
   };
 
@@ -7235,6 +7376,9 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div class="sect" style="margin-top:12px">${tr('openImportReview.instructions')}</div>
     <div id="revInstr"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${tr('openImportReview.add-step')}</button>
+    <div class="sect" style="margin-top:12px">💡 ${tr('openImportReview.tips-and-serving-suggestions')}</div>
+    <div id="revTips"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
+    <button class="mini-btn" id="revTipsAdd" style="margin-top:2px">+ ${tr('openImportReview.add-tip')}</button>
     <div id="revTax">${taxHtml()}</div>
     <button class="btn btn-primary" id="revSave" style="width:100%;margin-top:18px">💾 ${tr('openImportReview.save')}</button>
     <div id="revSaveStatus" style="font-size:13px;color:#888;margin-top:8px;min-height:18px;text-align:center"></div>
@@ -7291,9 +7435,20 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
       instructions.splice(Number(btn.dataset.instrdel), 1); render();
     }));
+    v.querySelectorAll("[data-tipinput]").forEach(ta => ta.addEventListener("input", () => {
+      const i = Number(ta.dataset.tipinput);
+      if (reviewLocale === sourceLang) tips[i] = ta.value;
+      else {
+        ensureImportTranslationBlock({ translations, ingredients, instructions, tips }, reviewLocale);
+        translations[reviewLocale].tips[i] = ta.value;
+      }
+    }));
+    v.querySelectorAll("[data-tipdel]").forEach(btn => btn.addEventListener("click", () => {
+      tips.splice(Number(btn.dataset.tipdel), 1); render();
+    }));
   }
   const bootReviewLocale = async () => {
-    const draftSnap = { source_lang: sourceLang, title, translations, ingredients, instructions };
+    const draftSnap = { source_lang: sourceLang, title, translations, ingredients, instructions, tips };
     const needsHydrate = reviewLocale !== sourceLang
       && !importDraftLocaleComplete(draftSnap, reviewLocale);
     if (!needsHydrate) {
@@ -7301,7 +7456,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       return;
     }
     try {
-      const block = await hydrateImportDraftReviewLocale({ source_lang: sourceLang, title, translations, ingredients, instructions }, reviewLocale);
+      const block = await hydrateImportDraftReviewLocale({ source_lang: sourceLang, title, translations, ingredients, instructions, tips }, reviewLocale);
       if (block?.title) {
         translations[reviewLocale] = block;
         const titleEl = v.querySelector("#revTitle");
@@ -7317,6 +7472,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
 
   v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name: "", qty: null, unit: null, note: null, section: null }); render(); };
   v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text: "", photo_urls: [] }); render(); };
+  v.querySelector("#revTipsAdd").onclick = () => { tips.push(""); render(); };
 
   // 2026-08-10: save used to be one giant confirm call that also ran
   // ingredient classification + translation synchronously server-side -
@@ -7390,6 +7546,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       instructions: instructions
         .map(s => ({ text: (s.text || "").trim(), photo_urls: s.photo_urls || [] }))
         .filter(s => s.text),
+      tips: tips.map(t => (t || "").trim()).filter(Boolean),
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
