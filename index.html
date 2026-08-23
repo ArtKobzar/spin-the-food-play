@@ -1069,16 +1069,16 @@ function ingredientDisplayName(ing, dish = null) {
 }
 function ingredientDisplayNoteForLocale(ing, locale, dish = null) {
   if (!ing) return "";
-  const raw = ing.note;
-  if (!raw && !ing.note_resolved) return "";
-  const src = dish ? dishSourceLang(dish) : null;
   if (ing.note_resolved && ing.note_resolved_locale === locale && !ing.note_is_fallback) {
     return ing.note_resolved;
   }
   if (ing.note_resolved && ing.note_resolved_locale === locale) return ing.note_resolved;
-  // Do not leak source-language prep notes (e.g. Dutch on a UK UI) until translated.
-  if (src && locale !== src && ing.note_is_fallback) return "";
-  return raw || ing.note_resolved || "";
+  // English bridge (note_en / note_resolved en) when viewer locale lacks translation.
+  if (ing.note_is_fallback && ing.note_resolved && ing.note_resolved_locale === "en") {
+    return ing.note_resolved;
+  }
+  if (ing.note_en) return ing.note_en;
+  return ing.note || ing.note_resolved || "";
 }
 function ingredientDisplayNote(ing, dish = null) {
   return ingredientDisplayNoteForLocale(ing, lang, dish);
