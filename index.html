@@ -1020,8 +1020,16 @@ function recipeTitleReadyInLocale(d, locale) {
   if (!d || !locale) return false;
   if (locale === "uk") return d._resolvedLocale === "uk" && !d.ukFallback && String(d.uk || "").trim() !== "";
   if (locale === "nl") return d._resolvedLocale === "nl" && !d.nlFallback && String(d.nl || "").trim() !== "";
-  if (locale === "ru") return String(d.ru || d.title || "").trim() !== "";
-  if (locale === "en") return String(d.en || d.title_en || "").trim() !== "";
+  if (locale === "ru") return d._resolvedLocale === "ru" && !d.ruFallback && String(d.ru || "").trim() !== "";
+  if (locale === "en") return d._resolvedLocale === "en" && !d.enFallback && String(d.en || "").trim() !== "";
+  return false;
+}
+/** True when the viewer's UI locale is not the source and title is the English bridge. */
+function dishViewerLocaleUsesEnglishFallback(d) {
+  if (!lang || lang === "en" || lang === dishSourceLang(d)) return false;
+  if (lang === "uk") return !!d.ukFallback;
+  if (lang === "nl") return !!d.nlFallback;
+  if (lang === "ru") return !!d.ruFallback;
   return false;
 }
 function ingredientDisplayNameForLocale(ing, locale, dish = null) {
@@ -1413,6 +1421,8 @@ function recipeToDish(r) {
     nl: r.source_lang === "nl" ? (r.title || r.title_en || "") : (r.title_en || r.title),
     ukFallback: false,
     nlFallback: false,
+    ruFallback: false,
+    enFallback: false,
     g: r.photo_url ? `url(${r.photo_url})` : "linear-gradient(135deg,#e5e7eb,#9ca3af)",
     t: cookMinutes,
     d: dots,
@@ -1852,6 +1862,7 @@ function translatedTitleReady(d) {
   if (src === target) return true;
   if (target === "uk") return d._resolvedLocale === "uk" && !d.ukFallback;
   if (target === "nl") return d._resolvedLocale === "nl" && !d.nlFallback;
+  if (target === "ru") return d._resolvedLocale === "ru" && !d.ruFallback;
   const authored = authoredDishName(d);
   const translated = translatedDishName(d, target);
   return translated && translated !== authored;
@@ -1865,8 +1876,12 @@ function recipeTitleCompleteInLocale(d, locale) {
   if (locale === "nl") {
     return d._resolvedLocale === "nl" && !d.nlFallback && String(d.nl || "").trim() !== "";
   }
-  if (locale === "ru") return String(d.ru || d.title || "").trim() !== "";
-  if (locale === "en") return String(d.en || d.title_en || "").trim() !== "";
+  if (locale === "ru") {
+    return d._resolvedLocale === "ru" && !d.ruFallback && String(d.ru || "").trim() !== "";
+  }
+  if (locale === "en") {
+    return d._resolvedLocale === "en" && !d.enFallback && String(d.en || "").trim() !== "";
+  }
   return false;
 }
 function recipeIngredientCompleteInLocale(ing, locale, srcLang) {
@@ -4872,10 +4887,7 @@ function detailTranslationBadge(d) {
   if (d._machineTranslated) {
     return `<div style="font-size:12px;color:#6b7280;margin-top:6px">${tr('detailView.machine-translated')}</div>`;
   }
-  if (lang === "uk" && d.ukFallback) {
-    return `<div style="font-size:12px;color:#b45309;margin-top:6px;line-height:1.45">${detailFallbackBadgeHtml()}</div>`;
-  }
-  if (lang === "nl" && d.nlFallback) {
+  if (dishViewerLocaleUsesEnglishFallback(d)) {
     return `<div style="font-size:12px;color:#b45309;margin-top:6px;line-height:1.45">${detailFallbackBadgeHtml()}</div>`;
   }
   return "";
@@ -4893,7 +4905,14 @@ async function refreshDishFromCatalog(d) {
   const r = recipes.find(x => x.id === d.id);
   if (!r) return;
   const fresh = recipeToDish(r);
-  const keep = { _machineTranslated: d._machineTranslated, _resolvedLocale: d._resolvedLocale, ukFallback: d.ukFallback, nlFallback: d.nlFallback };
+  const keep = {
+    _machineTranslated: d._machineTranslated,
+    _resolvedLocale: d._resolvedLocale,
+    ukFallback: d.ukFallback,
+    nlFallback: d.nlFallback,
+    ruFallback: d.ruFallback,
+    enFallback: d.enFallback,
+  };
   Object.assign(d, fresh, keep);
 }
 async function requestRecipeTranslation(d) {
