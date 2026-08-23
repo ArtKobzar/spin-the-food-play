@@ -221,6 +221,8 @@
   .dtl-translate-btn { flex: 0 0 32px; width: 32px; height: 32px; border: none; border-radius: 50%; background: #f3f4f6; color: #4b5563; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-top: 2px; }
   .dtl-translate-btn.on { background: #dbeafe; color: #1d4ed8; }
   .dtl-translate-btn:disabled { opacity: .45; cursor: default; }
+  .dtl-fallback-link { display: inline; border: none; background: none; padding: 0; margin: 0; font: inherit; color: #b45309; font-weight: 700; text-decoration: underline; cursor: pointer; touch-action: manipulation; }
+  .dtl-fallback-link:disabled { opacity: .45; cursor: default; }
   /* Same photo-carousel chrome (nav arrows, dots, pending/approve UI, "add a
      photo" CTA) is reused verbatim on the recipe detail view's hero, via
      photoSlideHtml() - `.dtl-hero` just needs `position:relative` (it already
@@ -752,14 +754,11 @@ function pickLanguage(code) {
   }
   // Force re-resolve recipe content for the new UI locale (hydrate skips when _resolvedLocale matches).
   DISHES.forEach((d) => { d._resolvedLocale = null; });
-  hydrateRecipeContentForLocale(code).finally(async () => {
+  hydrateRecipeContentForLocale(code).finally(() => {
     render();
     if (detailOpen) {
       const d = dish(detailOpen);
-      if (d) {
-        renderDetailOverlay();
-        if (recipeNeedsTranslation(d)) await requestRecipeTranslation(d);
-      }
+      if (d) renderDetailOverlay();
     }
   });
 }
@@ -4862,16 +4861,22 @@ function detailTitleName(d) {
   if (detailShowTranslation) return authoredDishName(d);
   return dishDisplayTitle(d);
 }
+function detailFallbackBadgeHtml() {
+  const busy = detailTranslationLoading;
+  const here = tr("detailView.shown-in-english-fallback-here");
+  const link = `<button type="button" id="dtlTranslateFromBadge" class="dtl-fallback-link" ${busy ? "disabled" : ""}>${busy ? "…" : here}</button>`;
+  return `${tr("detailView.shown-in-english-fallback-prefix")}${link}${tr("detailView.shown-in-english-fallback-suffix")}`;
+}
 function detailTranslationBadge(d) {
   if (detailShowTranslation || !recipeNeedsTranslation(d)) return "";
   if (d._machineTranslated) {
     return `<div style="font-size:12px;color:#6b7280;margin-top:6px">${tr('detailView.machine-translated')}</div>`;
   }
   if (lang === "uk" && d.ukFallback) {
-    return `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>`;
+    return `<div style="font-size:12px;color:#b45309;margin-top:6px;line-height:1.45">${detailFallbackBadgeHtml()}</div>`;
   }
   if (lang === "nl" && d.nlFallback) {
-    return `<div style="font-size:12px;color:#b45309;margin-top:6px">${tr('detailView.shown-in-english-not-requested-language')}</div>`;
+    return `<div style="font-size:12px;color:#b45309;margin-top:6px;line-height:1.45">${detailFallbackBadgeHtml()}</div>`;
   }
   return "";
 }
@@ -4954,17 +4959,14 @@ function openDetail(id) {
   detailShowTranslation = false; detailTranslationLoading = false;
   renderDetailOverlay();
   const d = dish(detailOpen);
-  const afterHydrate = async () => {
-    if (detailOpen !== id) return;
-    const cur = dish(detailOpen);
-    if (!cur) return;
-    renderDetailOverlay();
-    if (recipeNeedsTranslation(cur)) {
-      await requestRecipeTranslation(cur);
-    }
-  };
-  if (d && (recipeNeedsTranslation(d) || d._resolvedLocale !== lang)) {
-    hydrateDishContent(d, lang).then(afterHydrate);
+  if (d && recipeNeedsTranslation(d)) {
+    hydrateDishContent(d, lang).then(() => {
+      if (detailOpen === id) renderDetailOverlay();
+    });
+  } else if (d && d._resolvedLocale !== lang) {
+    hydrateDishContent(d, lang).then(() => {
+      if (detailOpen === id) renderDetailOverlay();
+    });
   }
 }
 function closeDetail() {
@@ -5254,6 +5256,10 @@ function wireDetailOverlay(wrap, d) {
   });
   wrap.querySelector("#dtlEnrichBtn")?.addEventListener("click", () => { closeDetail(); openImportSheet(d.id); });
   wrap.querySelector("#dtlTranslateBtn")?.addEventListener("click", async () => {
+    if (detailTranslationLoading) return;
+    await requestRecipeTranslation(d);
+  });
+  wrap.querySelector("#dtlTranslateFromBadge")?.addEventListener("click", async () => {
     if (detailTranslationLoading) return;
     await requestRecipeTranslation(d);
   });
