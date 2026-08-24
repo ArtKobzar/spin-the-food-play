@@ -387,6 +387,7 @@
     font-size: 10.5px; font-weight: 700; line-height: 1.1; opacity: .85;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .swipe-tip.left .tip-label { text-align: left; }
   .swipe-tip.right .tip-label { text-align: right; }
 
   /* 2026-08-11: bumped above .veil's new 150 - toasts (e.g. "Save failed")
@@ -444,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=afde05e";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=04cac03";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
