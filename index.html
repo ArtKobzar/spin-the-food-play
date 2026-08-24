@@ -421,6 +421,12 @@
   .dtl-banner.fork { background: #eef2ff; border: 1px dashed #6366f1; color: #3730a3; }
   .dtl-editbar { position: sticky; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(0deg,#fafaf7 60%,rgba(250,250,247,0)); display: flex; gap: 8px; }
   .dtl-editbar .btn { flex: 1; }
+  /* Standard "show N more" ingredient-list disclosure (2026-08-24) - plain
+     <details>/<summary>, just strips the default marker so the amber label
+     is the only affordance. */
+  .dtl-more-summary { list-style: none; }
+  .dtl-more-summary::-webkit-details-marker { display: none; }
+  .dtl-component-tile:active { background: #f0f0f0; }
 </style>
 </head>
 <body>
@@ -433,7 +439,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=9009378";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=a0b6a6d";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -4772,6 +4778,12 @@ function wireStack() {
 // through food.apply_event's recipe_edit_proposed / _accepted / _declined so
 // an owned recipe's edits queue for the owning cook instead of landing live.
 let detailOpen = null;      // dish id currently shown full-screen, or null
+// Composite Recipes (2026-08-24 follow-up, issue #54): ids of recipes
+// navigated *through* to reach the currently-open one, via tapping an
+// Included Recipe tile - lets ← walk back up to the composite parent
+// instead of closing the whole overlay. Always reset to [] by openDetail()
+// (a fresh top-level open, e.g. from a Spin card) and by closeDetail().
+let detailNavStack = [];
 // Single unified pane (2026-08-09): the old "About" tab's taxonomy/diet/
 // allergen chips + author/source/video links now render at the bottom of
 // the one and only detail view, right after Instructions, instead of living
@@ -5109,6 +5121,13 @@ function tipSteps(d) {
 
 function openDetail(id) {
   if (!dish(id)) return;
+  detailNavStack = [];
+  openDetailInternal(id);
+}
+// Shared by a fresh top-level open (openDetail, stack cleared) and stepping
+// into an Included Recipe tile (openComponentDetail, stack pushed) - both
+// just swap what detailOpen points at and re-render the same overlay.
+function openDetailInternal(id) {
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   detailShowTranslation = false; detailTranslationLoading = false;
   detailComponents = [];
@@ -5125,12 +5144,29 @@ function openDetail(id) {
     });
   }
 }
+// Tapping an Included Recipe tile inside a composite recipe's detail view -
+// remembers where we came from so ← can walk back up instead of closing.
+function openComponentDetail(id) {
+  if (!dish(id)) return;
+  detailNavStack.push(detailOpen);
+  openDetailInternal(id);
+}
 function closeDetail() {
   const el = document.getElementById("detailOverlay");
-  detailEditMode = false; detailDraft = null;
+  detailEditMode = false; detailDraft = null; detailNavStack = [];
   if (!el) { detailOpen = null; return; }
   el.classList.remove("open"); el.classList.add("closing");
   setTimeout(() => { el.remove(); detailOpen = null; }, 260);
+}
+// ← inside the detail overlay: step back to the composite parent if we
+// arrived here via an Included Recipe tile, otherwise close like normal.
+function detailBack() {
+  if (detailNavStack.length) {
+    const prevId = detailNavStack.pop();
+    openDetailInternal(prevId);
+  } else {
+    closeDetail();
+  }
 }
 function renderDetailOverlay() {
   document.getElementById("detailOverlay")?.remove();
@@ -5190,7 +5226,7 @@ function detailHeaderHtml(d) {
       </div>` : ""}
     </div>
     <div style="padding:0 16px">
-      ${d.card_state === "thin" ? `<div class="dtl-banner edit">📝 ${tr('detailHeaderHtml.thin-card-tap-to-add-ingredients')}</div>` : ""}
+      ${d.card_state === "thin" && !detailComponents.length ? `<div class="dtl-banner edit">📝 ${tr('detailHeaderHtml.thin-card-tap-to-add-ingredients')}</div>` : ""}
       ${d.forked_from_id ? `<div class="dtl-banner fork">🍴 ${tr('detailHeaderHtml.your-familys-copy-of-the-original-recipe')}</div>` : ""}
     </div>`;
 }
@@ -5211,7 +5247,32 @@ function linksHtml(d) {
   if (!parts.length) return "";
   return `<div class="sect" style="margin-top:18px">${tr('linksHtml.links')}</div><div class="chips-wrap">${parts.join("")}</div>`;
 }
+// Standard "show N more" progressive disclosure for any read-mode
+// ingredient list (2026-08-24 follow-up - not just Composite recipes'
+// combined totals, every recipe's list collapses past this length so a
+// long shopping list doesn't push Instructions off the first screen).
+// Plain <details>/<summary>, no JS wiring needed; .dtl-more-summary just
+// strips the default marker (see <style>).
+function collapsibleListHtml(liItems, threshold = 7) {
+  const ulStyle = "padding-left:18px;font-size:14px;line-height:2;margin:0";
+  if (liItems.length <= threshold) {
+    return `<ul style="${ulStyle}">${liItems.join("")}</ul>`;
+  }
+  const head = liItems.slice(0, threshold);
+  const rest = liItems.slice(threshold);
+  return `<ul style="${ulStyle}">${head.join("")}</ul>
+    <details style="margin-top:2px">
+      <summary class="dtl-more-summary" style="cursor:pointer;font-size:13px;font-weight:700;color:var(--amber);padding:6px 0">${tr('detailView.show-n-more', { n: rest.length })} ▾</summary>
+      <ul style="${ulStyle};margin-top:4px">${rest.join("")}</ul>
+    </details>`;
+}
 function detailView(d) {
+  // Composite Recipes (issue #54): detailComponents is populated async by
+  // openDetailInternal()'s loadDetailComponents() call and re-renders this
+  // view once loaded - empty on the very first paint of a composite recipe,
+  // so isComposite briefly reads false until that resolves (same pattern
+  // every other async-hydrated field on this page already uses).
+  const isComposite = detailComponents.length > 0;
   const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
   const courseVal = detailEditMode ? detailDraft.course_category : d.course_category;
   const mealsVal = detailEditMode ? detailDraft.meal_types : new Set(d.meals);
@@ -5267,8 +5328,17 @@ function detailView(d) {
     } else {
       const scaleFactor = detailScaleTo ? detailScaleTo / baseServings : 1;
       const ingLocale = detailContentLocale(d);
-      ingHtml = d.ingredients.length
-        ? `<ul style="padding-left:18px;font-size:14px;line-height:2">${d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale, d)}</li>`).join("")}</ul>`
+      // Composite Recipes (issue #54, ingredient_rollup: sum_quantities):
+      // the section now shows "All Ingredients" - combined totals across
+      // the parent's own ingredients plus every linked Component's - not
+      // just d.ingredients, which for a fully-split composite is often
+      // empty (everything claimed by a part). Scaling doesn't apply to a
+      // combined-across-components total, same as before this refactor.
+      const liItems = isComposite
+        ? combineIngredientTotals([d, ...detailComponents.map(c => c.dish)]).map(row => `<li>${row}</li>`)
+        : d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale, d)}</li>`);
+      ingHtml = liItems.length
+        ? collapsibleListHtml(liItems)
         : (d.ingredients_raw ? `<div style="font-size:14px;line-height:1.8;white-space:pre-wrap">${d.ingredients_raw}</div>` : `<div style="font-size:13px;color:#aaa">${tr('detailView.no-ingredients-recorded-for-this-recipe-yet')}</div>`);
     }
 
@@ -5347,28 +5417,27 @@ function detailView(d) {
       : "";
 
     // Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54,
-    // assembly_location: parent card + nested boxed sub-cards). Combined
-    // totals up top (sum_quantities), then each Component as its own boxed
-    // card with its own ingredients/steps, clickable through to its own
-    // full detail page (component_browse_surface decision - no dedicated
-    // list UI needed, this plus general search is enough for v1).
-    const compositeHtml = !detailComponents.length ? "" : (() => {
-      const combined = combineIngredientTotals([d, ...detailComponents.map(c => c.dish)]);
-      return `
-        <div class="sect" style="margin-top:18px">🧩 ${tr('detailView.composite-recipe')}</div>
-        ${combined.length ? `<ul style="padding-left:18px;font-size:14px;line-height:2;margin:0 0 10px;font-weight:600">${combined.map(row => `<li>${row}</li>`).join("")}</ul>` : ""}
+    // assembly_location: parent card + nested sub-cards; 2026-08-24
+    // follow-up: combined totals moved up into the main "All Ingredients"
+    // section above, so this is now just compact tap-through tiles - one
+    // per Component, styled like a Spin card's thumbnail row rather than a
+    // full boxed-out recipe (component_browse_surface decision - no
+    // dedicated list UI needed, this plus general search is enough for v1).
+    // Tapping a tile is openComponentDetail(), which lands on that
+    // Component's own full detail page with ← walking back here.
+    const compositeHtml = !detailComponents.length ? "" : `
+      <div class="sect" style="margin-top:18px">🧩 ${tr('detailView.composite-recipe')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
         ${detailComponents.map(c => `
-          <div class="dtl-component-card" data-componentopen="${c.dish.id}" style="margin:0 0 10px;padding:12px;border:1px solid #eee;border-radius:12px;background:#fafafa;cursor:pointer">
-            ${c.dish.photo_url ? `<img src="${c.dish.photo_url}" style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" loading="lazy">` : ""}
-            <div style="font-weight:800;font-size:14px;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px">
-              <span>${(c.label || detailTitleName(c.dish)).replace(/</g, "&lt;")}</span>
-              <span style="font-weight:400;color:#999;font-size:12px;white-space:nowrap">${detailTitleName(c.dish)} →</span>
+          <div class="dtl-component-tile" data-componentopen="${c.dish.id}" style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #eee;border-radius:14px;background:#fafafa;cursor:pointer">
+            <div style="width:52px;height:52px;flex:0 0 52px;border-radius:10px;background:${c.dish.photo_url ? `url('${c.dish.photo_url.replace(/'/g, "%27")}') center/cover` : "linear-gradient(135deg,#e5e7eb,#9ca3af)"}"></div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.label || detailTitleName(c.dish)).replace(/</g, "&lt;")}</div>
+              <div style="font-size:12px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.dish.t ? `⏱ ${c.dish.t} ${tr('detailHeaderHtml.min')} &nbsp; ` : ""}${cuisineDisplay(c.dish.c)}</div>
             </div>
-            <ul style="padding-left:16px;font-size:13px;line-height:1.8;margin:0 0 6px">${(c.dish.ingredients || []).map(ing => `<li>${ingredientLine(ing, 1, detailContentLocale(c.dish), c.dish)}</li>`).join("")}</ul>
-            <ol style="padding-left:16px;font-size:13px;line-height:1.7;margin:0">${instructionSteps(c.dish).map(s => `
-              <li>${s.text}${s.photo_urls.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">${s.photo_urls.map(u => `<img src="${u}" style="width:64px;height:64px;object-fit:cover;border-radius:6px" loading="lazy">`).join("")}</div>` : ""}</li>`).join("")}</ol>
-          </div>`).join("")}`;
-    })();
+            <div style="color:#bbb;font-size:18px;flex:0 0 auto">→</div>
+          </div>`).join("")}
+      </div>`;
 
   // Delete (2026-08-10) - deliberately at the very bottom of the card and
   // only ever rendered in edit mode, per request: a destructive action
@@ -5391,7 +5460,7 @@ function detailView(d) {
   const pane = `${detailHeaderHtml(d)}
       <div style="padding:6px 16px 20px">
       <div style="margin-bottom:6px">${servingsHtml}</div>
-      <div class="sect">${tr('detailView.ingredients')}</div>
+      <div class="sect">${isComposite ? tr('detailView.all-ingredients') : tr('detailView.ingredients')}</div>
       ${ingHtml}
       <div class="sect" style="margin-top:18px">${tr('detailView.instructions')}</div>
       ${instrHtml}
@@ -5409,9 +5478,9 @@ function detailView(d) {
 }
 
 function wireDetailOverlay(wrap, d) {
-  wrap.querySelector("#dtlBack")?.addEventListener("click", closeDetail);
+  wrap.querySelector("#dtlBack")?.addEventListener("click", detailBack);
   wrap.querySelectorAll("[data-componentopen]").forEach(card => card.addEventListener("click", () => {
-    openDetail(card.dataset.componentopen);
+    openComponentDetail(card.dataset.componentopen);
   }));
   // Photo carousel on the hero - identical wiring to the Spin card's, just
   // re-rendering this overlay (not refreshDeck()) since photoIdx[d.id] is the
