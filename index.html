@@ -433,7 +433,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=eaa04bd";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=9009378";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -4793,14 +4793,22 @@ async function loadDetailComponents(recipeId) {
   try {
     const { data: links, error } = await sb.rpc("spin_food_recipe_components_get", { p_recipe_id: recipeId });
     if (error || !links || !links.length) return;
-    const ids = links.map(l => l.component_recipe_id);
-    const { data: rows, error: rowsErr } = await sb.from("family_cookbook_recipes").select("*").in("id", ids);
-    if (rowsErr || !rows || !rows.length) return;
-    const byId = new Map(rows.map(r => [r.id, r]));
+    // Bug found 2026-08-24: this used to do a raw
+    // sb.from("family_cookbook_recipes").select(...) - but the `food`
+    // schema is never exposed to PostgREST (see supabase/config.toml's
+    // `schemas = ["public", "storage", "graphql_public"]`), so that call
+    // always 404'd, always hit the empty-result guard below, and silently
+    // left detailComponents empty on every single composite recipe. Every
+    // other read in this app goes through a public.spin_food_* RPC or the
+    // already-loaded DISHES cache for exactly this reason - reuse DISHES
+    // (populated by loadCatalog() via the grant-aware
+    // spin_food_list_recipes_for_family, which Components are included in
+    // like any other recipe) instead of inventing a new direct table read.
+    const byId = new Map(DISHES.map(d => [d.id, d]));
     const built = links
       .map(l => {
-        const row = byId.get(l.component_recipe_id);
-        return row ? { label: l.label, sort_order: l.sort_order ?? 0, dish: recipeToDish(row) } : null;
+        const dish = byId.get(l.component_recipe_id);
+        return dish ? { label: l.label, sort_order: l.sort_order ?? 0, dish: { ...dish } } : null;
       })
       .filter(Boolean)
       .sort((a, b) => a.sort_order - b.sort_order);
