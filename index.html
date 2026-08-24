@@ -433,7 +433,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0a0dbe2";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=926f8c8";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -4781,6 +4781,35 @@ let detailEditMode = false; // taxonomy edit toggle
 let detailDraft = null;     // { dish_role, course_category, meal_types:Set, techniques:Set } while editing
 let detailSaving = false;
 let detailScaleTo = null;   // target serving count for the scaling stepper, or null = unscaled (view-only, never persisted)
+// Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54): Components
+// linked to the currently-open detail recipe, as { label, sort_order, dish }
+// - dish is a full recipeToDish()-shaped object so every existing
+// ingredientLine()/instructionSteps() renderer works unmodified. Reset on
+// every openDetail() and populated async (same pattern as hydrateDishContent),
+// re-rendering the overlay once loaded.
+let detailComponents = [];
+async function loadDetailComponents(recipeId) {
+  detailComponents = [];
+  try {
+    const { data: links, error } = await sb.rpc("spin_food_recipe_components_get", { p_recipe_id: recipeId });
+    if (error || !links || !links.length) return;
+    const ids = links.map(l => l.component_recipe_id);
+    const { data: rows, error: rowsErr } = await sb.from("family_cookbook_recipes").select("*").in("id", ids);
+    if (rowsErr || !rows || !rows.length) return;
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const built = links
+      .map(l => {
+        const row = byId.get(l.component_recipe_id);
+        return row ? { label: l.label, sort_order: l.sort_order ?? 0, dish: recipeToDish(row) } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.sort_order - b.sort_order);
+    await Promise.all(built.map(b => hydrateDishContent(b.dish, lang)));
+    detailComponents = built;
+  } catch (e) {
+    console.error("[loadDetailComponents]", e);
+  }
+}
 let detailShowTranslation = false; // false = viewer UI locale, true = authored source language
 let detailTranslationLoading = false;
 
@@ -4865,6 +4894,60 @@ function fmtQty(n) {
   // so whole numbers print clean.
   return String(Math.round(n * 10) / 10).replace(/\.0$/, "");
 }
+// Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54,
+// ingredient_rollup: sum_quantities): combined ingredient totals shown at
+// the top of a Composite Recipe's card, across the parent's own ingredients
+// plus every linked Component's. Groups by (normalized name, unit kind) so
+// mass sums with mass and volume with volume, converts everything to a
+// common base unit (same to_base_factor machinery as convertQty), then
+// re-expresses the sum in the nicest unit for the viewer's chosen system.
+// Ingredients that don't share a name+kind with anything else, or whose
+// unit isn't recognized at all, are listed individually and unconverted -
+// same "accept as-is" fallback convention as convertQty itself.
+function combineIngredientTotals(dishes) {
+  const groups = new Map();
+  for (const d of dishes) {
+    const nameLocale = detailContentLocale(d);
+    for (const ing of (d.ingredients || [])) {
+      if (typeof ing !== "object" || !ing) continue;
+      const name = ingredientDisplayNameForLocale(ing, nameLocale, d) || ing.name || "";
+      const normName = name.trim().toLowerCase();
+      if (!normName) continue;
+      const slug = ing.unit ? matchUnitSlug(ing.unit) : null;
+      const u = slug ? UNITS_BY_SLUG[slug] : null;
+      const qty = Number(ing.qty);
+      const key = `${normName}::${u ? u.kind : "none"}`;
+      let g = groups.get(key);
+      if (!g) { g = { name, kind: u ? u.kind : null, baseVal: 0, hasQty: false, rawLines: [] }; groups.set(key, g); }
+      if (u && u.kind !== "temperature" && Number.isFinite(qty) && (u.to_base_factor != null || u.kind === "count")) {
+        g.baseVal += qty * (u.to_base_factor ?? 1);
+        g.hasQty = true;
+      } else {
+        g.rawLines.push(`${[Number.isFinite(qty) ? fmtQty(qty) : "", unitDisplay(ing.unit)].filter(Boolean).join(" ")} ${name}`.trim());
+      }
+    }
+  }
+  const lines = [];
+  for (const g of groups.values()) {
+    if (g.hasQty && g.kind === "count") {
+      lines.push(`${fmtQty(g.baseVal)} ${g.name}`);
+      continue;
+    }
+    if (g.hasQty && (g.kind === "mass" || g.kind === "volume")) {
+      const wantMetric = unitsSystem() === "metric";
+      const targetSlug = bestTargetSlug(g.kind, wantMetric, g.baseVal);
+      const target = targetSlug ? UNITS_BY_SLUG[targetSlug] : null;
+      if (target && target.to_base_factor) {
+        const outVal = roundToIncrement(g.baseVal / target.to_base_factor, target.round_increment);
+        lines.push(`${fmtQty(outVal)} ${unitLabel(target)} ${g.name}`);
+        continue;
+      }
+    }
+    lines.push(...(g.rawLines.length ? g.rawLines : [g.name]));
+  }
+  return lines;
+}
+
 function ingredientLine(ing, scaleFactor = 1, nameLocale = null, dishCtx = null) {
   if (typeof ing === "string") return ing;
   if (!ing || typeof ing !== "object") return "";
@@ -5020,7 +5103,9 @@ function openDetail(id) {
   if (!dish(id)) return;
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   detailShowTranslation = false; detailTranslationLoading = false;
+  detailComponents = [];
   renderDetailOverlay();
+  loadDetailComponents(id).then(() => { if (detailOpen === id) renderDetailOverlay(); });
   const d = dish(detailOpen);
   if (d && recipeNeedsTranslation(d)) {
     hydrateDishContent(d, lang).then(() => {
@@ -5253,6 +5338,30 @@ function detailView(d) {
          <ul style="padding-left:18px;font-size:14px;line-height:1.9;margin:0">${tips.map(t => `<li style="margin-bottom:8px">${t.text}</li>`).join("")}</ul>`
       : "";
 
+    // Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54,
+    // assembly_location: parent card + nested boxed sub-cards). Combined
+    // totals up top (sum_quantities), then each Component as its own boxed
+    // card with its own ingredients/steps, clickable through to its own
+    // full detail page (component_browse_surface decision - no dedicated
+    // list UI needed, this plus general search is enough for v1).
+    const compositeHtml = !detailComponents.length ? "" : (() => {
+      const combined = combineIngredientTotals([d, ...detailComponents.map(c => c.dish)]);
+      return `
+        <div class="sect" style="margin-top:18px">🧩 ${tr('detailView.composite-recipe')}</div>
+        ${combined.length ? `<ul style="padding-left:18px;font-size:14px;line-height:2;margin:0 0 10px;font-weight:600">${combined.map(row => `<li>${row}</li>`).join("")}</ul>` : ""}
+        ${detailComponents.map(c => `
+          <div class="dtl-component-card" data-componentopen="${c.dish.id}" style="margin:0 0 10px;padding:12px;border:1px solid #eee;border-radius:12px;background:#fafafa;cursor:pointer">
+            ${c.dish.photo_url ? `<img src="${c.dish.photo_url}" style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;display:block;margin-bottom:8px" loading="lazy">` : ""}
+            <div style="font-weight:800;font-size:14px;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px">
+              <span>${(c.label || detailTitleName(c.dish)).replace(/</g, "&lt;")}</span>
+              <span style="font-weight:400;color:#999;font-size:12px;white-space:nowrap">${detailTitleName(c.dish)} →</span>
+            </div>
+            <ul style="padding-left:16px;font-size:13px;line-height:1.8;margin:0 0 6px">${(c.dish.ingredients || []).map(ing => `<li>${ingredientLine(ing, 1, detailContentLocale(c.dish), c.dish)}</li>`).join("")}</ul>
+            <ol style="padding-left:16px;font-size:13px;line-height:1.7;margin:0">${instructionSteps(c.dish).map(s => `
+              <li>${s.text}${s.photo_urls.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">${s.photo_urls.map(u => `<img src="${u}" style="width:64px;height:64px;object-fit:cover;border-radius:6px" loading="lazy">`).join("")}</div>` : ""}</li>`).join("")}</ol>
+          </div>`).join("")}`;
+    })();
+
   // Delete (2026-08-10) - deliberately at the very bottom of the card and
   // only ever rendered in edit mode, per request: a destructive action
   // should never be one accidental tap away from the read view, and should
@@ -5279,6 +5388,7 @@ function detailView(d) {
       <div class="sect" style="margin-top:18px">${tr('detailView.instructions')}</div>
       ${instrHtml}
       ${tipsHtml}
+      ${compositeHtml}
       ${aboutHtml}
       ${deleteHtml}
     </div>`;
@@ -5292,6 +5402,9 @@ function detailView(d) {
 
 function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlBack")?.addEventListener("click", closeDetail);
+  wrap.querySelectorAll("[data-componentopen]").forEach(card => card.addEventListener("click", () => {
+    openDetail(card.dataset.componentopen);
+  }));
   // Photo carousel on the hero - identical wiring to the Spin card's, just
   // re-rendering this overlay (not refreshDeck()) since photoIdx[d.id] is the
   // one piece of shared state between the two views.
@@ -7185,6 +7298,33 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       : { text: s.text ?? "", photo_urls: stepPhotoUrls(s) }
   );
   let tips = (draft.tips || []).map(t => (typeof t === "string" ? t : (t?.text ?? "")));
+  // Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54): parts[]
+  // groups ingredient/instruction indexes into proposed sub-recipes (e.g.
+  // "Marinade"). full_review_editable (decided) - the user can reject the
+  // whole split (uncheck the toggle), reassign any row to a different part
+  // or back to the parent "assembly", rename/add/remove parts, before save.
+  let parts = Array.isArray(draft.parts)
+    ? draft.parts.map(p => ({
+        label: p.label || "",
+        ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
+        instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
+      }))
+    : [];
+  let isComposite = !!draft.is_composite && parts.length > 0;
+  const partIndexForIngredient = (i) => parts.findIndex(p => p.ingredient_indexes.includes(i));
+  const partIndexForInstruction = (i) => parts.findIndex(p => p.instruction_indexes.includes(i));
+  const assignRowToPart = (kind, i, partIdx) => {
+    parts.forEach(p => { p[kind] = p[kind].filter(x => x !== i); });
+    if (partIdx >= 0 && parts[partIdx]) parts[partIdx][kind].push(i);
+  };
+  // A row's index shifts down by one for every row deleted before it -
+  // keep every part's stored indexes in sync or a later save would point
+  // sub-recipes at the wrong (post-delete) ingredients/instructions.
+  const shiftPartIndexesAfterDelete = (kind, deletedIdx) => {
+    parts.forEach(p => {
+      p[kind] = p[kind].filter(x => x !== deletedIdx).map(x => (x > deletedIdx ? x - 1 : x));
+    });
+  };
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
@@ -7233,11 +7373,17 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // recipes, so this reuses the exact same localization ingredientLine() does.
 
   const render = () => {
+    const partSelect = (kind, i, currentPartIdx) => !isComposite ? "" : `
+        <select data-rowpart="${kind}:${i}" style="width:88px;flex:0 0 88px;border:1px solid #eee;border-radius:8px;padding:5px 2px;font-size:11px;background:${currentPartIdx >= 0 ? "#eff6ff" : "#fff"}">
+          <option value="-1" ${currentPartIdx < 0 ? "selected" : ""}>${tr('openImportReview.assembly')}</option>
+          ${parts.map((p, pi) => `<option value="${pi}" ${currentPartIdx === pi ? "selected" : ""}>${(p.label || tr('openImportReview.sub-recipe-name') + " " + (pi + 1)).replace(/"/g, "&quot;")}</option>`).join("")}
+        </select>`;
     v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
         <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.unit')}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="name" value="${ingName(ing, i).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
+        ${partSelect("ingredient_indexes", i, partIndexForIngredient(i))}
         <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-ingredients-found-add-them-manually-or-edit-t')}</div>`;
     v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
@@ -7245,6 +7391,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
         ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
         <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s, i)}</textarea>
+        ${partSelect("instruction_indexes", i, partIndexForInstruction(i))}
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
       </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-instructions-found-add-them-manually')}</div>`;
     v.querySelector("#revTips").innerHTML = tips.map((t, i) => `
@@ -7353,6 +7500,51 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     }));
   };
 
+  const partsHtml = () => `
+    <div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#1e40af;cursor:pointer">
+        <input type="checkbox" id="revCompositeToggle" ${isComposite ? "checked" : ""}>
+        🧩 ${tr('openImportReview.composite-toggle-label')}
+      </label>
+      ${isComposite ? `
+        <div id="revPartsList" style="margin-top:8px">
+          ${parts.map((p, pi) => `
+            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-partidx="${pi}">
+              <input data-partlabel="${pi}" value="${(p.label || "").replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px">
+              <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+            </div>`).join("")}
+        </div>
+        <button class="mini-btn" id="revPartAdd" style="margin-top:2px">+ ${tr('openImportReview.add-sub-recipe')}</button>
+        <div style="font-size:11px;color:#1e40af;margin-top:6px">${tr('openImportReview.composite-hint')}</div>
+      ` : ""}
+    </div>`;
+  const wireParts = () => {
+    const toggle = v.querySelector("#revCompositeToggle");
+    if (toggle) toggle.onchange = () => {
+      isComposite = toggle.checked;
+      if (isComposite && parts.length === 0) parts.push({ label: "", ingredient_indexes: [], instruction_indexes: [] });
+      v.querySelector("#revParts").innerHTML = partsHtml();
+      wireParts();
+      render();
+    };
+    v.querySelectorAll("[data-partlabel]").forEach(inp => inp.addEventListener("input", () => {
+      parts[Number(inp.dataset.partlabel)].label = inp.value;
+    }));
+    v.querySelectorAll("[data-partdel]").forEach(btn => btn.addEventListener("click", () => {
+      parts.splice(Number(btn.dataset.partdel), 1);
+      v.querySelector("#revParts").innerHTML = partsHtml();
+      wireParts();
+      render();
+    }));
+    const addBtn = v.querySelector("#revPartAdd");
+    if (addBtn) addBtn.onclick = () => {
+      parts.push({ label: "", ingredient_indexes: [], instruction_indexes: [] });
+      v.querySelector("#revParts").innerHTML = partsHtml();
+      wireParts();
+      render();
+    };
+  };
+
   const heroHtml = () => heroPhotoUrl ? `
     <div id="revHeroWrap" style="position:relative;margin-bottom:10px">
       <img src="${heroPhotoUrl}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;display:block">
@@ -7370,6 +7562,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${tr('openImportReview.video-found-will-be-linked-on-the-recipe')}</a>${draft.creator_name ? ` <span style="color:#999">· ${tr('openImportReview.by')} ${draft.creator_name}</span>` : ""}</div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
+    <div id="revParts">${partsHtml()}</div>
     <div class="sect">${tr('openImportReview.ingredients')}</div>
     <div id="revIng"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${tr('openImportReview.add-ingredient')}</button>
@@ -7385,6 +7578,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div id="revSaveProgressTrack" style="height:4px;background:#eee;border-radius:2px;overflow:hidden;display:none"><div id="revSaveProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`,
     { preventBackdropClose: true });
   wireTax();
+  wireParts();
 
   v.querySelector("#revCancel").onclick = () => closeModal();
   const wireHero = () => {
@@ -7421,7 +7615,9 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }));
     });
     v.querySelectorAll("[data-ingdel]").forEach(btn => btn.addEventListener("click", () => {
-      ingredients.splice(Number(btn.dataset.ingdel), 1); render();
+      const i = Number(btn.dataset.ingdel);
+      shiftPartIndexesAfterDelete("ingredient_indexes", i);
+      ingredients.splice(i, 1); render();
     }));
     v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
       const i = Number(ta.dataset.instrinput);
@@ -7433,7 +7629,14 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }
     }));
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
-      instructions.splice(Number(btn.dataset.instrdel), 1); render();
+      const i = Number(btn.dataset.instrdel);
+      shiftPartIndexesAfterDelete("instruction_indexes", i);
+      instructions.splice(i, 1); render();
+    }));
+    v.querySelectorAll("[data-rowpart]").forEach(sel => sel.addEventListener("change", () => {
+      const [kind, iStr] = sel.dataset.rowpart.split(":");
+      assignRowToPart(kind, Number(iStr), Number(sel.value));
+      render();
     }));
     v.querySelectorAll("[data-tipinput]").forEach(ta => ta.addEventListener("input", () => {
       const i = Number(ta.dataset.tipinput);
@@ -7536,17 +7739,42 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }
     }
     const sourceTitle = importDraftTitle({ source_lang: sourceLang, title, translations }, sourceLang);
+    // Empty rows get dropped below, which reindexes ingredients[]/instructions[]
+    // - parts[] stores positions into those same arrays, so every part index
+    // must be remapped through the exact same old-index -> new-index mapping
+    // (and dropped if it pointed at a row that just got filtered out), or a
+    // composite split would silently point at the wrong ingredients/steps.
+    const ingKeep = ingredients.map(i => !!(i.name || "").trim());
+    const ingOldToNew = new Map();
+    { let n = 0; ingKeep.forEach((keep, idx) => { if (keep) ingOldToNew.set(idx, n++); }); }
+    const finalIngredients = ingredients.filter((_, idx) => ingKeep[idx]);
+
+    const instrKeep = instructions.map(s => !!(s.text || "").trim());
+    const instrOldToNew = new Map();
+    { let n = 0; instrKeep.forEach((keep, idx) => { if (keep) instrOldToNew.set(idx, n++); }); }
+    const finalInstructions = instructions
+      .filter((_, idx) => instrKeep[idx])
+      .map(s => ({ text: (s.text || "").trim(), photo_urls: s.photo_urls || [] }));
+
+    const finalParts = (isComposite ? parts : [])
+      .map(p => ({
+        label: (p.label || "").trim(),
+        ingredient_indexes: p.ingredient_indexes.map(i => ingOldToNew.get(i)).filter(i => i !== undefined),
+        instruction_indexes: p.instruction_indexes.map(i => instrOldToNew.get(i)).filter(i => i !== undefined),
+      }))
+      .filter(p => p.label && (p.ingredient_indexes.length > 0 || p.instruction_indexes.length > 0));
+
     const finalDraft = {
       source_lang: sourceLang,
       title: sourceTitle,
       translations,
       title_en: (translations.en?.title || sourceTitle || "").trim(),
       title_ru: (translations.ru?.title || "").trim() || null,
-      ingredients: ingredients.filter(i => (i.name || "").trim()),
-      instructions: instructions
-        .map(s => ({ text: (s.text || "").trim(), photo_urls: s.photo_urls || [] }))
-        .filter(s => s.text),
+      ingredients: finalIngredients,
+      instructions: finalInstructions,
       tips: tips.map(t => (t || "").trim()).filter(Boolean),
+      is_composite: finalParts.length > 0,
+      parts: finalParts,
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
