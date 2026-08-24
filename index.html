@@ -433,7 +433,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=926f8c8";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=eaa04bd";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -7325,6 +7325,56 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       p[kind] = p[kind].filter(x => x !== deletedIdx).map(x => (x > deletedIdx ? x - 1 : x));
     });
   };
+  // Composite review UX (2026-08-24 follow-up): instead of a dropdown next
+  // to every single row, each part gets its own visually distinct card
+  // (header + Ingredients: + Instructions:), and rows move between cards by
+  // dragging the ⠿ handle. Pointer events (not native HTML5 drag/drop) so
+  // this also works on touchscreens, which is most of this app's usage.
+  let dragState = null; // { kind: "ingredient_indexes"|"instruction_indexes", idx }
+  let dragGhost = null;
+  let dragOverZone = null;
+  const clearDragVisuals = () => {
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    if (dragOverZone) { dragOverZone.style.outline = ""; dragOverZone.style.background = ""; dragOverZone = null; }
+  };
+  const startDrag = (handle, kind, idx, e) => {
+    dragState = { kind, idx };
+    const row = handle.closest("[data-ingidx],[data-instridx]");
+    const rect = row.getBoundingClientRect();
+    dragGhost = row.cloneNode(true);
+    Object.assign(dragGhost.style, {
+      position: "fixed", left: rect.left + "px", top: rect.top + "px", width: rect.width + "px",
+      pointerEvents: "none", opacity: ".9", zIndex: "99999", background: "#fff",
+      borderRadius: "10px", boxShadow: "0 6px 18px rgba(0,0,0,.28)", margin: "0",
+    });
+    document.body.appendChild(dragGhost);
+    moveDrag(e);
+  };
+  const moveDrag = (e) => {
+    if (!dragGhost) return;
+    dragGhost.style.left = (e.clientX - 18) + "px";
+    dragGhost.style.top = (e.clientY - 16) + "px";
+    const zones = Array.from(v.querySelectorAll("[data-dropzone]"));
+    const under = zones.find(z => {
+      const r = z.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    });
+    if (dragOverZone && dragOverZone !== under) { dragOverZone.style.outline = ""; dragOverZone.style.background = ""; dragOverZone = null; }
+    if (under && dragState && under.dataset.dropzone.split(":")[0] === dragState.kind) {
+      under.style.outline = "2px dashed #999";
+      under.style.background = "rgba(0,0,0,.03)";
+      dragOverZone = under;
+    }
+  };
+  const endDrag = () => {
+    if (dragState && dragOverZone) {
+      const partIdx = Number(dragOverZone.dataset.dropzone.split(":")[1]);
+      assignRowToPart(dragState.kind, dragState.idx, partIdx);
+    }
+    dragState = null;
+    clearDragVisuals();
+    render();
+  };
   const youtubeUrl = draft.youtube_url || null;
   let heroPhotoUrl = draft.photo_url || null;
   let servings = draft.servings ?? null;
@@ -7372,28 +7422,83 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // above) - the draft stores the canonical slug (e.g. "kg"), same as saved
   // recipes, so this reuses the exact same localization ingredientLine() does.
 
-  const render = () => {
-    const partSelect = (kind, i, currentPartIdx) => !isComposite ? "" : `
-        <select data-rowpart="${kind}:${i}" style="width:88px;flex:0 0 88px;border:1px solid #eee;border-radius:8px;padding:5px 2px;font-size:11px;background:${currentPartIdx >= 0 ? "#eff6ff" : "#fff"}">
-          <option value="-1" ${currentPartIdx < 0 ? "selected" : ""}>${tr('openImportReview.assembly')}</option>
-          ${parts.map((p, pi) => `<option value="${pi}" ${currentPartIdx === pi ? "selected" : ""}>${(p.label || tr('openImportReview.sub-recipe-name') + " " + (pi + 1)).replace(/"/g, "&quot;")}</option>`).join("")}
-        </select>`;
-    v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => `
+  const dragHandleHtml = (kind, i, topPad) => `<span data-dragrow="${kind}:${i}" style="cursor:grab;color:#bbb;font-size:16px;padding:${topPad} 2px 0;user-select:none;touch-action:none">⠿</span>`;
+  const ingRowHtml = (ing, i, draggable) => `
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
+        ${draggable ? dragHandleHtml("ingredient_indexes", i, "0") : ""}
         <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.unit')}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
         <input data-ingf="name" value="${ingName(ing, i).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        ${partSelect("ingredient_indexes", i, partIndexForIngredient(i))}
         <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
-      </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-ingredients-found-add-them-manually-or-edit-t')}</div>`;
-    v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => `
+      </div>`;
+  const instrRowHtml = (s, i, displayNum, draggable) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
-        <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${i + 1}.</div>
+        ${draggable ? dragHandleHtml("instruction_indexes", i, "8px") : ""}
+        <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${displayNum}.</div>
         ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
         <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s, i)}</textarea>
-        ${partSelect("instruction_indexes", i, partIndexForInstruction(i))}
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
-      </div>`).join("") || `<div style="font-size:12px;color:#aaa">${tr('render.no-instructions-found-add-them-manually')}</div>`;
+      </div>`;
+  // One visually distinct card per sub-recipe (Recipe Header / Ingredients: /
+  // Instructions:, same shape as the saved detail view's component cards),
+  // plus a trailing "Assembly" card for anything not claimed by a part.
+  const GROUP_THEMES = [
+    { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af" },
+    { bg: "#fdf2f8", border: "#fbcfe8", text: "#9d174d" },
+    { bg: "#f0fdf4", border: "#bbf7d0", text: "#166534" },
+    { bg: "#fff7ed", border: "#fed7aa", text: "#9a3412" },
+    { bg: "#faf5ff", border: "#e9d5ff", text: "#6b21a8" },
+  ];
+  const ASSEMBLY_THEME = { bg: "#f9fafb", border: "#e5e7eb", text: "#374151" };
+  const groupDefs = () => [
+    ...parts.map((p, pi) => ({
+      partIdx: pi,
+      label: (p.label || "").trim() || `${tr('openImportReview.sub-recipe-name')} ${pi + 1}`,
+      theme: GROUP_THEMES[pi % GROUP_THEMES.length],
+    })),
+    { partIdx: -1, label: tr('openImportReview.assembly'), theme: ASSEMBLY_THEME },
+  ];
+  const groupCardHtml = (g) => {
+    const ingRows = ingredients.map((ing, i) => ({ ing, i })).filter(({ i }) => partIndexForIngredient(i) === g.partIdx);
+    const instrRows = instructions.map((s, i) => ({ s, i })).filter(({ i }) => partIndexForInstruction(i) === g.partIdx);
+    const dropHint = `<div style="font-size:11px;color:#aaa;padding:8px;border:1px dashed ${g.theme.border};border-radius:8px;text-align:center">${tr('openImportReview.drag-items-here')}</div>`;
+    return `
+      <div style="margin-bottom:14px;padding:12px;border:2px solid ${g.theme.border};border-radius:14px;background:${g.theme.bg}">
+        <div style="font-size:13px;font-weight:800;color:${g.theme.text};margin-bottom:8px">${g.label.replace(/</g, "&lt;")}</div>
+        <div style="font-size:10px;font-weight:800;color:${g.theme.text};text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.75">${tr('openImportReview.ingredients')}</div>
+        <div data-dropzone="ingredient_indexes:${g.partIdx}" style="min-height:8px">
+          ${ingRows.map(({ ing, i }) => ingRowHtml(ing, i, true)).join("") || dropHint}
+        </div>
+        <button class="mini-btn" data-addingpart="${g.partIdx}" style="margin-top:4px;font-size:11px">+ ${tr('openImportReview.add-ingredient')}</button>
+        <div style="font-size:10px;font-weight:800;color:${g.theme.text};text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;opacity:.75">${tr('openImportReview.instructions')}</div>
+        <div data-dropzone="instruction_indexes:${g.partIdx}" style="min-height:8px">
+          ${instrRows.map(({ s, i }, li) => instrRowHtml(s, i, li + 1, true)).join("") || dropHint}
+        </div>
+        <button class="mini-btn" data-addinstrpart="${g.partIdx}" style="margin-top:4px;font-size:11px">+ ${tr('openImportReview.add-step')}</button>
+      </div>`;
+  };
+  const render = () => {
+    const groupsEl = v.querySelector("#revGroups");
+    const ingSectEl = v.querySelector("#revIngSect");
+    const ingAddBtn = v.querySelector("#revIngAdd");
+    const instrSectEl = v.querySelector("#revInstrSect");
+    const instrAddBtn = v.querySelector("#revInstrAdd");
+    if (isComposite) {
+      ingSectEl.style.display = "none"; ingAddBtn.style.display = "none";
+      instrSectEl.style.display = "none"; instrAddBtn.style.display = "none";
+      v.querySelector("#revIng").innerHTML = "";
+      v.querySelector("#revInstr").innerHTML = "";
+      groupsEl.style.display = "";
+      groupsEl.innerHTML = groupDefs().map(groupCardHtml).join("");
+    } else {
+      groupsEl.style.display = "none"; groupsEl.innerHTML = "";
+      ingSectEl.style.display = ""; ingAddBtn.style.display = "";
+      instrSectEl.style.display = ""; instrAddBtn.style.display = "";
+      v.querySelector("#revIng").innerHTML = ingredients.map((ing, i) => ingRowHtml(ing, i, false)).join("")
+        || `<div style="font-size:12px;color:#aaa">${tr('render.no-ingredients-found-add-them-manually-or-edit-t')}</div>`;
+      v.querySelector("#revInstr").innerHTML = instructions.map((s, i) => instrRowHtml(s, i, i + 1, false)).join("")
+        || `<div style="font-size:12px;color:#aaa">${tr('render.no-instructions-found-add-them-manually')}</div>`;
+    }
     v.querySelector("#revTips").innerHTML = tips.map((t, i) => `
       <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-tipidx="${i}">
         <div style="flex:0 0 18px;padding-top:8px">💡</div>
@@ -7563,10 +7668,11 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
     <div id="revParts">${partsHtml()}</div>
-    <div class="sect">${tr('openImportReview.ingredients')}</div>
+    <div id="revGroups" style="display:none"></div>
+    <div class="sect" id="revIngSect">${tr('openImportReview.ingredients')}</div>
     <div id="revIng"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
     <button class="mini-btn" id="revIngAdd" style="margin-top:2px">+ ${tr('openImportReview.add-ingredient')}</button>
-    <div class="sect" style="margin-top:12px">${tr('openImportReview.instructions')}</div>
+    <div class="sect" id="revInstrSect" style="margin-top:12px">${tr('openImportReview.instructions')}</div>
     <div id="revInstr"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
     <button class="mini-btn" id="revInstrAdd" style="margin-top:2px">+ ${tr('openImportReview.add-step')}</button>
     <div class="sect" style="margin-top:12px">💡 ${tr('openImportReview.tips-and-serving-suggestions')}</div>
@@ -7633,11 +7739,33 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       shiftPartIndexesAfterDelete("instruction_indexes", i);
       instructions.splice(i, 1); render();
     }));
-    v.querySelectorAll("[data-rowpart]").forEach(sel => sel.addEventListener("change", () => {
-      const [kind, iStr] = sel.dataset.rowpart.split(":");
-      assignRowToPart(kind, Number(iStr), Number(sel.value));
+    v.querySelectorAll("[data-addingpart]").forEach(btn => btn.addEventListener("click", () => {
+      const partIdx = Number(btn.dataset.addingpart);
+      ingredients.push({ name: "", qty: null, unit: null, note: null, section: null });
+      if (partIdx >= 0) assignRowToPart("ingredient_indexes", ingredients.length - 1, partIdx);
       render();
     }));
+    v.querySelectorAll("[data-addinstrpart]").forEach(btn => btn.addEventListener("click", () => {
+      const partIdx = Number(btn.dataset.addinstrpart);
+      instructions.push({ text: "", photo_urls: [] });
+      if (partIdx >= 0) assignRowToPart("instruction_indexes", instructions.length - 1, partIdx);
+      render();
+    }));
+    v.querySelectorAll("[data-dragrow]").forEach(handle => {
+      handle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const [kind, idxStr] = handle.dataset.dragrow.split(":");
+        startDrag(handle, kind, Number(idxStr), e);
+        const onMove = (ev) => moveDrag(ev);
+        const onUp = () => {
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+          endDrag();
+        };
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+      });
+    });
     v.querySelectorAll("[data-tipinput]").forEach(ta => ta.addEventListener("input", () => {
       const i = Number(ta.dataset.tipinput);
       if (reviewLocale === sourceLang) tips[i] = ta.value;
