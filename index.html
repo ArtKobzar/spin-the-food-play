@@ -424,8 +424,13 @@
   /* Standard "show N more" ingredient-list disclosure (2026-08-24) - plain
      <details>/<summary>, just strips the default marker so the amber label
      is the only affordance. */
-  .dtl-more-summary { list-style: none; }
+  .dtl-more-summary { list-style: none; outline: none; border-radius: 8px; }
   .dtl-more-summary::-webkit-details-marker { display: none; }
+  .dtl-more-summary::-moz-focus-inner { border: 0; }
+  .dtl-more-summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  /* Once expanded there's nothing left to "show more" of, so the toggle
+     itself goes away rather than sitting there doing nothing (2026-08-24). */
+  details[open] > .dtl-more-summary { display: none; }
   .dtl-component-tile:active { background: #f0f0f0; }
 </style>
 </head>
@@ -439,7 +444,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=a0b6a6d";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=afde05e";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
