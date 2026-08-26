@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0d26d61";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=2b3e923";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1039,9 +1039,9 @@ function recipeTitleReadyInLocale(d, locale) {
 /** True when the viewer's UI locale is not the source and title is the English bridge. */
 function dishViewerLocaleUsesEnglishFallback(d) {
   if (!lang || lang === "en" || lang === dishSourceLang(d)) return false;
-  if (lang === "uk") return !!d.ukFallback;
+  if (lang === "uk") return !!d.ukFallback || (d._resolvedLocale === "uk" && !looksCyrillicText(d.uk));
   if (lang === "nl") return !!d.nlFallback;
-  if (lang === "ru") return !!d.ruFallback;
+  if (lang === "ru") return !!d.ruFallback || (d._resolvedLocale === "ru" && !looksCyrillicText(d.ru));
   return false;
 }
 function ingredientDisplayNameForLocale(ing, locale, dish = null) {
@@ -1916,13 +1916,15 @@ function recipeTitleCompleteInLocale(d, locale) {
   const src = dishSourceLang(d);
   if (locale === src) return String(d.title || authoredDishName(d) || "").trim() !== "";
   if (locale === "uk") {
-    return d._resolvedLocale === "uk" && !d.ukFallback && String(d.uk || "").trim() !== "";
+    return d._resolvedLocale === "uk" && !d.ukFallback && String(d.uk || "").trim() !== ""
+      && looksCyrillicText(d.uk);
   }
   if (locale === "nl") {
     return d._resolvedLocale === "nl" && !d.nlFallback && String(d.nl || "").trim() !== "";
   }
   if (locale === "ru") {
-    return d._resolvedLocale === "ru" && !d.ruFallback && String(d.ru || "").trim() !== "";
+    return d._resolvedLocale === "ru" && !d.ruFallback && String(d.ru || "").trim() !== ""
+      && looksCyrillicText(d.ru);
   }
   if (locale === "en") {
     return d._resolvedLocale === "en" && !d.enFallback && String(d.en || "").trim() !== "";
@@ -1935,7 +1937,9 @@ function recipeIngredientCompleteInLocale(ing, locale, srcLang) {
     return String(ing.name_ru || ing.name_en || ing.name || "").trim() !== "";
   }
   if (ing.name_resolved && ing.resolved_locale === locale) {
-    return !ing.name_is_fallback && String(ing.name_resolved).trim() !== "";
+    if (ing.name_is_fallback) return false;
+    if ((locale === "ru" || locale === "uk") && !looksCyrillicText(ing.name_resolved)) return false;
+    return String(ing.name_resolved).trim() !== "";
   }
   if (locale === "ru" && ing.name_ru) return true;
   if (locale === "en" && ing.name_en) return true;
@@ -1950,7 +1954,9 @@ function recipeStepCompleteInLocale(step, locale, srcLang) {
     return String(step.text_ru || step.text_en || step.text || "").trim() !== "";
   }
   if (step.text_resolved && step.resolved_locale === locale) {
-    return !step.is_fallback && String(step.text_resolved).trim() !== "";
+    if (step.is_fallback) return false;
+    if ((locale === "ru" || locale === "uk") && !looksCyrillicText(step.text_resolved)) return false;
+    return String(step.text_resolved).trim() !== "";
   }
   const localized = step[`text_${locale}`];
   if (localized && String(localized).trim()) return true;
@@ -5069,7 +5075,7 @@ async function requestRecipeTranslation(d) {
     await hydrateDishContent(d, targetLocale);
     if (dishSourceLang(d) === targetLocale) return;
     const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
-      body: { recipe_id: d.id, target_locale: targetLocale },
+      body: { recipe_id: d.id, target_locale: targetLocale, force: true },
     }, INGEST_CLIENT_TIMEOUT_MS);
     if (res.error || res.data?.ok === false) {
       toast(tr('detailHeaderHtml.translation-failed'));
