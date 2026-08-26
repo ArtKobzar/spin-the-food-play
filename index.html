@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=2b3e923";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=c51b299";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -5078,12 +5078,17 @@ async function requestRecipeTranslation(d) {
       body: { recipe_id: d.id, target_locale: targetLocale, force: true },
     }, INGEST_CLIENT_TIMEOUT_MS);
     if (res.error || res.data?.ok === false) {
+      console.warn("[translate] failed", res.error?.message || res.data?.error);
       toast(tr('detailHeaderHtml.translation-failed'));
     } else {
       d._machineTranslated = true;
       d._resolvedLocale = null;
       await refreshDishFromCatalog(d);
       await hydrateDishContent(d, targetLocale);
+      if (recipeNeedsTranslation(d)) {
+        console.warn("[translate] server ok but locale still incomplete", d.id, targetLocale);
+        toast(tr('detailHeaderHtml.translation-failed'));
+      }
     }
   } finally {
     detailTranslationLoading = false;
