@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=04cac03";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=0d26d61";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -7688,24 +7688,32 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     }));
   };
 
-  const partsHtml = () => `
+  // Composite review UX (2026-08-26 follow-up): only wrap this in the blue
+  // "something was detected" callout box when a split is actually proposed
+  // (isComposite true). Most imports are a single dish - rendering the same
+  // boxed callout unconditionally made every review screen look like a
+  // warning had fired, even when nothing was detected. Unchecked state is
+  // now a plain, low-emphasis checkbox for the user to opt in manually.
+  const partsHtml = () => isComposite ? `
     <div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#1e40af;cursor:pointer">
-        <input type="checkbox" id="revCompositeToggle" ${isComposite ? "checked" : ""}>
+        <input type="checkbox" id="revCompositeToggle" checked>
         🧩 ${tr('openImportReview.composite-toggle-label')}
       </label>
-      ${isComposite ? `
-        <div id="revPartsList" style="margin-top:8px">
-          ${parts.map((p, pi) => `
-            <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-partidx="${pi}">
-              <input data-partlabel="${pi}" value="${(p.label || "").replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px">
-              <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
-            </div>`).join("")}
-        </div>
-        <button class="mini-btn" id="revPartAdd" style="margin-top:2px">+ ${tr('openImportReview.add-sub-recipe')}</button>
-        <div style="font-size:11px;color:#1e40af;margin-top:6px">${tr('openImportReview.composite-hint')}</div>
-      ` : ""}
-    </div>`;
+      <div id="revPartsList" style="margin-top:8px">
+        ${parts.map((p, pi) => `
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-partidx="${pi}">
+            <input data-partlabel="${pi}" value="${(p.label || "").replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px">
+            <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+          </div>`).join("")}
+      </div>
+      <button class="mini-btn" id="revPartAdd" style="margin-top:2px">+ ${tr('openImportReview.add-sub-recipe')}</button>
+      <div style="font-size:11px;color:#1e40af;margin-top:6px">${tr('openImportReview.composite-hint')}</div>
+    </div>` : `
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#888;cursor:pointer;margin-top:6px">
+      <input type="checkbox" id="revCompositeToggle">
+      🧩 ${tr('openImportReview.composite-toggle-label')}
+    </label>`;
   const wireParts = () => {
     const toggle = v.querySelector("#revCompositeToggle");
     if (toggle) toggle.onchange = () => {
