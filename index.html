@@ -1590,11 +1590,14 @@ async function loadCatalog() {
 async function hydrateDishContent(d, locale) {
   if (!d || !["en", "ru", "uk", "nl"].includes(locale)) return;
   if (d._resolvedLocale === locale) return;
-  const { data, error } = await sb.rpc("spin_food_recipe_content_resolve", {
+  const { data, error } = await rpcWithTimeout("spin_food_recipe_content_resolve", {
     p_recipe_id: d.id,
     p_locale: locale,
-  });
-  if (error || !data) return;
+  }, 20_000, "content_resolve");
+  if (error || !data) {
+    console.warn("[hydrateDishContent] failed", d.id, locale, error?.message || "no data");
+    return;
+  }
   if (locale === "uk") {
     d.uk = data.title || d.en;
     d.ukFallback = !!data.title_is_fallback;
@@ -5086,8 +5089,11 @@ async function requestRecipeTranslation(d) {
       await refreshDishFromCatalog(d);
       await hydrateDishContent(d, targetLocale);
       if (recipeNeedsTranslation(d)) {
-        console.warn("[translate] server ok but locale still incomplete", d.id, targetLocale);
-        toast(tr('detailHeaderHtml.translation-failed'));
+        d._resolvedLocale = null;
+        await hydrateDishContent(d, targetLocale);
+      }
+      if (recipeNeedsTranslation(d)) {
+        console.warn("[translate] server ok but locale still incomplete after hydrate", d.id, targetLocale);
       }
     }
   } finally {
