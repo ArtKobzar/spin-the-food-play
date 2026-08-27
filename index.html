@@ -1551,13 +1551,13 @@ async function alignDetailEditBridge({ editLocale, sourceLang, title, ingredient
 function partLabelForReview(parts, pi, reviewLocale, sourceLang) {
   const p = parts[pi];
   if (p?.labelLocales?.[reviewLocale]) return p.labelLocales[reviewLocale];
-  if (reviewLocale === sourceLang) return capitalizeTitleClient(p?.label || "");
+  if (reviewLocale === sourceLang) return cleanPartLabelClient(p?.label || "");
   if (p?.labelLocales?.[sourceLang]) return p.labelLocales[sourceLang];
-  return capitalizeTitleClient(p?.label || "");
+  return cleanPartLabelClient(p?.label || "");
 }
 function partLabelPayload(parts, ingredients) {
   return parts.map((p) => ({
-    label: capitalizeTitleClient(p.label || ""),
+    label: cleanPartLabelClient(p.label || ""),
     ingredient_names: (p.ingredient_indexes || [])
       .map((idx) => ingredients[idx]?.name || "")
       .filter(Boolean),
@@ -1576,7 +1576,7 @@ async function hydrateImportPartLabels(parts, sourceLang, ingredients) {
   const byLocale = res.data?.by_locale || {};
   return parts.map((p, i) => ({
     ...p,
-    label: byLocale[sourceLang]?.[i] || capitalizeTitleClient(p.label || ""),
+    label: byLocale[sourceLang]?.[i] || cleanPartLabelClient(p.label || ""),
     labelLocales: {
       en: byLocale.en?.[i] || null,
       ru: byLocale.ru?.[i] || null,
@@ -1691,6 +1691,18 @@ function capitalizeTitleClient(text) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return trimmed;
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+const PART_LABEL_HEADER_PREFIX_RE = [
+  /^for the\s+/i, /^for\s+/i, /^voor de\s+/i, /^voor het\s+/i, /^voor\s+/i, /^для\s+/iu,
+];
+function cleanPartLabelClient(text) {
+  let s = String(text ?? "").trim();
+  if (!s) return s;
+  for (const re of PART_LABEL_HEADER_PREFIX_RE) {
+    const next = s.replace(re, "").trim();
+    if (next !== s) { s = next; break; }
+  }
+  return capitalizeTitleClient(s);
 }
 function transliterateForSlug(text) {
   const map = {
@@ -5883,7 +5895,7 @@ function detailView(d) {
       <div style="display:flex;flex-direction:column;gap:10px">
         ${detailComponents.map((c, ci) => {
           const theme = COMPONENT_GROUP_THEMES[ci % COMPONENT_GROUP_THEMES.length];
-          const compTitle = (detailTitleName(c.dish) || c.label || "").replace(/</g, "&lt;");
+          const compTitle = cleanPartLabelClient(detailTitleName(c.dish) || c.label || "").replace(/</g, "&lt;");
           return `
           <div class="dtl-component-tile" data-componentopen="${c.dish.id}" style="padding:12px;border:2px solid ${theme.border};border-radius:14px;background:${theme.bg};cursor:pointer">
             <div style="font-size:13px;font-weight:800;color:${theme.text};margin-bottom:8px">${compTitle}</div>
@@ -7927,7 +7939,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // or back to the parent "assembly", rename/add/remove parts, before save.
   let parts = Array.isArray(draft.parts)
     ? draft.parts.map(p => ({
-        label: capitalizeTitleClient(p.label || ""),
+        label: cleanPartLabelClient(p.label || ""),
         labelLocales: p.label_locales || p.labelLocales || null,
         ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
         instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
