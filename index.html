@@ -7839,9 +7839,12 @@ async function uploadImportPhoto(file, onStep = null) {
 // would time out client-side while the server kept working and wrote a
 // "ready" job the user never saw pop up (recoverable only via 📥 Imports).
 // Give extract its own timeout comfortably above the server deadline
-// (EXTRACT_DEADLINE_MS in spin-food-import/index.ts, bumped 65s -> 95s
-// 2026-08-27 for large composite recipes - keep this above that).
-const EXTRACT_CLIENT_TIMEOUT_MS = 105_000;
+// (EXTRACT_DEADLINE_MS in spin-food-import/index.ts, bumped 65s -> 95s ->
+// 125s 2026-08-27 for large composite recipes - keep this above that. The
+// server deadline itself is capped near Supabase's ~150s platform request
+// idle timeout, so this client value shouldn't need to keep growing much
+// further either).
+const EXTRACT_CLIENT_TIMEOUT_MS = 140_000;
 let importExtractPending = null; // { sourceType, targetRecipeId, startedAt } while extract in flight
 
 async function tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt = 0) {
