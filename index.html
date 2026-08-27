@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=2d55628";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=89381d5";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -7839,12 +7839,15 @@ async function uploadImportPhoto(file, onStep = null) {
 // would time out client-side while the server kept working and wrote a
 // "ready" job the user never saw pop up (recoverable only via 📥 Imports).
 // Give extract its own timeout comfortably above the server deadline
-// (EXTRACT_DEADLINE_MS in spin-food-import/index.ts, bumped 65s -> 95s ->
-// 125s 2026-08-27 for large composite recipes - keep this above that. The
-// server deadline itself is capped near Supabase's ~150s platform request
-// idle timeout, so this client value shouldn't need to keep growing much
-// further either).
-const EXTRACT_CLIENT_TIMEOUT_MS = 140_000;
+// (EXTRACT_DEADLINE_MS in spin-food-import/index.ts, bumped 65s -> 125s ->
+// 140s 2026-08-28 for large composite recipes needing OPENAI_LARGE_
+// TIMEOUT_MS's 100s budget - keep this above that. The server deadline
+// itself is capped near Supabase's *documented* 150s Edge Function request
+// idle timeout - supabase.com/docs/guides/functions/limits - so this
+// client value shouldn't need to keep growing much further either; if the
+// server ever needs more than ~145s it has to stop being a single
+// synchronous call and move to the async job pattern YouTube already uses).
+const EXTRACT_CLIENT_TIMEOUT_MS = 155_000;
 let importExtractPending = null; // { sourceType, targetRecipeId, startedAt } while extract in flight
 
 async function tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt = 0) {
