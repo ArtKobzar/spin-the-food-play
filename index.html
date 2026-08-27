@@ -1230,13 +1230,21 @@ function normalizeImportDraftClient(raw) {
 }
 function translationBlockMatchesLocale(block, locale) {
   if (!block?.title?.trim()) return false;
+  if (locale === "uk" || locale === "ru") {
+    if (!/[\u0400-\u04FF]/.test(block.title)) return false;
+  }
   const sample = [
-    block.title,
     ...(block.ingredients || []).map((i) => i?.name || ""),
     ...(block.instructions || []).slice(0, 2).map((s) => s?.text || ""),
   ].join(" ");
   if (locale === "uk" || locale === "ru") return /[\u0400-\u04FF]/.test(sample);
   return true;
+}
+function importMissingQtyMajority(ingredients) {
+  const rows = ingredients || [];
+  if (rows.length < 2) return false;
+  const missing = rows.filter((ing) => ing.qty == null && !String(ing.unit || "").trim()).length;
+  return missing / rows.length > 0.5;
 }
 function importDraftLocaleComplete(draft, locale) {
   if (locale === draft.source_lang) return Boolean((draft.title || "").trim());
@@ -8150,6 +8158,11 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         </ul>
       </div>`;
   };
+  const missingQtyHtml = () => {
+    if (!importMissingQtyMajority(ingredients)) return "";
+    return `
+      <div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;font-size:12px;color:#1e3a8a;line-height:1.45">ℹ️ ${tr('openImportReview.missing-qty-majority-hint')}</div>`;
+  };
 
   // Recipe-details chip section - same vocab/labels/chip look as the About
   // tab's edit mode (MEALS/DISH_ROLES/COURSE_CATEGORIES/TECHNIQUES/APPLIANCES,
@@ -8310,6 +8323,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     ${youtubeUrl ? `<div style="font-size:12px;margin-top:6px"><a href="${youtubeUrl}" target="_blank" rel="noopener" style="color:var(--amber,#d97706);text-decoration:none">▶️ ${tr('openImportReview.video-found-will-be-linked-on-the-recipe')}</a>${draft.creator_name ? ` <span style="color:#999">· ${tr('openImportReview.by')} ${draft.creator_name}</span>` : ""}</div>` : ""}
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
+    ${missingQtyHtml()}
     <div id="revParts">${partsHtml()}</div>
     <div id="revGroups" style="display:none"></div>
     <div class="sect" id="revIngSect">${tr('openImportReview.ingredients')}</div>
