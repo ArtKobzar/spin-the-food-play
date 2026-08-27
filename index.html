@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=bbeeb45";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=4338523";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -7685,11 +7685,9 @@ function checkPhotoUploadSize(file) {
 }
 
 // 2026-08-10 (SPEC_RECIPE_INGESTION.md §10.1): downscale+re-encode a picked
-// photo client-side before it ever hits Storage. Two call sites use two
-// different aggressiveness levels - import photos are OCR input only and
-// never shown to anyone, so they can be compressed hard; recipe/step photos
-// are display images and get a lighter touch. Always falls back to the
-// original File unchanged on any decode failure (chiefly: HEIC/HEIF library
+// photo client-side before it ever hits Storage. Import photos are also kept
+// as the recipe hero after save, so quality is still capped but not discarded.
+// Always falls back to the original File unchanged on any decode failure (chiefly: HEIC/HEIF library
 // photos, which most non-Safari browsers can't decode into a canvas) -
 // compression is a bandwidth optimization, never a hard requirement.
 async function compressImageForUpload(file, { maxDim, quality }) {
@@ -7850,6 +7848,10 @@ async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
   }
   importExtractPending = null;
   closeModal();
+  // Photo imports: keep the uploaded image on the draft for review + save.
+  if (sourceType === "photo" && Array.isArray(payload.photo_urls) && payload.photo_urls.length && data.draft) {
+    if (!data.draft.photo_url) data.draft.photo_url = payload.photo_urls[0];
+  }
   // Defensive: openImportReview renders straight off the server draft with no
   // further validation - if it ever throws (malformed draft edge case), the
   // sheet is already closed above, so the whole add/enrich flow would
