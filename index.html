@@ -2874,6 +2874,8 @@ function subscribe() {
       const job = payload.new;
       if (job.source_type === "youtube" && job.status === "ready" && job.result_recipe_id && !job.draft) {
         notifyDuplicateYoutubeImport(job.result_recipe_id);
+      } else if (job.status === "ready" && job.draft && !job.result_recipe_id) {
+        stickyToast(tr('describeJob.recipe-import-ready-to-review'));
       }
     })
     .on("postgres_changes", {
@@ -2890,6 +2892,8 @@ function subscribe() {
         } else {
           stickyToast(tr('anonymous.your-youtube-recipe-is-ready-to-review-check-the'));
         }
+      } else if (job.status === "ready" && job.draft && !job.result_recipe_id) {
+        stickyToast(tr('describeJob.recipe-import-ready-to-review'));
       } else if (job.source_type === "youtube" && job.status === "failed") {
         stickyToast(tr('anonymous.couldnt-extract-a-recipe-from-that-video'));
       }
@@ -2898,7 +2902,18 @@ function subscribe() {
 }
 
 function startSyncWatchers() {
-  const wake = () => { if (!document.hidden) { pullLatest(); if (rtChan && rtChan.state !== "joined") subscribe(); } };
+  const wake = () => {
+    if (!document.hidden) {
+      pullLatest();
+      if (rtChan && rtChan.state !== "joined") subscribe();
+      if (importExtractPending) {
+        const { sourceType, targetRecipeId, startedAt } = importExtractPending;
+        tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt).then((ok) => {
+          if (ok) stickyToast(tr('describeJob.recipe-import-ready-to-review'));
+        });
+      }
+    }
+  };
   document.addEventListener("visibilitychange", wake);
   window.addEventListener("focus", wake);
   window.addEventListener("online", wake);
@@ -7562,14 +7577,60 @@ async function uploadImportPhoto(file, onStep = null) {
 // "ready" job the user never saw pop up (recoverable only via 📥 Imports).
 // Give extract its own timeout comfortably above the server deadline.
 const EXTRACT_CLIENT_TIMEOUT_MS = 75_000;
+let importExtractPending = null; // { sourceType, targetRecipeId, startedAt } while extract in flight
+
+async function tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt = 0) {
+  try {
+    const { data: jobs, error } = await sb.rpc("spin_food_list_import_jobs", { p_limit: 15 });
+    if (error || !jobs?.length) return false;
+    const cutoff = (startedAt || Date.now()) - 60_000;
+    const wantTarget = targetRecipeId || null;
+    const match = jobs.find((j) => {
+      if (j.status !== "ready" || j.result_recipe_id || !j.draft) return false;
+      if (j.source_type !== sourceType) return false;
+      const jobTarget = j.target_recipe_id || null;
+      if (wantTarget !== jobTarget) return false;
+      return new Date(j.created_at).getTime() >= cutoff;
+    });
+    if (!match) return false;
+    importExtractPending = null;
+    closeModal();
+    openImportReview(match.draft, match.id, match.target_recipe_id, match.source_type);
+    return true;
+  } catch (e) {
+    console.error("[tryRecoverReadyImportJob]", e);
+    return false;
+  }
+}
 
 async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
   syncLangFromStorage();
+  const startedAt = Date.now();
+  importExtractPending = { sourceType, targetRecipeId, startedAt };
   const { data, error } = await invokeWithTimeout("spin-food-import", {
     body: { source_type: sourceType, action: "extract", payload: { ...payload, target_recipe_id: targetRecipeId, viewer_locale: lang } },
   }, EXTRACT_CLIENT_TIMEOUT_MS);
-  if (error) { setBusy(false, ""); toast(error.message || tr('runImportExtract.something-went-wrong')); return; }
-  if (!data?.ok) { setBusy(false, ""); toast(data?.error || tr('runImportExtract.couldnt-read-that-recipe')); return; }
+  if (error) {
+    if (/timed out/i.test(error.message || "")) {
+      setBusy(true, tr('anonymous.loading'));
+      if (await tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt)) {
+        setBusy(false, "");
+        stickyToast(tr('describeJob.recipe-import-ready-to-review'));
+        return;
+      }
+    }
+    importExtractPending = null;
+    setBusy(false, "");
+    toast(error.message || tr('runImportExtract.something-went-wrong'));
+    return;
+  }
+  if (!data?.ok) {
+    importExtractPending = null;
+    setBusy(false, "");
+    toast(data?.error || tr('runImportExtract.couldnt-read-that-recipe'));
+    return;
+  }
+  importExtractPending = null;
   closeModal();
   // Defensive: openImportReview renders straight off the server draft with no
   // further validation - if it ever throws (malformed draft edge case), the
