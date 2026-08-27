@@ -5047,6 +5047,73 @@ const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none
 const EYE_CLOSED_SVG = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13c3-4 7-6 10-6s7 2 10 6"/></svg>`;
 // Material-style translate / languages glyph (Chinese character + Latin A).
 const TRANSLATE_SVG = `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>`;
+function scardHtml(d, { top = false, dep = 0 } = {}) {
+  const enrichBtn = d.card_state === "thin"
+    ? `<button class="enrich-fab" data-enrich="${d.id}" title="${tr('anonymous.enrich-this-recipe')}" aria-label="${tr('anonymous.enrich-this-recipe')}">✨</button>` : "";
+  const quickHide = d.is_active
+    ? `<button class="qhide" data-qhide="${d.id}" title="${tr('anonymous.hide')}" aria-label="${tr('anonymous.hide')}">${EYE_OPEN_SVG}</button>`
+    : `<button class="qhide off" data-qhide="${d.id}" title="${tr('anonymous.show')}" aria-label="${tr('anonymous.show')}">${EYE_CLOSED_SVG}</button>`;
+  const photo = photoSlideHtml(d);
+  return `<div class="scard ${top ? "top" : ""}" data-dish="${d.id}" style="transform:translateY(${dep * -8}px) scale(${1 - dep * 0.04});z-index:${10 - dep}">
+      <div class="ph" style="${photo.bgStyle}">${enrichBtn}${photo.inner}</div>
+      <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${cuisineDisplay(d.c)}</span></div></div>
+      ${quickHide}
+      <div class="stamp yes">${tr('anonymous.menu')}</div><div class="stamp no">${tr('anonymous.nope')}</div></div>`;
+}
+function stackDepthStyle(dep) {
+  return dep > 0 ? `translateY(${dep * -8}px) scale(${1 - dep * 0.04})` : "";
+}
+// After a swipe, promote the next card in-place instead of nuking the whole
+// stack - refreshDeck() was rebuilding DOM the user could already see peeking
+// out from behind the top card, which read as the same recipe popping twice.
+function applySpinStackLayout(stackEl, dishes, { promoteTop = false } = {}) {
+  const dk = dishes.slice(0, 3);
+  if (!dk.length) {
+    stackEl.innerHTML = stackHtml([]);
+    return;
+  }
+  const wantIds = new Set(dk.map(d => d.id));
+  const existing = new Map([...stackEl.querySelectorAll(".scard")].map(el => [el.dataset.dish, el]));
+  [...stackEl.querySelectorAll(".scard")].forEach(el => {
+    if (!wantIds.has(el.dataset.dish)) el.remove();
+  });
+  [...dk].reverse().forEach((d, i, arr) => {
+    const dep = arr.length - 1 - i;
+    const top = dep === 0;
+    let el = existing.get(d.id);
+    if (!el) {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = scardHtml(d, { top, dep });
+      el = wrap.firstElementChild;
+    }
+    el.classList.toggle("top", top);
+    el.style.opacity = "1";
+    el.style.zIndex = String(10 - dep);
+    if (top && promoteTop && existing.has(d.id)) {
+      el.style.transition = "none";
+      el.style.transform = stackDepthStyle(1);
+      stackEl.appendChild(el);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.style.transition = "transform .22s ease";
+          el.style.transform = stackDepthStyle(0);
+          setTimeout(() => { el.style.transition = ""; }, 240);
+        });
+      });
+    } else {
+      el.style.transition = "";
+      el.style.transform = stackDepthStyle(dep);
+      stackEl.appendChild(el);
+    }
+  });
+}
+function advanceDeckAfterSwipe(flewCard) {
+  const stackEl = document.getElementById("stack");
+  if (!stackEl) return;
+  if (flewCard?.parentElement === stackEl) flewCard.remove();
+  applySpinStackLayout(stackEl, deck(), { promoteTop: true });
+  wireStack();
+}
 function stackHtml(dk) {
   if (!dk.length) {
     const q = deckSearch.trim();
@@ -5067,30 +5134,7 @@ function stackHtml(dk) {
   let s = "";
   dk.slice(0, 3).reverse().forEach((d, i, arr) => {
     const top = i === arr.length - 1, dep = arr.length - 1 - i;
-    // SPEC_AI_PREFILL.md #3/#4: thin cards remain fully usable everywhere (Spin,
-    // Wish, Duel, manual assignment) - they just aren't eligible for the automatic
-    // AI pre-fill, so nudge the family to add ingredients rather than block anything.
-    // Enrich action - bottom-left corner of the photo, same spot as the
-    // detail/about hero's version (see .enrich-fab). Opens the import sheet
-    // directly from the Spin deck, no need to open the detail view first.
-    // Replaces the old static "Add ingredients" text badge that used to sit
-    // in this corner - the ✨ button IS the action now, not just a label.
-    const enrichBtn = d.card_state === "thin"
-      ? `<button class="enrich-fab" data-enrich="${d.id}" title="${tr('anonymous.enrich-this-recipe')}" aria-label="${tr('anonymous.enrich-this-recipe')}">✨</button>` : "";
-    // Quick hide/unhide - lets an annoyed swiper pull a dish out of the carousel
-    // without opening the detail view. Same is_active toggle as the About tab
-    // switch (food.apply_event "recipe_active_set"), just reachable in one tap.
-    // Icon reflects the CURRENT state: open eye (green circle) = visible,
-    // closed eye (orange circle) = hidden - see EYE_OPEN_SVG/EYE_CLOSED_SVG.
-    const quickHide = d.is_active
-      ? `<button class="qhide" data-qhide="${d.id}" title="${tr('anonymous.hide')}" aria-label="${tr('anonymous.hide')}">${EYE_OPEN_SVG}</button>`
-      : `<button class="qhide off" data-qhide="${d.id}" title="${tr('anonymous.show')}" aria-label="${tr('anonymous.show')}">${EYE_CLOSED_SVG}</button>`;
-    const photo = photoSlideHtml(d);
-    s += `<div class="scard ${top?"top":""}" data-dish="${d.id}" style="transform:translateY(${dep*-8}px) scale(${1-dep*.04});z-index:${10-dep}">
-      <div class="ph" style="${photo.bgStyle}">${enrichBtn}${photo.inner}</div>
-      <div class="bd"><div class="ti">${dName(d)}</div><div class="mt"><span>⏱ ${d.t} ${tr('anonymous.min')}</span><span>${d.d}</span><span>${cuisineDisplay(d.c)}</span></div></div>
-      ${quickHide}
-      <div class="stamp yes">${tr('anonymous.menu')}</div><div class="stamp no">${tr('anonymous.nope')}</div></div>`;
+    s += scardHtml(d, { top, dep });
   });
   return s;
 }
@@ -5113,11 +5157,17 @@ function renderSpin() {
       <button class="swipe-tip right" id="tipLike" title="${tr('renderSpin.add-to-the-menu')}" aria-label="${tr('renderSpin.add-to-the-menu')}"><span class="tip-arrow">→</span><span class="tip-label">${tr('renderSpin.onto-menu')}</span></button>
     </div>`;
 }
+let deckRefreshQueued = false;
 function refreshDeck() {
-  const stackEl = document.getElementById("stack");
-  if (!stackEl) return;
-  stackEl.innerHTML = stackHtml(deck());
-  wireStack();
+  if (deckRefreshQueued) return;
+  deckRefreshQueued = true;
+  requestAnimationFrame(() => {
+    deckRefreshQueued = false;
+    const stackEl = document.getElementById("stack");
+    if (!stackEl) return;
+    stackEl.innerHTML = stackHtml(deck());
+    wireStack();
+  });
 }
 function wireStack() {
   const showBtn = document.querySelector("#stack [data-showrecipe]");
@@ -5128,7 +5178,7 @@ function wireStack() {
     const id = topCard.dataset.dish;
     topCard.style.transition = "transform .35s, opacity .35s";
     topCard.style.transform = `translateX(${dir*500}px) rotate(${dir*22}deg)`; topCard.style.opacity = "0";
-    setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); refreshDeck(); }, 300);
+    setTimeout(() => { deckOrder = [...deckOrder.filter(x=>x!==id), id]; if (dir>0) openAssign(id); advanceDeckAfterSwipe(topCard); }, 300);
   };
   // Tappable "tip bubbles" over the card, teaching the swipe gesture by mirroring
   // it exactly: left = same as swiping left (skip), right = same as swiping right
