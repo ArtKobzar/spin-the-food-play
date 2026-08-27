@@ -1370,6 +1370,75 @@ async function alignImportReviewTranslations({
     translations: newTranslations,
   };
 }
+function partLabelForReview(parts, pi, reviewLocale, sourceLang) {
+  const p = parts[pi];
+  if (p?.labelLocales?.[reviewLocale]) return p.labelLocales[reviewLocale];
+  if (reviewLocale === sourceLang) return capitalizeTitleClient(p?.label || "");
+  if (p?.labelLocales?.[sourceLang]) return p.labelLocales[sourceLang];
+  return capitalizeTitleClient(p?.label || "");
+}
+async function hydrateImportPartLabels(parts, sourceLang) {
+  if (!parts.length) return parts;
+  const labels = parts.map((p) => capitalizeTitleClient(p.label || "")).filter(Boolean);
+  if (!labels.length) return parts;
+  const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+    body: { mode: "translate_part_labels", source_lang: sourceLang, labels },
+  }, 60_000);
+  if (res.error || res.data?.ok === false) {
+    throw new Error(res.error?.message || res.data?.error || "part label translation failed");
+  }
+  const byLocale = res.data?.by_locale || {};
+  return parts.map((p, i) => ({
+    ...p,
+    label: byLocale[sourceLang]?.[i] || capitalizeTitleClient(p.label || ""),
+    labelLocales: {
+      en: byLocale.en?.[i] || null,
+      ru: byLocale.ru?.[i] || null,
+      uk: byLocale.uk?.[i] || null,
+      nl: byLocale.nl?.[i] || null,
+    },
+  }));
+}
+async function alignImportPartLabels({ sourceLang, reviewLocale, parts, touched }) {
+  if (!touched || !parts.length) return parts;
+  let sourceLabels = parts.map((p, i) => {
+    if (reviewLocale === sourceLang) {
+      return (p.labelLocales?.[sourceLang] || p.label || "").trim();
+    }
+    return (p.labelLocales?.[reviewLocale] || partLabelForReview(parts, i, reviewLocale, sourceLang) || "").trim();
+  });
+  if (reviewLocale !== sourceLang) {
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: {
+        mode: "backtranslate_labels",
+        from_locale: reviewLocale,
+        to_locale: sourceLang,
+        labels: sourceLabels,
+      },
+    }, 60_000);
+    if (res.error || res.data?.ok === false) {
+      throw new Error(res.error?.message || res.data?.error || "part label translation failed");
+    }
+    sourceLabels = res.data?.labels || sourceLabels;
+  }
+  const trRes = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+    body: { mode: "translate_part_labels", source_lang: sourceLang, labels: sourceLabels },
+  }, 60_000);
+  if (trRes.error || trRes.data?.ok === false) {
+    throw new Error(trRes.error?.message || trRes.data?.error || "part label translation failed");
+  }
+  const byLocale = trRes.data?.by_locale || {};
+  return parts.map((p, i) => ({
+    ...p,
+    label: byLocale[sourceLang]?.[i] || sourceLabels[i] || p.label,
+    labelLocales: {
+      en: byLocale.en?.[i] || null,
+      ru: byLocale.ru?.[i] || null,
+      uk: byLocale.uk?.[i] || null,
+      nl: byLocale.nl?.[i] || null,
+    },
+  }));
+}
 function importDraftTitle(draft, locale) {
   if (locale === draft.source_lang) return draft.title || "";
   const t = draft.translations?.[locale]?.title;
@@ -1423,6 +1492,25 @@ function ensureImportTranslationBlock(draft, locale) {
 function cuisineOptionsList() {
   return Object.keys(CUISINES_BY_SLUG).sort((a, b) => cuisineLabel(a).localeCompare(cuisineLabel(b), lang || "en"));
 }
+function capitalizeTitleClient(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+function transliterateForSlug(text) {
+  const map = {
+    а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z", и: "i", й: "y", к: "k",
+    л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "h", ц: "ts",
+    ч: "ch", ш: "sh", щ: "sch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+    і: "i", ї: "yi", є: "ye", ґ: "g",
+  };
+  return String(text ?? "").toLowerCase().split("").map((ch) => map[ch] ?? ch).join("");
+}
+function slugHashFallback(raw) {
+  let h = 0;
+  for (let i = 0; i < raw.length; i++) h = ((h << 5) - h + raw.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36).slice(0, 8);
+}
 function slugifyCuisine(label) {
   const raw = String(label || "").trim();
   if (!raw) return "";
@@ -1435,9 +1523,24 @@ function slugifyCuisine(label) {
     "нідерландська": "dutch",
   };
   if (cyrillicSlugMap[lower]) return cyrillicSlugMap[lower];
-  let s = lower;
+  let s = transliterateForSlug(lower);
   s = s.replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-  return s.slice(0, 64) || "";
+  if (!s) s = `cuisine_${slugHashFallback(raw)}`;
+  return s.slice(0, 64);
+}
+async function resolveNewCuisineLabels(draftCuisine) {
+  const trimmed = String(draftCuisine || "").trim();
+  if (!trimmed) return null;
+  const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+    body: { mode: "translate_cuisine", label: trimmed, from_locale: lang || "en" },
+  }, 60_000);
+  if (res.error || res.data?.ok === false) {
+    throw new Error(res.error?.message || res.data?.error || "cuisine translation failed");
+  }
+  const labels = res.data?.labels || {};
+  const slug = slugifyCuisine(res.data?.slug_en || labels.en || trimmed);
+  if (!slug) throw new Error("cuisine slug is required");
+  return { slug, labels };
 }
 function detailEditTitleForDisplay(d, draft) {
   if (lang === "ru") return draft.titleRu || d.ru || d.en || "";
@@ -5936,25 +6039,23 @@ async function saveDetailEdit(d) {
     : (detailDraft.cuisine || "").trim().toLowerCase();
   const currentCuisine = d.c === "family" ? "" : d.c;
   if (detailDraft.cuisineMode === "new" && draftCuisine) {
-    const slug = slugifyCuisine(draftCuisine);
-    const labels = { en: draftCuisine };
-    if (lang === "uk") labels.uk = draftCuisine;
-    if (lang === "nl") labels.nl = draftCuisine;
-    if (lang === "ru") labels.ru = draftCuisine;
-    const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
-      p_slug: slug,
-      p_label_en: draftCuisine,
-      p_labels_i18n: labels,
-    });
-    if (cuiErr) {
-      toast(tr('saveDetailEdit.cuisine-add-failed') + cuiErr.message);
+    try {
+      const cuisineResolved = await resolveNewCuisineLabels(draftCuisine);
+      const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
+        p_slug: cuisineResolved.slug,
+        p_label_en: cuisineResolved.labels.en,
+        p_labels_i18n: cuisineResolved.labels,
+      });
+      if (cuiErr) throw cuiErr;
+      filterVocabLoaded = false;
+      await loadFilterVocabulary();
+      if (cuisineResolved.slug !== currentCuisine) proposed.cuisine = cuisineResolved.slug;
+    } catch (cuiErr) {
+      toast(tr('saveDetailEdit.cuisine-add-failed') + (cuiErr.message || cuiErr));
       detailSaving = false;
       renderDetailOverlay();
       return;
     }
-    filterVocabLoaded = false;
-    await loadFilterVocabulary();
-    if (slug !== currentCuisine) proposed.cuisine = slug;
   } else if (draftCuisine && draftCuisine !== currentCuisine) {
     proposed.cuisine = draftCuisine;
   }
@@ -7490,7 +7591,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // or back to the parent "assembly", rename/add/remove parts, before save.
   let parts = Array.isArray(draft.parts)
     ? draft.parts.map(p => ({
-        label: p.label || "",
+        label: capitalizeTitleClient(p.label || ""),
+        labelLocales: p.label_locales || p.labelLocales || null,
         ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
         instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
       }))
@@ -7611,20 +7713,20 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
 
   const dragHandleHtml = (kind, i, topPad) => `<span data-dragrow="${kind}:${i}" style="cursor:grab;color:#bbb;font-size:16px;padding:${topPad} 2px 0;user-select:none;touch-action:none">⠿</span>`;
   const ingRowHtml = (ing, i, draggable) => `
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
+      <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;width:100%;min-width:0;box-sizing:border-box" data-ingidx="${i}">
         ${draggable ? dragHandleHtml("ingredient_indexes", i, "0") : ""}
-        <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.unit')}" style="width:56px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <input data-ingf="name" value="${ingName(ing, i).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
-        <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+        <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:48px;min-width:40px;flex-shrink:0;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box">
+        <input data-ingf="unit" value="${unitDisplay(ing.unit).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.unit')}" style="width:50px;min-width:44px;flex-shrink:0;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box">
+        <input data-ingf="name" value="${ingName(ing, i).replace(/"/g, "&quot;")}" placeholder="${tr('anonymous.ingredient')}" style="flex:1;min-width:0;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box">
+        <button class="dtl-back" data-ingdel="${i}" style="width:28px;height:28px;min-width:28px;flex-shrink:0;font-size:12px;color:#ef4444;padding:0">✕</button>
       </div>`;
   const instrRowHtml = (s, i, displayNum, draggable) => `
-      <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:6px" data-instridx="${i}">
+      <div style="display:flex;gap:4px;align-items:flex-start;margin-bottom:6px;width:100%;min-width:0;box-sizing:border-box" data-instridx="${i}">
         ${draggable ? dragHandleHtml("instruction_indexes", i, "8px") : ""}
-        <div style="flex:0 0 20px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${displayNum}.</div>
-        ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 44px;width:44px;height:44px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
-        <textarea data-instrinput="${i}" rows="2" style="flex:1;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit">${stepText(s, i)}</textarea>
-        <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+        <div style="flex:0 0 18px;min-width:18px;font-weight:800;color:#bbb;padding-top:8px;text-align:right">${displayNum}.</div>
+        ${s.photo_urls[0] ? `<img src="${s.photo_urls[0]}" style="flex:0 0 40px;width:40px;height:40px;border-radius:8px;object-fit:cover;margin-top:2px">` : ""}
+        <textarea data-instrinput="${i}" rows="2" style="flex:1;min-width:0;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit;box-sizing:border-box">${stepText(s, i)}</textarea>
+        <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;min-width:28px;flex-shrink:0;font-size:12px;color:#ef4444;padding:0;margin-top:2px">✕</button>
       </div>`;
   // One visually distinct card per sub-recipe (Recipe Header / Ingredients: /
   // Instructions:, same shape as the saved detail view's component cards),
@@ -7640,7 +7742,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   const groupDefs = () => [
     ...parts.map((p, pi) => ({
       partIdx: pi,
-      label: (p.label || "").trim() || `${tr('openImportReview.sub-recipe-name')} ${pi + 1}`,
+      label: partLabelForReview(parts, pi, reviewLocale, sourceLang) || `${tr('openImportReview.sub-recipe-name')} ${pi + 1}`,
       theme: GROUP_THEMES[pi % GROUP_THEMES.length],
     })),
     { partIdx: -1, label: tr('openImportReview.assembly'), theme: ASSEMBLY_THEME },
@@ -7806,9 +7908,9 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       </label>
       <div id="revPartsList" style="margin-top:8px">
         ${parts.map((p, pi) => `
-          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-partidx="${pi}">
-            <input data-partlabel="${pi}" value="${(p.label || "").replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px">
-            <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;font-size:12px;color:#ef4444">✕</button>
+          <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;width:100%;min-width:0;box-sizing:border-box" data-partidx="${pi}">
+            <input data-partlabel="${pi}" value="${partLabelForReview(parts, pi, reviewLocale, sourceLang).replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;min-width:0;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box">
+            <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;min-width:28px;flex-shrink:0;font-size:12px;color:#ef4444;padding:0">✕</button>
           </div>`).join("")}
       </div>
       <button class="mini-btn" id="revPartAdd" style="margin-top:2px">+ ${tr('openImportReview.add-sub-recipe')}</button>
@@ -7828,7 +7930,11 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       render();
     };
     v.querySelectorAll("[data-partlabel]").forEach(inp => inp.addEventListener("input", () => {
-      parts[Number(inp.dataset.partlabel)].label = inp.value;
+      markImportReviewTouched();
+      const pi = Number(inp.dataset.partlabel);
+      if (!parts[pi].labelLocales) parts[pi].labelLocales = {};
+      parts[pi].labelLocales[reviewLocale] = inp.value;
+      if (reviewLocale === sourceLang) parts[pi].label = inp.value;
     }));
     v.querySelectorAll("[data-partdel]").forEach(btn => btn.addEventListener("click", () => {
       parts.splice(Number(btn.dataset.partdel), 1);
@@ -7986,8 +8092,19 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     const draftSnap = { source_lang: sourceLang, title, translations, ingredients, instructions, tips };
     const needsHydrate = reviewLocale !== sourceLang
       && !importDraftLocaleComplete(draftSnap, reviewLocale);
+    if (isComposite && parts.length > 0) {
+      try {
+        parts = await hydrateImportPartLabels(parts, sourceLang);
+      } catch (e) {
+        console.error("[openImportReview] part label hydrate failed", e);
+      }
+    }
     if (!needsHydrate) {
       render();
+      if (isComposite) {
+        v.querySelector("#revParts").innerHTML = partsHtml();
+        wireParts();
+      }
       return;
     }
     try {
@@ -8002,6 +8119,10 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       toast(tr('detailHeaderHtml.translation-failed'));
     }
     render();
+    if (isComposite) {
+      v.querySelector("#revParts").innerHTML = partsHtml();
+      wireParts();
+    }
   };
   bootReviewLocale();
 
@@ -8046,26 +8167,24 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         ? (taxonomy.cuisineCustom || "").trim()
         : (taxonomy.cuisine || "").trim().toLowerCase();
       if (taxonomy.cuisineMode === "new" && draftCuisine) {
-        const slug = slugifyCuisine(draftCuisine);
-        const labels = { en: draftCuisine };
-        if (lang === "uk") labels.uk = draftCuisine;
-        if (lang === "nl") labels.nl = draftCuisine;
-        if (lang === "ru") labels.ru = draftCuisine;
-        const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
-          p_slug: slug,
-          p_label_en: draftCuisine,
-          p_labels_i18n: labels,
-        });
-        if (cuiErr) {
-          toast(tr('saveDetailEdit.cuisine-add-failed') + cuiErr.message);
+        try {
+          const cuisineResolved = await resolveNewCuisineLabels(draftCuisine);
+          const { error: cuiErr } = await sb.rpc("spin_food_cuisine_add", {
+            p_slug: cuisineResolved.slug,
+            p_label_en: cuisineResolved.labels.en,
+            p_labels_i18n: cuisineResolved.labels,
+          });
+          if (cuiErr) throw cuiErr;
+          filterVocabLoaded = false;
+          await loadFilterVocabulary();
+          confirmCuisine = cuisineResolved.slug;
+        } catch (cuiErr) {
+          toast(tr('saveDetailEdit.cuisine-add-failed') + (cuiErr.message || cuiErr));
           saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
           cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
           saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
           return;
         }
-        filterVocabLoaded = false;
-        await loadFilterVocabulary();
-        confirmCuisine = slug;
       } else if (draftCuisine) {
         confirmCuisine = draftCuisine;
       }
@@ -8097,6 +8216,18 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         return;
       }
     }
+    if (importReviewTouched && isComposite && parts.length > 0) {
+      try {
+        parts = await alignImportPartLabels({ sourceLang, reviewLocale, parts, touched: true });
+      } catch (e) {
+        console.error("[openImportReview] align part labels failed", e);
+        toast(tr('detailHeaderHtml.translation-failed'));
+        saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
+        cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
+        saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
+        return;
+      }
+    }
     setSaveProgress(0, tr('anonymous.saving-recipe'));
     const sourceTitle = importDraftTitle({ source_lang: sourceLang, title, translations }, sourceLang);
     // Empty rows get dropped below, which reindexes ingredients[]/instructions[]
@@ -8119,6 +8250,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     const finalParts = (isComposite ? parts : [])
       .map(p => ({
         label: (p.label || "").trim(),
+        label_locales: p.labelLocales || undefined,
         ingredient_indexes: p.ingredient_indexes.map(i => ingOldToNew.get(i)).filter(i => i !== undefined),
         instruction_indexes: p.instruction_indexes.map(i => instrOldToNew.get(i)).filter(i => i !== undefined),
       }))
