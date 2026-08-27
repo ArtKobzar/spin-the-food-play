@@ -5608,28 +5608,29 @@ function tipSteps(d) {
 
 function openDetail(id) {
   if (!dish(id)) return;
+  if (detailOpen === id && document.getElementById("detailOverlay")) return;
   detailNavStack = [];
   openDetailInternal(id);
 }
 // Shared by a fresh top-level open (openDetail, stack cleared) and stepping
 // into an Included Recipe tile (openComponentDetail, stack pushed) - both
 // just swap what detailOpen points at and re-render the same overlay.
+async function hydrateDetailForOpen(id) {
+  const d = dish(id);
+  const loads = [loadDetailComponents(id)];
+  if (d && (recipeNeedsTranslation(d) || d._resolvedLocale !== lang)) {
+    loads.push(hydrateDishContent(d, lang));
+  }
+  await Promise.all(loads);
+  if (detailOpen === id) renderDetailOverlay();
+}
 function openDetailInternal(id) {
+  const sameRecipe = detailOpen === id && document.getElementById("detailOverlay");
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   detailShowTranslation = false; detailTranslationLoading = false;
   detailComponents = [];
-  renderDetailOverlay({ animate: true });
-  loadDetailComponents(id).then(() => { if (detailOpen === id) renderDetailOverlay(); });
-  const d = dish(detailOpen);
-  if (d && recipeNeedsTranslation(d)) {
-    hydrateDishContent(d, lang).then(() => {
-      if (detailOpen === id) renderDetailOverlay();
-    });
-  } else if (d && d._resolvedLocale !== lang) {
-    hydrateDishContent(d, lang).then(() => {
-      if (detailOpen === id) renderDetailOverlay();
-    });
-  }
+  renderDetailOverlay({ animate: !sameRecipe });
+  void hydrateDetailForOpen(id);
 }
 // Tapping an Included Recipe tile inside a composite recipe's detail view -
 // remembers where we came from so ← can walk back up instead of closing.
@@ -5656,11 +5657,27 @@ function detailBack() {
   }
 }
 function renderDetailOverlay({ animate = false } = {}) {
-  document.getElementById("detailOverlay")?.remove();
   const d = dish(detailOpen);
-  if (!d) { detailOpen = null; return; }
-  const wrap = document.createElement("div");
+  if (!d) {
+    document.getElementById("detailOverlay")?.remove();
+    detailOpen = null;
+    return;
+  }
+  const dishKey = String(detailOpen);
+  let wrap = document.getElementById("detailOverlay");
+  // Async loads (components, locale hydrate) and edit/save refreshes must
+  // update the already-open overlay in place - tearing it down and inserting
+  // a fresh node replays the flip-in transition or flashes blank, which reads
+  // as the detail view popping twice (user report, 2026-08-27).
+  if (wrap && wrap.dataset.dishId === dishKey) {
+    wrap.innerHTML = detailView(d);
+    wireDetailOverlay(wrap, d);
+    return;
+  }
+  wrap?.remove();
+  wrap = document.createElement("div");
   wrap.id = "detailOverlay";
+  wrap.dataset.dishId = dishKey;
   wrap.className = animate ? "detail-overlay" : "detail-overlay open";
   wrap.innerHTML = detailView(d);
   document.body.appendChild(wrap);
