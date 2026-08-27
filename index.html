@@ -1004,17 +1004,13 @@ function matchUnitSlug(text) {
   if (aliasSlug && UNITS_BY_SLUG[aliasSlug]) return aliasSlug;
   return null;
 }
-// food.units.name_ru is the full word ("грамм", "миллилитр") - fine for a
-// vocabulary/settings picker, but recipe ingredient lines read much more
-// naturally with the short form ("г", "мл") the same way a recipe card
-// would print it. English keeps the full food.units.name_en as-is (never
-// asked to change) - only Russian gets this short-form override, keyed by
-// slug so it applies uniformly regardless of which legacy/alias unit text
-// resolved to it.
+// Recipe ingredient lines use short unit forms (g, ml, tsp) in every UI
+// locale - not the full vocabulary words from food.units.name_*.
 const UNIT_SHORT_KEYS = {
   gram: "unit.short.gram", kilogram: "unit.short.kilogram", ounce: "unit.short.ounce", pound: "unit.short.pound",
   milliliter: "unit.short.milliliter", liter: "unit.short.liter", teaspoon: "unit.short.teaspoon", tablespoon: "unit.short.tablespoon",
   cup: "unit.short.cup", piece: "unit.short.piece", celsius: "unit.short.celsius", fahrenheit: "unit.short.fahrenheit",
+  sprig: "unit.short.sprig", pinch: "unit.short.pinch",
 };
 // Phase 2 i18n: labels_i18n for uk/nl; name_en/name_ru mirrors for en/ru.
 function vocabLabel(rec, fallbackEn) {
@@ -1398,13 +1394,9 @@ function recipePhotoSlides(d) {
 // import review dialog (openImportReview()).
 function unitLabel(rec) {
   if (!rec) return "";
-  if (lang === "ru") {
-    const uk = UNIT_SHORT_KEYS[rec.slug];
-    if (uk) return tr(uk);
-    return vocabLabel(rec, rec.slug);
-  }
-  if (lang === "uk" || lang === "nl") return vocabLabel(rec, rec.slug);
-  return rec.name_en || rec.slug;
+  const shortKey = UNIT_SHORT_KEYS[rec.slug];
+  if (shortKey) return tr(shortKey);
+  return vocabLabel(rec, rec.slug);
 }
 function unitDisplay(slug) {
   if (!slug) return "";
