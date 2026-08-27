@@ -5003,6 +5003,13 @@ let detailScaleTo = null;   // target serving count for the scaling stepper, or 
 // every openDetail() and populated async (same pattern as hydrateDishContent),
 // re-rendering the overlay once loaded.
 let detailComponents = [];
+const COMPONENT_GROUP_THEMES = [
+  { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af" },
+  { bg: "#fdf2f8", border: "#fbcfe8", text: "#9d174d" },
+  { bg: "#f0fdf4", border: "#bbf7d0", text: "#166534" },
+  { bg: "#fff7ed", border: "#fed7aa", text: "#9a3412" },
+  { bg: "#faf5ff", border: "#e9d5ff", text: "#6b21a8" },
+];
 async function loadDetailComponents(recipeId) {
   detailComponents = [];
   try {
@@ -5638,16 +5645,20 @@ function detailView(d) {
     // Component's own full detail page with ← walking back here.
     const compositeHtml = !detailComponents.length ? "" : `
       <div class="sect" style="margin-top:18px">🧩 ${tr('detailView.composite-recipe')}</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        ${detailComponents.map(c => `
-          <div class="dtl-component-tile" data-componentopen="${c.dish.id}" style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid #eee;border-radius:14px;background:#fafafa;cursor:pointer">
-            <div style="width:52px;height:52px;flex:0 0 52px;border-radius:10px;background:${c.dish.photo_url ? `url('${c.dish.photo_url.replace(/'/g, "%27")}') center/cover` : "linear-gradient(135deg,#e5e7eb,#9ca3af)"}"></div>
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(c.label || detailTitleName(c.dish)).replace(/</g, "&lt;")}</div>
-              <div style="font-size:12px;color:#999;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.dish.t ? `⏱ ${c.dish.t} ${tr('detailHeaderHtml.min')} &nbsp; ` : ""}${cuisineDisplay(c.dish.c)}</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${detailComponents.map((c, ci) => {
+          const theme = COMPONENT_GROUP_THEMES[ci % COMPONENT_GROUP_THEMES.length];
+          const compTitle = (detailTitleName(c.dish) || c.label || "").replace(/</g, "&lt;");
+          return `
+          <div class="dtl-component-tile" data-componentopen="${c.dish.id}" style="padding:12px;border:2px solid ${theme.border};border-radius:14px;background:${theme.bg};cursor:pointer">
+            <div style="font-size:13px;font-weight:800;color:${theme.text};margin-bottom:8px">${compTitle}</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:52px;height:52px;flex:0 0 52px;border-radius:10px;background:${c.dish.photo_url ? `url('${c.dish.photo_url.replace(/'/g, "%27")}') center/cover` : "linear-gradient(135deg,#e5e7eb,#9ca3af)"}"></div>
+              <div style="flex:1;min-width:0;font-size:12px;color:${theme.text};opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.dish.t ? `⏱ ${c.dish.t} ${tr('detailHeaderHtml.min')}` : ""}${c.dish.t && cuisineDisplay(c.dish.c) ? " · " : ""}${cuisineDisplay(c.dish.c)}</div>
+              <div style="color:${theme.text};opacity:.6;font-size:18px;flex:0 0 auto">→</div>
             </div>
-            <div style="color:#bbb;font-size:18px;flex:0 0 auto">→</div>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>`;
 
   // Delete (2026-08-10) - deliberately at the very bottom of the card and
@@ -7731,13 +7742,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   // One visually distinct card per sub-recipe (Recipe Header / Ingredients: /
   // Instructions:, same shape as the saved detail view's component cards),
   // plus a trailing "Assembly" card for anything not claimed by a part.
-  const GROUP_THEMES = [
-    { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af" },
-    { bg: "#fdf2f8", border: "#fbcfe8", text: "#9d174d" },
-    { bg: "#f0fdf4", border: "#bbf7d0", text: "#166534" },
-    { bg: "#fff7ed", border: "#fed7aa", text: "#9a3412" },
-    { bg: "#faf5ff", border: "#e9d5ff", text: "#6b21a8" },
-  ];
+  const GROUP_THEMES = COMPONENT_GROUP_THEMES;
   const ASSEMBLY_THEME = { bg: "#f9fafb", border: "#e5e7eb", text: "#374151" };
   const groupDefs = () => [
     ...parts.map((p, pi) => ({
