@@ -1377,12 +1377,20 @@ function partLabelForReview(parts, pi, reviewLocale, sourceLang) {
   if (p?.labelLocales?.[sourceLang]) return p.labelLocales[sourceLang];
   return capitalizeTitleClient(p?.label || "");
 }
-async function hydrateImportPartLabels(parts, sourceLang) {
+function partLabelPayload(parts, ingredients) {
+  return parts.map((p) => ({
+    label: capitalizeTitleClient(p.label || ""),
+    ingredient_names: (p.ingredient_indexes || [])
+      .map((idx) => ingredients[idx]?.name || "")
+      .filter(Boolean),
+  })).filter((p) => p.label);
+}
+async function hydrateImportPartLabels(parts, sourceLang, ingredients) {
   if (!parts.length) return parts;
-  const labels = parts.map((p) => capitalizeTitleClient(p.label || "")).filter(Boolean);
-  if (!labels.length) return parts;
+  const payload = partLabelPayload(parts, ingredients);
+  if (!payload.length) return parts;
   const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
-    body: { mode: "translate_part_labels", source_lang: sourceLang, labels },
+    body: { mode: "translate_part_labels", source_lang: sourceLang, parts: payload },
   }, 60_000);
   if (res.error || res.data?.ok === false) {
     throw new Error(res.error?.message || res.data?.error || "part label translation failed");
@@ -1399,7 +1407,7 @@ async function hydrateImportPartLabels(parts, sourceLang) {
     },
   }));
 }
-async function alignImportPartLabels({ sourceLang, reviewLocale, parts, touched }) {
+async function alignImportPartLabels({ sourceLang, reviewLocale, parts, ingredients, touched }) {
   if (!touched || !parts.length) return parts;
   let sourceLabels = parts.map((p, i) => {
     if (reviewLocale === sourceLang) {
@@ -1422,7 +1430,16 @@ async function alignImportPartLabels({ sourceLang, reviewLocale, parts, touched 
     sourceLabels = res.data?.labels || sourceLabels;
   }
   const trRes = await invokeWithTimeout("spin-food-translate-recipe-locale", {
-    body: { mode: "translate_part_labels", source_lang: sourceLang, labels: sourceLabels },
+    body: {
+      mode: "translate_part_labels",
+      source_lang: sourceLang,
+      parts: sourceLabels.map((label, i) => ({
+        label,
+        ingredient_names: (parts[i]?.ingredient_indexes || [])
+          .map((idx) => ingredients[idx]?.name || "")
+          .filter(Boolean),
+      })),
+    },
   }, 60_000);
   if (trRes.error || trRes.data?.ok === false) {
     throw new Error(trRes.error?.message || trRes.data?.error || "part label translation failed");
@@ -8099,7 +8116,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       && !importDraftLocaleComplete(draftSnap, reviewLocale);
     if (isComposite && parts.length > 0) {
       try {
-        parts = await hydrateImportPartLabels(parts, sourceLang);
+        parts = await hydrateImportPartLabels(parts, sourceLang, ingredients);
       } catch (e) {
         console.error("[openImportReview] part label hydrate failed", e);
       }
@@ -8223,7 +8240,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     }
     if (importReviewTouched && isComposite && parts.length > 0) {
       try {
-        parts = await alignImportPartLabels({ sourceLang, reviewLocale, parts, touched: true });
+        parts = await alignImportPartLabels({ sourceLang, reviewLocale, parts, ingredients, touched: true });
       } catch (e) {
         console.error("[openImportReview] align part labels failed", e);
         toast(tr('detailHeaderHtml.translation-failed'));
