@@ -1043,7 +1043,10 @@ function dishViewerLocaleUsesEnglishFallback(d) {
 function ingredientDisplayNameForLocale(ing, locale, dish = null) {
   if (!ing || typeof ing !== "object") return "";
   const titleReady = dish ? recipeTitleReadyInLocale(dish, locale) : false;
-  // Recipe-level sidecar first (extract translations: fusilli -> фузіллі, not generic taxonomy).
+  // Row bilingual columns beat stale content_translations sidecars (fork edits).
+  if (locale === "ru" && ing.name_ru) return ing.name_ru;
+  if (locale === "en" && ing.name_en) return ing.name_en;
+  // Recipe-level sidecar (extract translations: fusilli -> фузіллі, not generic taxonomy).
   if (ing.name_resolved && ing.resolved_locale === locale && !ing.name_is_fallback) {
     // Taxonomy labels alone are generic OFF strings - only use them once the
     // recipe title is translated into this locale (or user ran machine translate).
@@ -1053,7 +1056,6 @@ function ingredientDisplayNameForLocale(ing, locale, dish = null) {
       return ing.name_resolved;
     }
   }
-  if (locale === "ru" && ing.name_ru) return ing.name_ru;
   if (locale === "uk" && ing.name_uk) return ing.name_uk;
   if (locale === "nl" && ing.name_nl) return ing.name_nl;
   // `name` holds source-language text on imports - never treat Cyrillic as Dutch.
@@ -5742,7 +5744,7 @@ function detailView(d) {
     if (detailEditMode) {
       const ings = detailDraft.ingredients;
       ingHtml = `<div id="ingList">${ings.map((ing, i) => {
-        const name = ingredientDisplayName(ing, d) || "";
+        const name = detailEditLocaleIngName(ing, lang) || "";
         return `
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-ingidx="${i}">
           <input data-ingf="qty" value="${ing.qty ?? ""}" placeholder="${tr('anonymous.qty')}" style="width:52px;border:1px solid #eee;border-radius:8px;padding:6px;font-size:13px">
