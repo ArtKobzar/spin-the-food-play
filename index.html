@@ -1370,6 +1370,182 @@ async function alignImportReviewTranslations({
     translations: newTranslations,
   };
 }
+// Member-fork detail edits touch only the current UI locale on first save
+// (title_ru/name_ru when editing in Russian, etc.). Other family members read
+// the fork in their own locale, so we refresh the English bridge (and
+// source_lang columns when the edit locale differs) without touching the
+// original recipe row (forked_from_id parent) and without auto-filling uk/nl
+// - those stay on the translate/lang button.
+function detailEditLocaleIngName(ing, editLocale) {
+  if (editLocale === "ru") return (ing.name_ru || ing.name_en || "").trim();
+  return (ing.name_en || ing.name_ru || "").trim();
+}
+function detailEditLocaleStepText(step, editLocale) {
+  if (editLocale === "ru") return (step.text_ru || step.text || step.text_en || "").trim();
+  return (step.text_en || step.text || step.text_ru || "").trim();
+}
+function snapshotDetailEditContent(d, draft, editLocale) {
+  const title = detailEditTitleForDisplay(d, draft).trim();
+  const ingredients = draft.ingredients
+    .filter((i) => detailEditLocaleIngName(i, editLocale) || (i.name_en || "").trim() || (i.name_ru || "").trim())
+    .map((i) => ({
+      name: detailEditLocaleIngName(i, editLocale) || i.name_en || i.name_ru || "",
+      qty: i.qty ?? null,
+      unit: i.unit || null,
+      note: i.note || null,
+      section: i.section || null,
+      raw: i.raw || "",
+      name_en: i.name_en || null,
+      name_ru: i.name_ru || null,
+    }));
+  const instructions = draft.instructions
+    .filter((s) => detailEditLocaleStepText(s, editLocale))
+    .map((s) => ({
+      text: detailEditLocaleStepText(s, editLocale),
+      text_en: s.text_en ?? null,
+      text_ru: s.text_ru ?? null,
+      photo_urls: stepPhotoUrls(s),
+    }));
+  const tips = (Array.isArray(d.tips) ? d.tips : [])
+    .map((t) => (typeof t === "string" ? t : (stepLangText(t, editLocale) || "")))
+    .filter(Boolean);
+  return { title, ingredients, instructions, tips };
+}
+function detailEditContentChanged(proposed) {
+  return ("title_en" in proposed || "title_ru" in proposed || "title_locale" in proposed
+    || "ingredients" in proposed || "instructions" in proposed);
+}
+function detailEditNeedsBridgeAlign(editLocale, sourceLang, proposed) {
+  if (!detailEditContentChanged(proposed)) return false;
+  if (editLocale === "en" && sourceLang === "en") return false;
+  if (editLocale === "en" && sourceLang !== "en") return false;
+  return true;
+}
+async function alignDetailEditBridge({ editLocale, sourceLang, title, ingredients, instructions, tips }) {
+  let srcTitle = title;
+  let srcIngRows = ingredients.map((i) => ({ name: i.name, note: i.note ?? null }));
+  let srcInstructions = instructions.map((s) => ({ text: s.text, photo_urls: s.photo_urls || [] }));
+  let srcTips = tips || [];
+
+  if (editLocale !== sourceLang) {
+    const block = importReviewSourceBlock(
+      title,
+      ingredients.map((i) => ({ name: i.name, note: i.note, qty: i.qty, unit: i.unit, section: i.section })),
+      instructions,
+      srcTips,
+    );
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: {
+        mode: "backtranslate",
+        from_locale: editLocale,
+        to_locale: sourceLang,
+        block,
+        lengths: {
+          ingredients: ingredients.length,
+          instructions: instructions.length,
+          tips: srcTips.length,
+        },
+      },
+    }, 100_000);
+    if (res.error || res.data?.ok === false) {
+      throw new Error(res.error?.message || res.data?.error || "translation failed");
+    }
+    const source = res.data?.source;
+    if (!source?.title) throw new Error("translation failed");
+    srcTitle = source.title;
+    srcIngRows = ingredients.map((ing, i) => ({
+      name: source.ingredients?.[i]?.name ?? ing.name,
+      note: source.ingredients?.[i]?.note ?? ing.note ?? null,
+    }));
+    srcInstructions = instructions.map((step, i) => ({
+      text: source.instructions?.[i]?.text ?? step.text,
+      photo_urls: step.photo_urls || [],
+    }));
+    srcTips = (source.tips || []).map((t) => String(t ?? ""));
+  }
+
+  let enBlock;
+  if (sourceLang === "en") {
+    enBlock = importReviewSourceBlock(
+      srcTitle,
+      srcIngRows.map((row, i) => ({ ...ingredients[i], name: row.name, note: row.note })),
+      srcInstructions,
+      srcTips,
+    );
+  } else {
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: {
+        target_locale: "en",
+        force: true,
+        draft: {
+          source_lang: sourceLang,
+          title: srcTitle,
+          ingredients: srcIngRows.map((row, i) => ({
+            name: row.name,
+            qty: ingredients[i]?.qty ?? null,
+            unit: ingredients[i]?.unit ?? null,
+            note: row.note,
+            section: ingredients[i]?.section ?? null,
+          })),
+          instructions: srcInstructions,
+          tips: srcTips,
+        },
+      },
+    }, 100_000);
+    if (res.error || res.data?.ok === false) {
+      throw new Error(res.error?.message || res.data?.error || "translation failed");
+    }
+    if (!res.data?.translation?.title) throw new Error("translation failed");
+    enBlock = res.data.translation;
+  }
+
+  const proposed = { title_en: enBlock.title };
+  if (sourceLang === "en") proposed.title_en = srcTitle;
+  else if (sourceLang === "ru") proposed.title_ru = srcTitle;
+  else {
+    proposed.title_locale = sourceLang;
+    proposed.title_locale_value = srcTitle;
+  }
+  if (editLocale === "ru" && sourceLang !== "ru") proposed.title_ru = title;
+  else if (editLocale === "ru" && sourceLang === "ru") proposed.title_ru = srcTitle;
+  if (editLocale === "uk" || editLocale === "nl") {
+    proposed.title_locale = editLocale;
+    proposed.title_locale_value = title;
+  }
+
+  proposed.ingredients = ingredients.map((ing, i) => {
+    const srcName = srcIngRows[i]?.name ?? ing.name;
+    const enName = enBlock.ingredients?.[i]?.name ?? ing.name_en ?? null;
+    let ruName = ing.name_ru ?? null;
+    if (sourceLang === "ru") ruName = srcName;
+    else if (editLocale === "ru") ruName = ing.name || ruName;
+    return {
+      raw: ing.raw || "",
+      name_en: enName,
+      name_ru: ruName,
+      qty: ing.qty ?? null,
+      unit: ing.unit || null,
+      note: srcIngRows[i]?.note ?? ing.note ?? null,
+      section: ing.section || null,
+      ingredient_slug: slugifyIngredientName(enName || srcName || ing.name_en || ing.name_ru || ""),
+    };
+  });
+
+  proposed.instructions = instructions.map((step, i) => {
+    const enText = enBlock.instructions?.[i]?.text ?? step.text_en ?? null;
+    let ruText = step.text_ru ?? null;
+    if (sourceLang === "ru") ruText = srcInstructions[i]?.text ?? ruText;
+    else if (editLocale === "ru") ruText = step.text || ruText;
+    return {
+      step: i + 1,
+      text_en: enText,
+      text_ru: ruText,
+      photo_urls: step.photo_urls || [],
+    };
+  });
+
+  return proposed;
+}
 function partLabelForReview(parts, pi, reviewLocale, sourceLang) {
   const p = parts[pi];
   if (p?.labelLocales?.[reviewLocale]) return p.labelLocales[reviewLocale];
@@ -6171,13 +6347,36 @@ async function saveDetailEdit(d) {
 
   if (!Object.keys(proposed).length) { detailEditMode = false; detailDraft = null; renderDetailOverlay(); return; }
 
+  const editLocale = lang;
+  const sourceLang = dishSourceLang(d);
+  const needsBridgeAlign = detailEditNeedsBridgeAlign(editLocale, sourceLang, proposed);
+  const contentSnapshot = needsBridgeAlign ? snapshotDetailEditContent(d, detailDraft, editLocale) : null;
+
   detailSaving = true; renderDetailOverlay();
   const ok = await applyEvent("recipe_edit_proposed", { recipe_id: d.id, proposed });
-  detailSaving = false;
-  if (!ok) { renderDetailOverlay(); return; }
+  if (!ok) { detailSaving = false; renderDetailOverlay(); return; }
   const forked = lastForkInfo;
   await loadCatalog();
-  const editedId = forked ? forked.to : d.id;
+  let editedId = forked ? forked.to : d.id;
+  if (needsBridgeAlign && contentSnapshot) {
+    try {
+      const bridgeProposed = await alignDetailEditBridge({
+        editLocale,
+        sourceLang,
+        title: contentSnapshot.title,
+        ingredients: contentSnapshot.ingredients,
+        instructions: contentSnapshot.instructions,
+        tips: contentSnapshot.tips,
+      });
+      const bridgeOk = await applyEvent("recipe_edit_proposed", { recipe_id: editedId, proposed: bridgeProposed });
+      if (bridgeOk) await loadCatalog();
+      else console.warn("[detail-edit] bridge align save failed");
+    } catch (bridgeErr) {
+      console.warn("[detail-edit] bridge align failed", bridgeErr);
+      toast(tr('detailHeaderHtml.translation-failed'));
+    }
+  }
+  detailSaving = false;
   const fresh = dish(editedId);
   detailEditMode = false; detailDraft = null;
   if (forked) {
