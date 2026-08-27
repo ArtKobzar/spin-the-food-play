@@ -7708,7 +7708,9 @@ function openImportSheet(targetRecipeId = null) {
       return;
     }
     setBusy(true, tr('anonymous.reading-the-recipe'));
-    await runImportExtract("url", { url }, targetRecipeId, setBusy);
+    await runImportExtract("url", { url }, targetRecipeId, setBusy, {
+      v, bgBtn, isStopped: () => videoPollStopped, setTimer: (t) => { videoPollTimer = t; },
+    });
   };
 }
 
@@ -7874,7 +7876,55 @@ async function tryRecoverReadyImportJob(sourceType, targetRecipeId, startedAt = 
   }
 }
 
-async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
+// 2026-08-28 (staged large-recipe imports): large/composite URL pages now
+// come back from spin-food-import as a queued job instead of a synchronous
+// draft (same contract YouTube already uses - see the "extract" action doc
+// in spin-food-import/index.ts) so a slow extraction isn't bound by the
+// request/response cycle. pollCtx carries the enclosing sheet's bits this
+// needs (mirrors the YouTube branch's own inline poll further up this
+// file): `v` to detect the sheet being torn down some other way, `bgBtn` to
+// reveal the "send to background" escape hatch, and isStopped/setTimer so
+// the sheet's existing ✕ Cancel / 📤 background buttons (wired to
+// stopVideoPoll()) also stop this poll - nothing server-side is cancelled
+// either way, same as YouTube, the job keeps running and the family feed
+// picks up the result whenever it lands.
+async function pollQueuedImportJob(jobId, sourceType, targetRecipeId, setBusy, pollCtx) {
+  if (!pollCtx) { setBusy(false, ""); return; } // no caller wired polling support - can't safely wait
+  const { v, bgBtn, isStopped, setTimer } = pollCtx;
+  bgBtn.style.display = "block";
+  let timer = null;
+  const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+  const tick = async () => {
+    if (isStopped()) { stop(); return; }
+    if (!document.body.contains(v)) { stop(); return; }
+    const { data: jobs, error: pollErr } = await sb.rpc("spin_food_list_import_jobs", { p_limit: 30 });
+    if (isStopped()) { stop(); return; }
+    if (pollErr) return; // transient - next tick retries
+    const job = (jobs || []).find((j) => j.id === jobId);
+    if (!job || job.status === "queued" || job.status === "processing") {
+      setBusy(true, tr('anonymous.reading-the-recipe'));
+      return;
+    }
+    stop();
+    if (job.status === "failed") {
+      setBusy(false, "");
+      bgBtn.style.display = "none";
+      toast(job.error || tr('runImportExtract.couldnt-read-that-recipe'));
+      return;
+    }
+    closeModal();
+    try {
+      openImportReview(job.draft, job.id, targetRecipeId, sourceType);
+    } catch (e) {
+      console.error("[openImportReview] render failed", e, job.draft);
+      toast(tr('runImportExtract.something-went-wrong-showing-the-review-screen-o'));
+    }
+  };
+  await tick();
+  if (!isStopped()) { timer = setInterval(tick, 3000); setTimer(timer); }
+}
+
+async function runImportExtract(sourceType, payload, targetRecipeId, setBusy, pollCtx) {
   syncLangFromStorage();
   const startedAt = Date.now();
   importExtractPending = { sourceType, targetRecipeId, startedAt };
@@ -7902,6 +7952,10 @@ async function runImportExtract(sourceType, payload, targetRecipeId, setBusy) {
     return;
   }
   importExtractPending = null;
+  if (data.status === "queued" && !data.draft) {
+    await pollQueuedImportJob(data.job_id, sourceType, targetRecipeId, setBusy, pollCtx);
+    return;
+  }
   closeModal();
   // Photo imports: keep the uploaded image on the draft for review + save.
   if (sourceType === "photo" && Array.isArray(payload.photo_urls) && payload.photo_urls.length && data.draft) {
