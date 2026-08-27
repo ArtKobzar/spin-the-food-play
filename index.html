@@ -1277,6 +1277,99 @@ async function hydrateImportDraftReviewLocale(draft, locale) {
   }
   return res.data?.translation || null;
 }
+function importReviewSourceBlock(title, ingredients, instructions, tips) {
+  return {
+    title: title || "",
+    ingredients: ingredients.map((i) => ({ name: i.name || "", note: i.note ?? null })),
+    instructions: instructions.map((s) => ({ text: s.text || "" })),
+    tips: tips.map((t) => (t || "").trim()),
+  };
+}
+async function alignImportReviewTranslations({
+  sourceLang,
+  reviewLocale,
+  title,
+  ingredients,
+  instructions,
+  tips,
+  translations,
+  touched,
+}) {
+  if (!touched) return { title, ingredients, instructions, tips, translations };
+
+  let srcTitle = title;
+  let srcIngredients = ingredients;
+  let srcInstructions = instructions;
+  let srcTips = tips;
+
+  if (reviewLocale !== sourceLang) {
+    ensureImportTranslationBlock({ source_lang: sourceLang, title, translations, ingredients, instructions, tips }, reviewLocale);
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: {
+        mode: "backtranslate",
+        from_locale: reviewLocale,
+        to_locale: sourceLang,
+        block: translations[reviewLocale],
+        lengths: {
+          ingredients: ingredients.length,
+          instructions: instructions.length,
+          tips: tips.length,
+        },
+      },
+    }, 100_000);
+    if (res.error || res.data?.ok === false) {
+      throw new Error(res.error?.message || res.data?.error || "translation failed");
+    }
+    const source = res.data?.source;
+    if (!source?.title) throw new Error("translation failed");
+    srcTitle = source.title;
+    srcIngredients = ingredients.map((ing, i) => ({
+      ...ing,
+      name: source.ingredients?.[i]?.name ?? ing.name,
+      note: source.ingredients?.[i]?.note ?? ing.note ?? null,
+    }));
+    srcInstructions = instructions.map((step, i) => ({
+      ...step,
+      text: source.instructions?.[i]?.text ?? step.text,
+    }));
+    srcTips = (source.tips || []).map((t) => String(t ?? ""));
+  }
+
+  const draftBase = {
+    source_lang: sourceLang,
+    title: srcTitle,
+    ingredients: srcIngredients.map((i) => ({
+      name: i.name,
+      qty: i.qty ?? null,
+      unit: i.unit ?? null,
+      note: i.note ?? null,
+      section: i.section ?? null,
+    })),
+    instructions: srcInstructions.map((s) => ({ text: s.text, photo_urls: s.photo_urls || [] })),
+    tips: srcTips,
+  };
+  const newTranslations = {
+    [sourceLang]: importReviewSourceBlock(srcTitle, srcIngredients, srcInstructions, srcTips),
+  };
+  for (const loc of ["en", "ru", "uk", "nl"]) {
+    if (loc === sourceLang) continue;
+    const res = await invokeWithTimeout("spin-food-translate-recipe-locale", {
+      body: { target_locale: loc, force: true, draft: draftBase },
+    }, 100_000);
+    if (res.error || res.data?.ok === false) {
+      throw new Error(res.error?.message || res.data?.error || "translation failed");
+    }
+    if (!res.data?.translation?.title) throw new Error("translation failed");
+    newTranslations[loc] = res.data.translation;
+  }
+  return {
+    title: srcTitle,
+    ingredients: srcIngredients,
+    instructions: srcInstructions,
+    tips: srcTips,
+    translations: newTranslations,
+  };
+}
 function importDraftTitle(draft, locale) {
   if (locale === draft.source_lang) return draft.title || "";
   const t = draft.translations?.[locale]?.title;
@@ -7403,6 +7496,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }))
     : [];
   let isComposite = !!draft.is_composite && parts.length > 0;
+  let importReviewTouched = false;
+  const markImportReviewTouched = () => { importReviewTouched = true; };
   const partIndexForIngredient = (i) => parts.findIndex(p => p.ingredient_indexes.includes(i));
   const partIndexForInstruction = (i) => parts.findIndex(p => p.instruction_indexes.includes(i));
   const assignRowToPart = (kind, i, partIdx) => {
@@ -7794,6 +7889,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   wireHero();
 
   v.querySelector("#revTitle").addEventListener("input", (e) => {
+    markImportReviewTouched();
     if (reviewLocale === sourceLang) title = e.target.value;
     else { ensureImportTranslationBlock({ translations }, reviewLocale); translations[reviewLocale].title = e.target.value; }
   });
@@ -7808,6 +7904,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         const f = inp.dataset.ingf;
         if (f === "qty") { ingredients[i].qty = inp.value === "" ? null : Number(inp.value); return; }
         if (f === "name") {
+          markImportReviewTouched();
           if (reviewLocale === sourceLang) ingredients[i].name = inp.value;
           else {
             ensureImportTranslationBlock({ translations, ingredients, instructions }, reviewLocale);
@@ -7821,11 +7918,13 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }));
     });
     v.querySelectorAll("[data-ingdel]").forEach(btn => btn.addEventListener("click", () => {
+      markImportReviewTouched();
       const i = Number(btn.dataset.ingdel);
       shiftPartIndexesAfterDelete("ingredient_indexes", i);
       ingredients.splice(i, 1); render();
     }));
     v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
+      markImportReviewTouched();
       const i = Number(ta.dataset.instrinput);
       if (reviewLocale === sourceLang) instructions[i].text = ta.value;
       else {
@@ -7835,17 +7934,20 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }
     }));
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
+      markImportReviewTouched();
       const i = Number(btn.dataset.instrdel);
       shiftPartIndexesAfterDelete("instruction_indexes", i);
       instructions.splice(i, 1); render();
     }));
     v.querySelectorAll("[data-addingpart]").forEach(btn => btn.addEventListener("click", () => {
+      markImportReviewTouched();
       const partIdx = Number(btn.dataset.addingpart);
       ingredients.push({ name: "", qty: null, unit: null, note: null, section: null });
       if (partIdx >= 0) assignRowToPart("ingredient_indexes", ingredients.length - 1, partIdx);
       render();
     }));
     v.querySelectorAll("[data-addinstrpart]").forEach(btn => btn.addEventListener("click", () => {
+      markImportReviewTouched();
       const partIdx = Number(btn.dataset.addinstrpart);
       instructions.push({ text: "", photo_urls: [] });
       if (partIdx >= 0) assignRowToPart("instruction_indexes", instructions.length - 1, partIdx);
@@ -7867,6 +7969,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       });
     });
     v.querySelectorAll("[data-tipinput]").forEach(ta => ta.addEventListener("input", () => {
+      markImportReviewTouched();
       const i = Number(ta.dataset.tipinput);
       if (reviewLocale === sourceLang) tips[i] = ta.value;
       else {
@@ -7875,6 +7978,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }
     }));
     v.querySelectorAll("[data-tipdel]").forEach(btn => btn.addEventListener("click", () => {
+      markImportReviewTouched();
       tips.splice(Number(btn.dataset.tipdel), 1); render();
     }));
   }
@@ -7901,9 +8005,9 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   };
   bootReviewLocale();
 
-  v.querySelector("#revIngAdd").onclick = () => { ingredients.push({ name: "", qty: null, unit: null, note: null, section: null }); render(); };
-  v.querySelector("#revInstrAdd").onclick = () => { instructions.push({ text: "", photo_urls: [] }); render(); };
-  v.querySelector("#revTipsAdd").onclick = () => { tips.push(""); render(); };
+  v.querySelector("#revIngAdd").onclick = () => { markImportReviewTouched(); ingredients.push({ name: "", qty: null, unit: null, note: null, section: null }); render(); };
+  v.querySelector("#revInstrAdd").onclick = () => { markImportReviewTouched(); instructions.push({ text: "", photo_urls: [] }); render(); };
+  v.querySelector("#revTipsAdd").onclick = () => { markImportReviewTouched(); tips.push(""); render(); };
 
   // 2026-08-10: save used to be one giant confirm call that also ran
   // ingredient classification + translation synchronously server-side -
@@ -7966,6 +8070,34 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         confirmCuisine = draftCuisine;
       }
     }
+    if (importReviewTouched) {
+      setSaveProgress(0, tr('anonymous.ai-is-translating'));
+      try {
+        const aligned = await alignImportReviewTranslations({
+          sourceLang,
+          reviewLocale,
+          title,
+          ingredients,
+          instructions,
+          tips,
+          translations,
+          touched: true,
+        });
+        title = aligned.title;
+        ingredients = aligned.ingredients;
+        instructions = aligned.instructions;
+        tips = aligned.tips;
+        translations = aligned.translations;
+      } catch (e) {
+        console.error("[openImportReview] align translations failed", e);
+        toast(tr('detailHeaderHtml.translation-failed'));
+        saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
+        cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
+        saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
+        return;
+      }
+    }
+    setSaveProgress(0, tr('anonymous.saving-recipe'));
     const sourceTitle = importDraftTitle({ source_lang: sourceLang, title, translations }, sourceLang);
     // Empty rows get dropped below, which reindexes ingredients[]/instructions[]
     // - parts[] stores positions into those same arrays, so every part index
