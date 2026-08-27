@@ -5470,6 +5470,12 @@ async function refreshDishFromCatalog(d) {
   };
   Object.assign(d, fresh, keep);
 }
+function translationFailedToast(detail) {
+  const safe = detail ? String(detail).trim().replace(/</g, "") : "";
+  stickyToast(safe
+    ? tr("detailHeaderHtml.translation-failed-detail", { detail: safe })
+    : tr("detailHeaderHtml.translation-failed"));
+}
 async function requestRecipeTranslation(d) {
   const INGEST_CLIENT_TIMEOUT_MS = 100_000;
   syncLangFromStorage();
@@ -5485,8 +5491,9 @@ async function requestRecipeTranslation(d) {
       body: { recipe_id: d.id, target_locale: targetLocale, force: true },
     }, INGEST_CLIENT_TIMEOUT_MS);
     if (res.error || res.data?.ok === false) {
-      console.warn("[translate] failed", res.error?.message || res.data?.error);
-      toast(tr('detailHeaderHtml.translation-failed'));
+      const errMsg = res.error?.message || res.data?.error || "";
+      console.warn("[translate] failed", errMsg);
+      translationFailedToast(errMsg);
     } else {
       d._machineTranslated = true;
       d._resolvedLocale = null;
@@ -5498,6 +5505,7 @@ async function requestRecipeTranslation(d) {
       }
       if (recipeNeedsTranslation(d)) {
         console.warn("[translate] server ok but locale still incomplete after hydrate", d.id, targetLocale);
+        translationFailedToast(tr("detailHeaderHtml.translation-still-incomplete"));
       }
     }
   } finally {
@@ -6391,7 +6399,7 @@ async function saveDetailEdit(d) {
       else console.warn("[detail-edit] bridge align save failed");
     } catch (bridgeErr) {
       console.warn("[detail-edit] bridge align failed", bridgeErr);
-      toast(tr('detailHeaderHtml.translation-failed'));
+      translationFailedToast(bridgeErr?.message);
     }
   }
   detailSaving = false;
@@ -8438,7 +8446,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       }
     } catch (e) {
       console.error("[openImportReview] locale hydrate failed", e);
-      toast(tr('detailHeaderHtml.translation-failed'));
+      translationFailedToast(e?.message);
     }
     render();
     if (isComposite) {
@@ -8531,7 +8539,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         translations = aligned.translations;
       } catch (e) {
         console.error("[openImportReview] align translations failed", e);
-        toast(tr('detailHeaderHtml.translation-failed'));
+        translationFailedToast(e?.message);
         saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
         cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
         saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
@@ -8543,7 +8551,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         parts = await alignImportPartLabels({ sourceLang, reviewLocale, parts, ingredients, touched: true });
       } catch (e) {
         console.error("[openImportReview] align part labels failed", e);
-        toast(tr('detailHeaderHtml.translation-failed'));
+        translationFailedToast(e?.message);
         saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
         cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
         saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
