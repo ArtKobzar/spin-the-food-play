@@ -5618,7 +5618,7 @@ function openDetailInternal(id) {
   detailOpen = id; detailEditMode = false; detailDraft = null; detailSaving = false; detailScaleTo = null;
   detailShowTranslation = false; detailTranslationLoading = false;
   detailComponents = [];
-  renderDetailOverlay();
+  renderDetailOverlay({ animate: true });
   loadDetailComponents(id).then(() => { if (detailOpen === id) renderDetailOverlay(); });
   const d = dish(detailOpen);
   if (d && recipeNeedsTranslation(d)) {
@@ -5655,16 +5655,16 @@ function detailBack() {
     closeDetail();
   }
 }
-function renderDetailOverlay() {
+function renderDetailOverlay({ animate = false } = {}) {
   document.getElementById("detailOverlay")?.remove();
   const d = dish(detailOpen);
   if (!d) { detailOpen = null; return; }
   const wrap = document.createElement("div");
   wrap.id = "detailOverlay";
-  wrap.className = "detail-overlay";
+  wrap.className = animate ? "detail-overlay" : "detail-overlay open";
   wrap.innerHTML = detailView(d);
   document.body.appendChild(wrap);
-  requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
+  if (animate) requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.add("open")));
   wireDetailOverlay(wrap, d);
 }
 
