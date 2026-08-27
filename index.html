@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=c51b299";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=bbeeb45";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2781,11 +2781,12 @@ let lastForkInfo = null;
 // hours of DB archaeology to even confirm nothing happened.
 async function applyEvent(eventType, payload) {
   logClientDiagnostic("apply_event_start", { event_type: eventType });
+  const syncMs = eventType === "recipe_edit_proposed" ? 45_000 : 20_000;
   let data, error;
   try {
     ({ data, error } = await withTimeout(
       sb.rpc("spin_food_apply_event", { p_event_type: eventType, p_payload: payload }),
-      20000,
+      syncMs,
       "Sync"
     ));
   } catch (e) {
@@ -5788,9 +5789,13 @@ function wireDetailOverlay(wrap, d) {
       renderDetailOverlay();
       return;
     }
-    // Fork happens on Save (recipe_edit_proposed → ensure_recipe_in_family), not on
-    // entering edit mode - so Cancel / Annuleren discards the draft without a copy.
-    startDetailDraft(d);
+    let editTarget = d;
+    if (!isRecipeOwner(d)) {
+      const forked = await makeMyVersionAndEdit(d, { silent: true });
+      if (!forked) return;
+      editTarget = forked;
+    }
+    startDetailDraft(editTarget);
     renderDetailOverlay();
   });
   wrap.querySelector("#dtlCancel")?.addEventListener("click", () => { detailEditMode = false; detailDraft = null; renderDetailOverlay(); });
@@ -6014,8 +6019,18 @@ function startDetailDraft(d) {
   };
 }
 
-async function makeMyVersionAndEdit(d) {
-  const { data, error } = await sb.rpc("spin_food_make_my_version", { p_recipe_id: d.id });
+async function makeMyVersionAndEdit(d, { silent = false } = {}) {
+  let data, error;
+  try {
+    ({ data, error } = await withTimeout(
+      sb.rpc("spin_food_make_my_version", { p_recipe_id: d.id }),
+      45_000,
+      "Make my version",
+    ));
+  } catch (e) {
+    toast(tr('makeMyVersion.failed') + (e?.message || String(e)));
+    return null;
+  }
   if (error) {
     toast(tr('makeMyVersion.failed') + error.message);
     return null;
@@ -6025,7 +6040,9 @@ async function makeMyVersionAndEdit(d) {
   if (detailOpen === d.id) detailOpen = newId;
   if (data.forked) {
     promoteRecipeInDeck(newId);
-    toast(tr('saveDetailEdit.saved-to-your-cookbook-this-is-now-your-own-copy'));
+    if (!silent) {
+      toast(tr('saveDetailEdit.saved-to-your-cookbook-this-is-now-your-own-copy'));
+    }
   }
   if (tab === "spin") refreshDeck();
   const fresh = dish(newId);
