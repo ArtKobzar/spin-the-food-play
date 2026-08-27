@@ -234,7 +234,8 @@
   .scard .pdots span, .dtl-hero .pdots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.5); }
   .scard .pdots span.on, .dtl-hero .pdots span.on { background: #fff; }
   .scard .photo-pending-badge, .dtl-hero .photo-pending-badge { position: absolute; top: 10px; right: 10px; z-index: 3; background: rgba(217,119,6,.92); color: #fff; font-size: 10.5px; font-weight: 800; padding: 4px 9px; border-radius: 20px; }
-  .scard .photo-credit, .dtl-hero .photo-credit { position: absolute; bottom: 10px; left: 10px; z-index: 3; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 12px; max-width: 70%; line-height: 1.3; }
+  .scard .photo-credit { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 3; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 12px; max-width: 85%; line-height: 1.3; text-align: center; }
+  .dtl-hero .photo-credit { position: absolute; bottom: 10px; left: 10px; z-index: 3; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 12px; max-width: 70%; line-height: 1.3; }
   /* Top-right "remove this photo" X, approved (non-pending) slides only -
      pending slides show .photo-pending-badge in the same corner instead,
      never both at once (see photoSlideHtml). */
@@ -5027,11 +5028,11 @@ function photoSlideHtml(d, { allowRemove = false } = {}) {
   const prevBtn = idx > 0 ? `<button class="pnav prev" data-pnav="prev" data-dish="${d.id}" aria-label="${tr('photoSlideHtml.previous-photo')}">‹</button>` : "";
   const nextBtn = idx < total - 1 ? `<button class="pnav next" data-pnav="next" data-dish="${d.id}" aria-label="${tr('photoSlideHtml.next-photo')}">›</button>` : "";
   const dots = total > 1 ? `<div class="pdots">${Array.from({ length: total }).map((_, i) => `<span class="${i === idx ? "on" : ""}"></span>`).join("")}</div>` : "";
-  const creditLabel = slide && (slide.family_name || slide.member_name)
+  const creditName = slide && (slide.family_name || slide.member_name)
     ? [slide.family_name, slide.member_name].filter(Boolean).join(" · ")
     : "";
-  const creditBadge = creditLabel
-    ? `<div class="photo-credit">${creditLabel.replace(/</g, "&lt;")}</div>` : "";
+  const creditBadge = creditName
+    ? `<div class="photo-credit">${tr("photoSlideHtml.photo-by", { name: creditName.replace(/</g, "&lt;") })}</div>` : "";
   const removeBtn = (allowRemove && slide && !slide.pending)
     ? `<button class="photo-remove-btn" data-premove="${d.id}" data-photourl="${slide.url.replace(/"/g, "&quot;")}" title="${tr('photoSlideHtml.remove-this-photo')}" aria-label="${tr('photoSlideHtml.remove-this-photo')}">✕</button>` : "";
   const addSlideHtml = isAddSlide ? `<label class="add-photo-cta" data-addphoto="${d.id}">
