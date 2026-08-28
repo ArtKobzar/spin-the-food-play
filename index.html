@@ -432,6 +432,17 @@
   /* Once expanded there's nothing left to "show more" of, so the toggle
      itself goes away rather than sitting there doing nothing (2026-08-24). */
   details[open] > .dtl-more-summary { display: none; }
+
+  /* Compound Recipe Steps detail accordion (issue #65, prototype variant A) */
+  .dtl-step-card { margin: 10px 0; border: 2px solid #eee; border-radius: 14px; overflow: hidden; background: #fff; }
+  .dtl-step-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
+  .dtl-step-num { flex: 0 0 26px; height: 26px; border-radius: 50%; background: #f3f4f6; color: #666; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  .dtl-step-label { flex: 1; font-weight: 700; font-size: 14px; line-height: 1.35; }
+  .dtl-step-caret { color: #bbb; font-size: 12px; transition: transform .15s; }
+  .dtl-step-card.open .dtl-step-caret { transform: rotate(180deg); }
+  .dtl-step-body { padding: 0 14px 14px 50px; font-size: 13px; line-height: 1.7; display: none; }
+  .dtl-step-card.open .dtl-step-body { display: block; }
+  .dtl-step-comp-link { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 10px; border: 1.5px dashed #e9d5ff; color: #6b21a8; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; }
   .dtl-component-tile:active { background: #f0f0f0; }
 </style>
 </head>
@@ -445,7 +456,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=865718f";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=a7d806a";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=a7d806a";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -1914,6 +1926,7 @@ function recipeToDish(r) {
     // "scale this recipe" math is future work (2026-08-09 decision).
     servings: Number.isFinite(r.servings) ? r.servings : null,
     instructions: Array.isArray(r.instructions) ? r.instructions : [],
+    steps: Array.isArray(r.steps) ? r.steps : [],
     tips: Array.isArray(r.tips) ? r.tips : [],
     added_by_member_id: r.added_by_member_id || null,
     pending_edit: r.pending_edit || null,
@@ -5739,13 +5752,83 @@ function collapsibleListHtml(liItems, threshold = 7) {
       <ul style="${ulStyle};margin-top:4px">${rest.join("")}</ul>
     </details>`;
 }
+function stepsHtml(d, stepLayout, { scaleFactor, contentLocale, stepPhotoTiles }) {
+  const esc = (s) => String(s ?? "").replace(/</g, "&lt;");
+  const ingSection = (ings, dishCtx) => {
+    if (!ings.length) return "";
+    const items = ings.map((ing) => `<li>${ingredientLine(ing, scaleFactor, contentLocale, dishCtx)}</li>`).join("");
+    return `<div style="font-weight:700;margin-bottom:4px">${tr("detailView.ingredients")}</div><ul style="padding-left:16px;margin:0 0 10px">${items}</ul>`;
+  };
+  const instrSection = (rawInstrRows, dishCtx) => {
+    if (!rawInstrRows.length) return "";
+    const items = rawInstrRows.map((s, li) => {
+      const text = stepLangText(s, contentLocale);
+      if (!text) return "";
+      const photos = stepPhotoUrls(s);
+      return `<li style="margin-bottom:10px"><div>${esc(text)}</div>${stepPhotoTiles(photos, li, true)}</li>`;
+    }).filter(Boolean).join("");
+    if (!items) return "";
+    return `<div style="font-weight:700;margin-bottom:4px">${tr("detailView.instructions")}</div><ol style="padding-left:16px;margin:0">${items}</ol>`;
+  };
+  return `
+    <div class="sect" style="margin-top:18px">${tr("detailView.steps")}</div>
+    ${stepLayout.steps.map((step, i) => {
+      const openClass = i === 0 ? " open" : "";
+      const label = esc(step.label);
+      if (step.kind === "component") {
+        const compDish = dish(step.component_recipe_id);
+        const compTitle = compDish ? detailTitleName(compDish) : step.label;
+        const badge = `<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;margin-left:6px;background:#faf5ff;color:#6b21a8;border:1px solid #e9d5ff">🔗 ${tr("detailView.saved-recipe-badge")}</span>`;
+        const ings = compDish?.ingredients || [];
+        const rawInstr = Array.isArray(compDish?.instructions) ? compDish.instructions : [];
+        const link = compDish
+          ? `<a class="dtl-step-comp-link" data-componentopen="${compDish.id}" data-stop="1">${esc(tr("detailView.open-component-recipe", { name: compTitle }))} →</a>`
+          : "";
+        return `
+          <div class="dtl-step-card${openClass}" data-stepcard="${i}">
+            <div class="dtl-step-head" data-steptoggle="${i}">
+              <div class="dtl-step-num">${i + 1}</div>
+              <div class="dtl-step-label">${label}${badge}</div>
+              <div class="dtl-step-caret">▾</div>
+            </div>
+            <div class="dtl-step-body">
+              ${ingSection(ings, compDish)}
+              ${instrSection(rawInstr, compDish)}
+              ${link}
+            </div>
+          </div>`;
+      }
+      const ings = sliceIndexedItems(d.ingredients || [], step.ingredient_indexes);
+      const rawInstr = sliceIndexedItems(Array.isArray(d.instructions) ? d.instructions : [], step.instruction_indexes);
+      return `
+        <div class="dtl-step-card${openClass}" data-stepcard="${i}">
+          <div class="dtl-step-head" data-steptoggle="${i}">
+            <div class="dtl-step-num">${i + 1}</div>
+            <div class="dtl-step-label">${label}</div>
+            <div class="dtl-step-caret">▾</div>
+          </div>
+          <div class="dtl-step-body">
+            ${ingSection(ings, d)}
+            ${instrSection(rawInstr, d)}
+          </div>
+        </div>`;
+    }).join("")}`;
+}
 function detailView(d) {
+  // Compound Recipe Steps (issue #65): persisted steps[] drives sequenced
+  // accordion rendering when there are 2+ steps or any component link.
+  // Single phase-only step (or empty steps[]) auto-flattens to the legacy
+  // flat ingredients/instructions layout with zero visual chrome.
+  const stepLayout = buildRecipeDetailStepViewModels(d.steps);
+  const useSequencedSteps = !detailEditMode && !stepLayout.flatten && stepLayout.steps.length > 0;
   // Composite Recipes (issue #54): detailComponents is populated async by
   // openDetailInternal()'s loadDetailComponents() call and re-renders this
   // view once loaded - empty on the very first paint of a composite recipe,
   // so isComposite briefly reads false until that resolves (same pattern
   // every other async-hydrated field on this page already uses).
-  const isComposite = detailComponents.length > 0;
+  const isComposite = useSequencedSteps
+    ? stepLayout.steps.some((s) => s.kind === "component")
+    : detailComponents.length > 0;
   const roleVal = detailEditMode ? detailDraft.dish_role : d.dish_role;
   const courseVal = detailEditMode ? detailDraft.course_category : d.course_category;
   const mealsVal = detailEditMode ? detailDraft.meal_types : new Set(d.meals);
@@ -5801,6 +5884,12 @@ function detailView(d) {
     } else {
       const scaleFactor = detailScaleTo ? detailScaleTo / baseServings : 1;
       const ingLocale = detailContentLocale(d);
+      const componentDishes = useSequencedSteps
+        ? stepLayout.steps
+          .filter((s) => s.kind === "component")
+          .map((s) => dish(s.component_recipe_id))
+          .filter(Boolean)
+        : detailComponents.map((c) => c.dish);
       // Composite Recipes (issue #54, ingredient_rollup: sum_quantities):
       // the section now shows "All Ingredients" - combined totals across
       // the parent's own ingredients plus every linked Component's - not
@@ -5808,7 +5897,7 @@ function detailView(d) {
       // empty (everything claimed by a part). Scaling doesn't apply to a
       // combined-across-components total, same as before this refactor.
       const liItems = isComposite
-        ? combineIngredientTotals([d, ...detailComponents.map(c => c.dish)]).map(row => `<li>${row}</li>`)
+        ? combineIngredientTotals([d, ...componentDishes]).map(row => `<li>${row}</li>`)
         : d.ingredients.map(i => `<li>${ingredientLine(i, scaleFactor, ingLocale, d)}</li>`);
       ingHtml = liItems.length
         ? collapsibleListHtml(liItems)
@@ -5898,7 +5987,7 @@ function detailView(d) {
     // dedicated list UI needed, this plus general search is enough for v1).
     // Tapping a tile is openComponentDetail(), which lands on that
     // Component's own full detail page with ← walking back here.
-    const compositeHtml = !detailComponents.length ? "" : `
+    const compositeHtml = !useSequencedSteps && detailComponents.length ? `
       <div class="sect" style="margin-top:18px">🧩 ${tr('detailView.composite-recipe')}</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         ${detailComponents.map((c, ci) => {
@@ -5939,8 +6028,9 @@ function detailView(d) {
       <div style="margin-bottom:6px">${servingsHtml}</div>
       <div class="sect">${isComposite ? tr('detailView.all-ingredients') : tr('detailView.ingredients')}</div>
       ${ingHtml}
-      <div class="sect" style="margin-top:18px">${tr('detailView.instructions')}</div>
-      ${instrHtml}
+      ${useSequencedSteps
+        ? stepsHtml(d, stepLayout, { scaleFactor: detailScaleTo ? detailScaleTo / baseServings : 1, contentLocale: detailContentLocale(d), stepPhotoTiles })
+        : `<div class="sect" style="margin-top:18px">${tr('detailView.instructions')}</div>${instrHtml}`}
       ${tipsHtml}
       ${compositeHtml}
       ${aboutHtml}
@@ -5956,7 +6046,12 @@ function detailView(d) {
 
 function wireDetailOverlay(wrap, d) {
   wrap.querySelector("#dtlBack")?.addEventListener("click", detailBack);
-  wrap.querySelectorAll("[data-componentopen]").forEach(card => card.addEventListener("click", () => {
+  wrap.querySelectorAll("[data-steptoggle]").forEach(head => head.addEventListener("click", (e) => {
+    if (e.target.closest("[data-stop]")) return;
+    head.closest("[data-stepcard]")?.classList.toggle("open");
+  }));
+  wrap.querySelectorAll("[data-componentopen]").forEach(card => card.addEventListener("click", (e) => {
+    e.stopPropagation();
     openComponentDetail(card.dataset.componentopen);
   }));
   // Photo carousel on the hero - identical wiring to the Spin card's, just
@@ -8643,6 +8738,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       .filter(p => p.label && (p.ingredient_indexes.length > 0 || p.instruction_indexes.length > 0));
 
     const willCreateComponents = finalSteps.some(s => s.save_as_recipe);
+    const allTogglesOff = finalSteps.length > 0 && finalSteps.every(s => !s.save_as_recipe);
+    const persistSteps = !allTogglesOff && finalSteps.length > 0;
 
     const finalDraft = {
       source_lang: sourceLang,
@@ -8654,7 +8751,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       instructions: finalInstructions,
       tips: tips.map(t => (t || "").trim()).filter(Boolean),
       is_composite: willCreateComponents,
-      steps: willCreateComponents ? finalSteps : [],
+      steps: persistSteps ? finalSteps : [],
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
