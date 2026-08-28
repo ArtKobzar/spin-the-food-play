@@ -445,7 +445,7 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=89381d5";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=865718f";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -8002,33 +8002,30 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       : { text: s.text ?? "", photo_urls: stepPhotoUrls(s) }
   );
   let tips = (draft.tips || []).map(t => (typeof t === "string" ? t : (t?.text ?? "")));
-  // Composite Recipes (docs/DECISION_LOG.md 2026-08-24, issue #54): parts[]
-  // groups ingredient/instruction indexes into proposed sub-recipes (e.g.
-  // "Marinade"). full_review_editable (decided) - the user can reject the
-  // whole split (uncheck the toggle), reassign any row to a different part
-  // or back to the parent "assembly", rename/add/remove parts, before save.
-  let parts = Array.isArray(draft.parts)
-    ? draft.parts.map(p => ({
-        label: cleanPartLabelClient(p.label || ""),
-        labelLocales: p.label_locales || p.labelLocales || null,
-        ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
-        instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
-      }))
-    : [];
-  let isComposite = !!draft.is_composite && parts.length > 0;
+  // Compound Recipe Steps (issue #61/#66): steps[] groups ingredient/instruction
+  // indexes into proposed cooking phases. full_review_editable - the user can
+  // reassign rows between steps, rename steps, and toggle each step's
+  // save_as_recipe before save.
+  const rawSteps = Array.isArray(draft.steps) ? draft.steps : (Array.isArray(draft.parts) ? draft.parts : []);
+  let steps = rawSteps.map(p => ({
+    label: cleanPartLabelClient(p.label || ""),
+    labelLocales: p.label_locales || p.labelLocales || null,
+    ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
+    instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
+    standalone_candidate: p.standalone_candidate === false ? false : true,
+    save_as_recipe: p.save_as_recipe ?? (p.standalone_candidate !== false),
+  }));
+  const hasSteps = steps.length > 0;
   let importReviewTouched = false;
   const markImportReviewTouched = () => { importReviewTouched = true; };
-  const partIndexForIngredient = (i) => parts.findIndex(p => p.ingredient_indexes.includes(i));
-  const partIndexForInstruction = (i) => parts.findIndex(p => p.instruction_indexes.includes(i));
-  const assignRowToPart = (kind, i, partIdx) => {
-    parts.forEach(p => { p[kind] = p[kind].filter(x => x !== i); });
-    if (partIdx >= 0 && parts[partIdx]) parts[partIdx][kind].push(i);
+  const stepIndexForIngredient = (i) => steps.findIndex(p => p.ingredient_indexes.includes(i));
+  const stepIndexForInstruction = (i) => steps.findIndex(p => p.instruction_indexes.includes(i));
+  const assignRowToStep = (kind, i, stepIdx) => {
+    steps.forEach(p => { p[kind] = p[kind].filter(x => x !== i); });
+    if (stepIdx >= 0 && steps[stepIdx]) steps[stepIdx][kind].push(i);
   };
-  // A row's index shifts down by one for every row deleted before it -
-  // keep every part's stored indexes in sync or a later save would point
-  // sub-recipes at the wrong (post-delete) ingredients/instructions.
-  const shiftPartIndexesAfterDelete = (kind, deletedIdx) => {
-    parts.forEach(p => {
+  const shiftStepIndexesAfterDelete = (kind, deletedIdx) => {
+    steps.forEach(p => {
       p[kind] = p[kind].filter(x => x !== deletedIdx).map(x => (x > deletedIdx ? x - 1 : x));
     });
   };
@@ -8075,8 +8072,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   };
   const endDrag = () => {
     if (dragState && dragOverZone) {
-      const partIdx = Number(dragOverZone.dataset.dropzone.split(":")[1]);
-      assignRowToPart(dragState.kind, dragState.idx, partIdx);
+      const stepIdx = Number(dragOverZone.dataset.dropzone.split(":")[1]);
+      assignRowToStep(dragState.kind, dragState.idx, stepIdx);
     }
     dragState = null;
     clearDragVisuals();
@@ -8146,37 +8143,61 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         <textarea data-instrinput="${i}" rows="2" style="flex:1;min-width:0;border:1px solid #eee;border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit;box-sizing:border-box">${stepText(s, i)}</textarea>
         <button class="dtl-back" data-instrdel="${i}" style="width:28px;height:28px;min-width:28px;flex-shrink:0;font-size:12px;color:#ef4444;padding:0;margin-top:2px">✕</button>
       </div>`;
-  // One visually distinct card per sub-recipe (Recipe Header / Ingredients: /
-  // Instructions:, same shape as the saved detail view's component cards),
-  // plus a trailing "Assembly" card for anything not claimed by a part.
-  const GROUP_THEMES = COMPONENT_GROUP_THEMES;
-  const ASSEMBLY_THEME = { bg: "#f9fafb", border: "#e5e7eb", text: "#374151" };
-  const groupDefs = () => [
-    ...parts.map((p, pi) => ({
-      partIdx: pi,
-      label: partLabelForReview(parts, pi, reviewLocale, sourceLang) || `${tr('openImportReview.sub-recipe-name')} ${pi + 1}`,
-      theme: GROUP_THEMES[pi % GROUP_THEMES.length],
-    })),
-    { partIdx: -1, label: tr('openImportReview.assembly'), theme: ASSEMBLY_THEME },
-  ];
-  const groupCardHtml = (g) => {
-    const ingRows = ingredients.map((ing, i) => ({ ing, i })).filter(({ i }) => partIndexForIngredient(i) === g.partIdx);
-    const instrRows = instructions.map((s, i) => ({ s, i })).filter(({ i }) => partIndexForInstruction(i) === g.partIdx);
-    const dropHint = `<div style="font-size:11px;color:#aaa;padding:8px;border:1px dashed ${g.theme.border};border-radius:8px;text-align:center">${tr('openImportReview.drag-items-here')}</div>`;
+  const standaloneStepCount = () => steps.filter(s => s.save_as_recipe).length;
+  const stepSummaryHtml = () => {
+    const n = standaloneStepCount();
+    const total = 1 + n;
+    const totalPlural = total === 1 ? "" : "s";
+    const standalonePlural = n === 1 ? "" : "s";
+    const msg = n > 0
+      ? tr("openImportReview.step-summary-with-standalone", { total, n, standalonePlural })
+      : tr("openImportReview.step-summary", { total, totalPlural });
+    return `<div id="revStepSummary" style="margin-top:10px;padding:10px 14px;background:var(--amber-tint,#fff8e0);border:1.5px solid var(--amber,#FFE34D);border-radius:14px;font-size:13px;font-weight:700;color:var(--amber-text,#6b5400);line-height:1.45">${msg}</div>`;
+  };
+  const flowToggleChipHtml = (si) => {
+    const on = steps[si].save_as_recipe;
+    const onStyle = "background:#ecfdf5;border-color:#10b981;color:#047857";
+    const offStyle = "background:#f9fafb;border-color:#e5e7eb;color:#999";
+    return `<span data-steptoggle="${si}" style="font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;border:1.5px solid;cursor:pointer;white-space:nowrap;${on ? onStyle : offStyle}">${on ? tr("openImportReview.save-as-recipe-on") : tr("openImportReview.save-as-recipe-off")}</span>`;
+  };
+  const stepDividerHtml = (si) => {
+    const label = partLabelForReview(steps, si, reviewLocale, sourceLang) || `${tr("openImportReview.step-label", { n: si + 1 })}`;
     return `
-      <div style="margin-bottom:14px;padding:12px;border:2px solid ${g.theme.border};border-radius:14px;background:${g.theme.bg}">
-        <div style="font-size:13px;font-weight:800;color:${g.theme.text};margin-bottom:8px">${g.label.replace(/</g, "&lt;")}</div>
-        <div style="font-size:10px;font-weight:800;color:${g.theme.text};text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;opacity:.75">${tr('openImportReview.ingredients')}</div>
-        <div data-dropzone="ingredient_indexes:${g.partIdx}" style="min-height:8px">
-          ${ingRows.map(({ ing, i }) => ingRowHtml(ing, i, true)).join("") || dropHint}
-        </div>
-        <button class="mini-btn" data-addingpart="${g.partIdx}" style="margin-top:4px;font-size:11px">+ ${tr('openImportReview.add-ingredient')}</button>
-        <div style="font-size:10px;font-weight:800;color:${g.theme.text};text-transform:uppercase;letter-spacing:.04em;margin:10px 0 4px;opacity:.75">${tr('openImportReview.instructions')}</div>
-        <div data-dropzone="instruction_indexes:${g.partIdx}" style="min-height:8px">
-          ${instrRows.map(({ s, i }, li) => instrRowHtml(s, i, li + 1, true)).join("") || dropHint}
-        </div>
-        <button class="mini-btn" data-addinstrpart="${g.partIdx}" style="margin-top:4px;font-size:11px">+ ${tr('openImportReview.add-step')}</button>
+      <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px">
+        <input data-steplabel="${si}" value="${label.replace(/"/g, "&quot;")}" placeholder="${tr("openImportReview.sub-recipe-name")}" style="flex:0 1 auto;min-width:80px;max-width:55%;font-weight:800;font-size:13px;border:none;border-bottom:1.5px solid #e5e7eb;background:transparent;padding:2px 0;box-sizing:border-box">
+        <div style="flex:1;height:1.5px;background:#e5e7eb;min-width:12px"></div>
+        ${flowToggleChipHtml(si)}
       </div>`;
+  };
+  const stepDropZoneHtml = (stepIdx, kind, rowsHtml) => {
+    const dropHint = `<div style="font-size:11px;color:#aaa;padding:8px;border:1px dashed #e5e7eb;border-radius:8px;text-align:center">${tr("openImportReview.drag-items-here")}</div>`;
+    return `<div data-dropzone="${kind}:${stepIdx}" style="min-height:8px;padding-left:4px">${rowsHtml || dropHint}</div>`;
+  };
+  const stepFlowHtml = () => {
+    let html = stepSummaryHtml();
+    steps.forEach((step, si) => {
+      const ingRows = ingredients.map((ing, i) => ({ ing, i })).filter(({ i }) => stepIndexForIngredient(i) === si);
+      const instrRows = instructions.map((s, i) => ({ s, i })).filter(({ i }) => stepIndexForInstruction(i) === si);
+      html += stepDividerHtml(si);
+      html += stepDropZoneHtml(si, "ingredient_indexes", ingRows.map(({ ing, i }) => ingRowHtml(ing, i, true)).join(""));
+      html += `<button class="mini-btn" data-addingstep="${si}" style="margin:4px 0 8px 4px;font-size:11px">+ ${tr("openImportReview.add-ingredient")}</button>`;
+      html += stepDropZoneHtml(si, "instruction_indexes", instrRows.map(({ s, i }, li) => instrRowHtml(s, i, li + 1, true)).join(""));
+      html += `<button class="mini-btn" data-addinstrstep="${si}" style="margin:4px 0 0 4px;font-size:11px">+ ${tr("openImportReview.add-step")}</button>`;
+    });
+    const asmIngRows = ingredients.map((ing, i) => ({ ing, i })).filter(({ i }) => stepIndexForIngredient(i) === -1);
+    const asmInstrRows = instructions.map((s, i) => ({ s, i })).filter(({ i }) => stepIndexForInstruction(i) === -1);
+    if (hasSteps) {
+      html += `
+        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px">
+          <span style="font-weight:800;font-size:13px;white-space:nowrap">${tr("openImportReview.assembly")}</span>
+          <div style="flex:1;height:1.5px;background:#e5e7eb"></div>
+        </div>`;
+      html += stepDropZoneHtml(-1, "ingredient_indexes", asmIngRows.map(({ ing, i }) => ingRowHtml(ing, i, true)).join(""));
+      html += `<button class="mini-btn" data-addingstep="-1" style="margin:4px 0 8px 4px;font-size:11px">+ ${tr("openImportReview.add-ingredient")}</button>`;
+      html += stepDropZoneHtml(-1, "instruction_indexes", asmInstrRows.map(({ s, i }, li) => instrRowHtml(s, i, li + 1, true)).join(""));
+      html += `<button class="mini-btn" data-addinstrstep="-1" style="margin:4px 0 0 4px;font-size:11px">+ ${tr("openImportReview.add-step")}</button>`;
+    }
+    return html;
   };
   const render = () => {
     const groupsEl = v.querySelector("#revGroups");
@@ -8184,13 +8205,13 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     const ingAddBtn = v.querySelector("#revIngAdd");
     const instrSectEl = v.querySelector("#revInstrSect");
     const instrAddBtn = v.querySelector("#revInstrAdd");
-    if (isComposite) {
+    if (hasSteps) {
       ingSectEl.style.display = "none"; ingAddBtn.style.display = "none";
       instrSectEl.style.display = "none"; instrAddBtn.style.display = "none";
       v.querySelector("#revIng").innerHTML = "";
       v.querySelector("#revInstr").innerHTML = "";
       groupsEl.style.display = "";
-      groupsEl.innerHTML = groupDefs().map(groupCardHtml).join("");
+      groupsEl.innerHTML = stepFlowHtml();
     } else {
       groupsEl.style.display = "none"; groupsEl.innerHTML = "";
       ingSectEl.style.display = ""; ingAddBtn.style.display = "";
@@ -8311,63 +8332,6 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     }));
   };
 
-  // Composite review UX (2026-08-26 follow-up): only wrap this in the blue
-  // "something was detected" callout box when a split is actually proposed
-  // (isComposite true). Most imports are a single dish - rendering the same
-  // boxed callout unconditionally made every review screen look like a
-  // warning had fired, even when nothing was detected. Unchecked state is
-  // now a plain, low-emphasis checkbox for the user to opt in manually.
-  const partsHtml = () => isComposite ? `
-    <div style="margin-top:10px;padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px">
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#1e40af;cursor:pointer">
-        <input type="checkbox" id="revCompositeToggle" checked>
-        🧩 ${tr('openImportReview.composite-toggle-label')}
-      </label>
-      <div id="revPartsList" style="margin-top:8px">
-        ${parts.map((p, pi) => `
-          <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;width:100%;min-width:0;box-sizing:border-box" data-partidx="${pi}">
-            <input data-partlabel="${pi}" value="${partLabelForReview(parts, pi, reviewLocale, sourceLang).replace(/"/g, "&quot;")}" placeholder="${tr('openImportReview.sub-recipe-name')}" style="flex:1;min-width:0;border:1px solid #bfdbfe;border-radius:8px;padding:6px;font-size:13px;box-sizing:border-box">
-            <button class="dtl-back" data-partdel="${pi}" style="width:28px;height:28px;min-width:28px;flex-shrink:0;font-size:12px;color:#ef4444;padding:0">✕</button>
-          </div>`).join("")}
-      </div>
-      <button class="mini-btn" id="revPartAdd" style="margin-top:2px">+ ${tr('openImportReview.add-sub-recipe')}</button>
-      <div style="font-size:11px;color:#1e40af;margin-top:6px">${tr('openImportReview.composite-hint')}</div>
-    </div>` : `
-    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#888;cursor:pointer;margin-top:6px">
-      <input type="checkbox" id="revCompositeToggle">
-      🧩 ${tr('openImportReview.composite-toggle-label')}
-    </label>`;
-  const wireParts = () => {
-    const toggle = v.querySelector("#revCompositeToggle");
-    if (toggle) toggle.onchange = () => {
-      isComposite = toggle.checked;
-      if (isComposite && parts.length === 0) parts.push({ label: "", ingredient_indexes: [], instruction_indexes: [] });
-      v.querySelector("#revParts").innerHTML = partsHtml();
-      wireParts();
-      render();
-    };
-    v.querySelectorAll("[data-partlabel]").forEach(inp => inp.addEventListener("input", () => {
-      markImportReviewTouched();
-      const pi = Number(inp.dataset.partlabel);
-      if (!parts[pi].labelLocales) parts[pi].labelLocales = {};
-      parts[pi].labelLocales[reviewLocale] = inp.value;
-      if (reviewLocale === sourceLang) parts[pi].label = inp.value;
-    }));
-    v.querySelectorAll("[data-partdel]").forEach(btn => btn.addEventListener("click", () => {
-      parts.splice(Number(btn.dataset.partdel), 1);
-      v.querySelector("#revParts").innerHTML = partsHtml();
-      wireParts();
-      render();
-    }));
-    const addBtn = v.querySelector("#revPartAdd");
-    if (addBtn) addBtn.onclick = () => {
-      parts.push({ label: "", ingredient_indexes: [], instruction_indexes: [] });
-      v.querySelector("#revParts").innerHTML = partsHtml();
-      wireParts();
-      render();
-    };
-  };
-
   const heroHtml = () => heroPhotoUrl ? `
     <div id="revHeroWrap" style="position:relative;margin-bottom:10px">
       <img src="${heroPhotoUrl}" style="width:100%;max-height:180px;object-fit:cover;border-radius:12px;display:block">
@@ -8386,7 +8350,6 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:13px;color:#666">👥 ${tr('openImportReview.serves')} <input id="revServings" type="number" min="1" value="${servings ?? ""}" placeholder="4" style="width:56px;border:1px solid #eee;border-radius:8px;padding:5px 6px;font-size:13px"></div>
     ${dqIssuesHtml()}
     ${missingQtyHtml()}
-    <div id="revParts">${partsHtml()}</div>
     <div id="revGroups" style="display:none"></div>
     <div class="sect" id="revIngSect">${tr('openImportReview.ingredients')}</div>
     <div id="revIng"><div style="font-size:12px;color:#aaa;padding:4px 0">${tr('anonymous.ai-is-translating')}</div></div>
@@ -8403,7 +8366,6 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     <div id="revSaveProgressTrack" style="height:4px;background:#eee;border-radius:2px;overflow:hidden;display:none"><div id="revSaveProgressFill" style="height:100%;width:0%;background:var(--amber,#f59e0b);transition:width .25s ease"></div></div>`,
     { preventBackdropClose: true });
   wireTax();
-  wireParts();
 
   v.querySelector("#revCancel").onclick = () => closeModal();
   const wireHero = () => {
@@ -8444,7 +8406,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     v.querySelectorAll("[data-ingdel]").forEach(btn => btn.addEventListener("click", () => {
       markImportReviewTouched();
       const i = Number(btn.dataset.ingdel);
-      shiftPartIndexesAfterDelete("ingredient_indexes", i);
+      shiftStepIndexesAfterDelete("ingredient_indexes", i);
       ingredients.splice(i, 1); render();
     }));
     v.querySelectorAll("[data-instrinput]").forEach(ta => ta.addEventListener("input", () => {
@@ -8460,21 +8422,33 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     v.querySelectorAll("[data-instrdel]").forEach(btn => btn.addEventListener("click", () => {
       markImportReviewTouched();
       const i = Number(btn.dataset.instrdel);
-      shiftPartIndexesAfterDelete("instruction_indexes", i);
+      shiftStepIndexesAfterDelete("instruction_indexes", i);
       instructions.splice(i, 1); render();
     }));
-    v.querySelectorAll("[data-addingpart]").forEach(btn => btn.addEventListener("click", () => {
+    v.querySelectorAll("[data-addingstep]").forEach(btn => btn.addEventListener("click", () => {
       markImportReviewTouched();
-      const partIdx = Number(btn.dataset.addingpart);
+      const stepIdx = Number(btn.dataset.addingstep);
       ingredients.push({ name: "", qty: null, unit: null, note: null, section: null });
-      if (partIdx >= 0) assignRowToPart("ingredient_indexes", ingredients.length - 1, partIdx);
+      if (stepIdx >= 0) assignRowToStep("ingredient_indexes", ingredients.length - 1, stepIdx);
       render();
     }));
-    v.querySelectorAll("[data-addinstrpart]").forEach(btn => btn.addEventListener("click", () => {
+    v.querySelectorAll("[data-addinstrstep]").forEach(btn => btn.addEventListener("click", () => {
       markImportReviewTouched();
-      const partIdx = Number(btn.dataset.addinstrpart);
+      const stepIdx = Number(btn.dataset.addinstrstep);
       instructions.push({ text: "", photo_urls: [] });
-      if (partIdx >= 0) assignRowToPart("instruction_indexes", instructions.length - 1, partIdx);
+      if (stepIdx >= 0) assignRowToStep("instruction_indexes", instructions.length - 1, stepIdx);
+      render();
+    }));
+    v.querySelectorAll("[data-steplabel]").forEach(inp => inp.addEventListener("input", () => {
+      markImportReviewTouched();
+      const si = Number(inp.dataset.steplabel);
+      if (!steps[si].labelLocales) steps[si].labelLocales = {};
+      steps[si].labelLocales[reviewLocale] = inp.value;
+      if (reviewLocale === sourceLang) steps[si].label = inp.value;
+    }));
+    v.querySelectorAll("[data-steptoggle]").forEach(chip => chip.addEventListener("click", () => {
+      const si = Number(chip.dataset.steptoggle);
+      steps[si].save_as_recipe = !steps[si].save_as_recipe;
       render();
     }));
     v.querySelectorAll("[data-dragrow]").forEach(handle => {
@@ -8510,19 +8484,15 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     const draftSnap = { source_lang: sourceLang, title, translations, ingredients, instructions, tips };
     const needsHydrate = reviewLocale !== sourceLang
       && !importDraftLocaleComplete(draftSnap, reviewLocale);
-    if (isComposite && parts.length > 0) {
+    if (hasSteps && steps.length > 0) {
       try {
-        parts = await hydrateImportPartLabels(parts, sourceLang, ingredients);
+        steps = await hydrateImportPartLabels(steps, sourceLang, ingredients);
       } catch (e) {
-        console.error("[openImportReview] part label hydrate failed", e);
+        console.error("[openImportReview] step label hydrate failed", e);
       }
     }
     if (!needsHydrate) {
       render();
-      if (isComposite) {
-        v.querySelector("#revParts").innerHTML = partsHtml();
-        wireParts();
-      }
       return;
     }
     try {
@@ -8537,10 +8507,6 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       translationFailedToast(e?.message);
     }
     render();
-    if (isComposite) {
-      v.querySelector("#revParts").innerHTML = partsHtml();
-      wireParts();
-    }
   };
   bootReviewLocale();
 
@@ -8634,11 +8600,11 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
         return;
       }
     }
-    if (importReviewTouched && isComposite && parts.length > 0) {
+    if (importReviewTouched && hasSteps && steps.length > 0) {
       try {
-        parts = await alignImportPartLabels({ sourceLang, reviewLocale, parts, ingredients, touched: true });
+        steps = await alignImportPartLabels({ sourceLang, reviewLocale, parts: steps, ingredients, touched: true });
       } catch (e) {
-        console.error("[openImportReview] align part labels failed", e);
+        console.error("[openImportReview] align step labels failed", e);
         translationFailedToast(e?.message);
         saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
         cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
@@ -8649,7 +8615,7 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     setSaveProgress(0, tr('anonymous.saving-recipe'));
     const sourceTitle = importDraftTitle({ source_lang: sourceLang, title, translations }, sourceLang);
     // Empty rows get dropped below, which reindexes ingredients[]/instructions[]
-    // - parts[] stores positions into those same arrays, so every part index
+    // - steps[] stores positions into those same arrays, so every step index
     // must be remapped through the exact same old-index -> new-index mapping
     // (and dropped if it pointed at a row that just got filtered out), or a
     // composite split would silently point at the wrong ingredients/steps.
@@ -8665,14 +8631,18 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       .filter((_, idx) => instrKeep[idx])
       .map(s => ({ text: (s.text || "").trim(), photo_urls: s.photo_urls || [] }));
 
-    const finalParts = (isComposite ? parts : [])
+    const finalSteps = (hasSteps ? steps : [])
       .map(p => ({
         label: (p.label || "").trim(),
         label_locales: p.labelLocales || undefined,
         ingredient_indexes: p.ingredient_indexes.map(i => ingOldToNew.get(i)).filter(i => i !== undefined),
         instruction_indexes: p.instruction_indexes.map(i => instrOldToNew.get(i)).filter(i => i !== undefined),
+        standalone_candidate: p.standalone_candidate !== false,
+        save_as_recipe: !!p.save_as_recipe,
       }))
       .filter(p => p.label && (p.ingredient_indexes.length > 0 || p.instruction_indexes.length > 0));
+
+    const willCreateComponents = finalSteps.some(s => s.save_as_recipe);
 
     const finalDraft = {
       source_lang: sourceLang,
@@ -8683,8 +8653,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       ingredients: finalIngredients,
       instructions: finalInstructions,
       tips: tips.map(t => (t || "").trim()).filter(Boolean),
-      is_composite: finalParts.length > 0,
-      parts: finalParts,
+      is_composite: willCreateComponents,
+      steps: willCreateComponents ? finalSteps : [],
       photo_url: heroPhotoUrl,
       youtube_url: youtubeUrl,
       servings: servings || null,
