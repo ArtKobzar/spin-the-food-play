@@ -450,7 +450,6 @@
      flagged as standalone_candidate - everything else renders the same
      switch dimmed and inert so it's clear why it can't be toggled. */
   .stf-savetoggle { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; flex-shrink: 0; }
-  .stf-savetoggle.disabled { cursor: not-allowed; opacity: .35; }
   .stf-savetoggle-track { position: relative; width: 30px; height: 17px; border-radius: 999px; background: #e5e7eb; transition: background .15s ease; flex-shrink: 0; }
   .stf-savetoggle-track.on { background: #10b981; }
   .stf-savetoggle-knob { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s ease; }
@@ -8119,11 +8118,17 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
     ingredient_indexes: Array.isArray(p.ingredient_indexes) ? [...p.ingredient_indexes] : [],
     instruction_indexes: Array.isArray(p.instruction_indexes) ? [...p.instruction_indexes] : [],
     standalone_candidate: p.standalone_candidate === false ? false : true,
-    // save_as_recipe can only be on for steps the extractor actually flagged
-    // as a reusable sub-recipe - the toggle in the UI is non-interactive for
-    // everything else, so force it off here too rather than trusting a
-    // stray true from a stored draft.
-    save_as_recipe: p.standalone_candidate === false ? false : (p.save_as_recipe ?? true),
+    // standalone_candidate only sets the *default* toggle position, not
+    // whether it's clickable - buildStepsFromSections (the deterministic
+    // section-name fallback used when the model returns no usable steps[]
+    // of its own, see recipe-import-i18n.ts) always sets standalone_candidate
+    // false because it has no basis to judge reusability, even for an
+    // obviously reusable step like "Meatballs". The reviewer's toggle is
+    // exactly what's supposed to cover that gap, so it must stay editable
+    // either way (2026-08-31 follow-up - toggle was wrongly locked disabled
+    // for every non-candidate step, silently blocking real sub-recipes from
+    // being saved).
+    save_as_recipe: p.save_as_recipe ?? (p.standalone_candidate !== false),
   }));
   const hasSteps = steps.length > 0;
   let importReviewTouched = false;
@@ -8272,13 +8277,15 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
   };
   const flowToggleChipHtml = (si) => {
     const step = steps[si];
-    const eligible = step.standalone_candidate;
     const on = step.save_as_recipe;
-    const title = eligible
-      ? (on ? tr("openImportReview.save-as-recipe-on") : tr("openImportReview.save-as-recipe-off"))
-      : tr("openImportReview.save-as-recipe-not-detected");
+    // standalone_candidate only picks the default position (see the steps
+    // init above) - always clickable either way, so a step the auto-detector
+    // missed (e.g. an obviously reusable "Meatballs" step that only got
+    // split out by the deterministic section-name fallback) can still be
+    // saved as its own recipe.
+    const title = on ? tr("openImportReview.save-as-recipe-on") : tr("openImportReview.save-as-recipe-off");
     return `
-      <span class="stf-savetoggle${eligible ? "" : " disabled"}"${eligible ? ` data-steptoggle="${si}"` : ""} title="${title.replace(/"/g, "&quot;")}">
+      <span class="stf-savetoggle" data-steptoggle="${si}" title="${title.replace(/"/g, "&quot;")}">
         <span aria-hidden="true">💾</span>
         <span class="stf-savetoggle-track${on ? " on" : ""}"><span class="stf-savetoggle-knob"></span></span>
       </span>`;
