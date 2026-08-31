@@ -8699,7 +8699,8 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
           await loadFilterVocabulary();
           confirmCuisine = cuisineResolved.slug;
         } catch (cuiErr) {
-          toast(tr('saveDetailEdit.cuisine-add-failed') + (cuiErr.message || cuiErr));
+          console.error("[openImportReview] cuisine add failed", cuiErr);
+          stickyToast(tr('saveDetailEdit.cuisine-add-failed') + (cuiErr.message || cuiErr));
           saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('openImportReview.save');
           cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
           saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
@@ -8832,7 +8833,15 @@ function openImportReview(draftRaw, jobId, targetRecipeId, sourceType) {
       // spin-food-import's confirm is idempotent on job_id now - a retry
       // either re-attempts cleanly or recognizes the job as already
       // confirmed and hands back the same recipe, never a duplicate.
-      toast((error && error.message) || data?.error || tr('anonymous.save-failed'));
+      // 2026-08-31: this used to be a plain toast() (2.2s auto-dismiss) - a
+      // real server error message (e.g. a SQL exception detail) needs more
+      // than that to actually be readable, and a live report of "there was
+      // an error but I couldn't tell [what it said]" confirmed it was
+      // disappearing before it could be read. stickyToast stays up 15s / until
+      // tapped, same as every other save-failure path in this file.
+      const saveErrMsg = (error && error.message) || data?.error || tr('anonymous.save-failed');
+      console.error("[openImportReview] confirm failed", { error, data });
+      stickyToast(saveErrMsg);
       saveBtn.disabled = false; saveBtn.textContent = "💾 " + tr('anonymous.save');
       cancelBtn.disabled = false; cancelBtn.style.opacity = 1;
       saveStatusEl.textContent = ""; saveProgressTrack.style.display = "none";
