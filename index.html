@@ -1000,6 +1000,9 @@ const UNIT_ALIASES = {
   "°c": "celsius", c: "celsius", celsius: "celsius",
   "°f": "fahrenheit", f: "fahrenheit", fahrenheit: "fahrenheit",
   pc: "piece", pcs: "piece", piece: "piece", pieces: "piece", clove: "piece", cloves: "piece", pot: "piece", potje: "piece",
+  head: "head", heads: "head", "головка": "head", "головки": "head", "головок": "head",
+  bunch: "bunch", bunches: "bunch", "пучок": "bunch", "пучки": "bunch",
+  whole: "whole", wholes: "whole",
   el: "tablespoon", eetlepel: "tablespoon", tl: "teaspoon", theelepel: "teaspoon",
   takje: "sprig", takjes: "sprig", snufje: "pinch", snuf: "pinch",
   "шт": "piece", "шт.": "piece", "штука": "piece", "штуки": "piece", "штук": "piece",
@@ -1031,7 +1034,8 @@ function matchUnitSlug(text) {
 const UNIT_SHORT_KEYS = {
   gram: "unit.short.gram", kilogram: "unit.short.kilogram", ounce: "unit.short.ounce", pound: "unit.short.pound",
   milliliter: "unit.short.milliliter", liter: "unit.short.liter", teaspoon: "unit.short.teaspoon", tablespoon: "unit.short.tablespoon",
-  cup: "unit.short.cup", piece: "unit.short.piece", celsius: "unit.short.celsius", fahrenheit: "unit.short.fahrenheit",
+  cup: "unit.short.cup", piece: "unit.short.piece", head: "unit.short.head", bunch: "unit.short.bunch", whole: "unit.short.whole",
+  celsius: "unit.short.celsius", fahrenheit: "unit.short.fahrenheit",
   sprig: "unit.short.sprig", pinch: "unit.short.pinch",
 };
 // Phase 2 i18n: labels_i18n for uk/nl; name_en/name_ru mirrors for en/ru.
