@@ -466,8 +466,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ae36688";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=ae36688";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=5b9cfe9";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=5b9cfe9";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -9054,6 +9054,10 @@ async function startGamePlumbingIfReady() {
 window.addEventListener("message", (event) => {
   if (!isAllowedStfParentOrigin(event.origin)) return;
   const msg = event.data;
+  if (msg?.type === "STF_SNAPSHOT_REFRESH") {
+    if (membership) pullLatest();
+    return;
+  }
   if (!msg || msg.type !== "STF_SESSION" || !msg.payload) return;
   const { access_token, refresh_token } = msg.payload;
   if (!access_token || !refresh_token) return;
