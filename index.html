@@ -466,8 +466,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=beba297";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=beba297";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=ae36688";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=ae36688";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2865,10 +2865,16 @@ async function load() {
   } catch (e) {
     console.error("[stf-data] load failed:", e);
     loadError = e?.message || String(e);
-    if (!game) game = seedGame();
-    if (me) {
-      const cached = restoreProfile(me);
-      if (cached) game.profiles[me] = cached;
+    // Members must never fall through to seedGame() — that skips the retry UI
+    // and render() crashes on empty demo state (toast: "Something went wrong").
+    if (membership) {
+      game = null;
+    } else {
+      if (!game) game = seedGame();
+      if (me) {
+        const cached = restoreProfile(me);
+        if (cached) game.profiles[me] = cached;
+      }
     }
   }
 }
@@ -2880,7 +2886,13 @@ async function kickLoad() {
     await load();
   } finally {
     loadInFlight = false;
-    render();
+    try {
+      render();
+    } catch (e) {
+      console.error("[stf-render] kickLoad render failed:", e);
+      logClientDiagnostic("kickload_render_exception", { message: e?.message || String(e), stack: e?.stack || null });
+      toast(tr('anonymous.something-went-wrong-please-try-that-again'));
+    }
   }
 }
 
@@ -3307,9 +3319,29 @@ function renderTzGate() {
     <button class="btn btn-primary ob-next" id="tzGateNext" style="margin-top:16px">${tr('renderTzGate.continue')}</button>
   </div>`;
   wireTimezoneSelect();
-  document.getElementById("tzGateNext").onclick = () => {
+  document.getElementById("tzGateNext").onclick = async () => {
+    const btn = document.getElementById("tzGateNext");
+    btn.disabled = true;
     stfSet("stf_tz_confirmed", "1");
     stfSet("stf_pending_tz", ownerSetupTz);
+    if (membership && ownerSetupTz) {
+      try {
+        const { error } = await rpcWithTimeout(
+          "spin_food_set_family_timezone",
+          { p_timezone: ownerSetupTz },
+          15000,
+          "Timezone",
+        );
+        if (error) {
+          logClientDiagnostic("tz_gate_apply_error", { message: error.message || String(error) });
+        } else {
+          stfDel("stf_pending_tz");
+        }
+      } catch (e) {
+        logClientDiagnostic("tz_gate_apply_exception", { message: e?.message || String(e) });
+      }
+    }
+    btn.disabled = false;
     render();
   };
 }
