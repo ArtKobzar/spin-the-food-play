@@ -466,8 +466,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=5b9cfe9";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=5b9cfe9";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=54f9f5e";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=54f9f5e";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -635,6 +635,7 @@ async function refreshMembership() {
   if (error) { console.error("[stf-auth] membership fetch failed:", error); membership = null; return; }
   membership = data;
   applyMembershipToFamily();
+  await syncTzGateWithFamily();
 }
 
 async function refreshMembershipWithRetry(maxAttempts = 4) {
@@ -752,6 +753,22 @@ function needsDeviceLangGate() {
 // same pattern as stf_lang.
 function needsDeviceTzGate() {
   return !stfGet("stf_tz_confirmed");
+}
+
+// React shell onboarding writes timezone server-side before play opens. Skip the
+// redundant device gate when the family already has a configured timezone.
+async function syncTzGateWithFamily() {
+  if (stfGet("stf_tz_confirmed")) return;
+  if (!membership?.family_id) return;
+  try {
+    const { data: snap, error } = await sb.rpc("spin_food_snapshot");
+    if (error || !snap?.family_settings?.timezone) return;
+    ownerSetupTz = snap.family_settings.timezone;
+    stfSet("stf_tz_confirmed", "1");
+    stfDel("stf_pending_tz");
+  } catch (e) {
+    logClientDiagnostic("tz_gate_sync_error", { message: e?.message || String(e) });
+  }
 }
 
 function needsOnboardLangGate(memberId) {
@@ -3318,8 +3335,17 @@ function renderTzGate() {
   app.innerHTML = `<div class="ob">${timezoneContentHtml()}
     <button class="btn btn-primary ob-next" id="tzGateNext" style="margin-top:16px">${tr('renderTzGate.continue')}</button>
   </div>`;
+  const select = document.getElementById("tzSelect");
+  const btn = document.getElementById("tzGateNext");
+  if (!select || !btn) {
+    console.error("[stf-render] renderTzGate: controls missing after paint");
+    app.innerHTML = `<div class="gate"><h1>🕐</h1><p>${tr('timezoneContentHtml.confirm-your-timezone')}</p>
+      <button class="who-btn" id="tzGateRetry">${tr('render.try-again')}</button></div>`;
+    document.getElementById("tzGateRetry").onclick = () => renderTzGate();
+    return;
+  }
   wireTimezoneSelect();
-  document.getElementById("tzGateNext").onclick = async () => {
+  btn.onclick = async () => {
     const btn = document.getElementById("tzGateNext");
     btn.disabled = true;
     stfSet("stf_tz_confirmed", "1");
@@ -4114,11 +4140,14 @@ function openDayRules() {
 // submit handler - see ownerSetupStep / renderOwnerSetup() above.
 // ============================================================
 function commonTimezones() {
-  try {
-    if (typeof Intl.supportedValuesOf === "function") return Intl.supportedValuesOf("timeZone");
-  } catch (e) { /* fall through to the curated list below */ }
-  return ["Europe/Amsterdam", "Europe/London", "Europe/Berlin", "Europe/Kyiv", "Europe/Moscow",
+  const curated = ["Europe/Amsterdam", "Europe/London", "Europe/Berlin", "Europe/Kyiv", "Europe/Moscow",
     "America/New_York", "America/Chicago", "America/Los_Angeles", "Asia/Dubai", "Asia/Almaty", "Australia/Sydney"];
+  const detected = timezoneDetected();
+  const selected = ownerSetupTz || game?.familyTimezone || detected;
+  const zones = [...curated];
+  if (selected && !zones.includes(selected)) zones.unshift(selected);
+  if (detected && !zones.includes(detected)) zones.unshift(detected);
+  return zones;
 }
 function timezoneDetected() {
   let detected = "Europe/Amsterdam";
@@ -9055,7 +9084,7 @@ window.addEventListener("message", (event) => {
   if (!isAllowedStfParentOrigin(event.origin)) return;
   const msg = event.data;
   if (msg?.type === "STF_SNAPSHOT_REFRESH") {
-    if (membership) pullLatest();
+    if (membership && !needsDeviceLangGate() && !needsDeviceTzGate()) pullLatest();
     return;
   }
   if (!msg || msg.type !== "STF_SESSION" || !msg.payload) return;
