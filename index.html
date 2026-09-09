@@ -477,8 +477,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=87cd4b9";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=87cd4b9";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=68e8f86";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=68e8f86";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2808,6 +2808,12 @@ function setEmbedShell(on) {
   embedShell = !!on;
   applyEmbedShellClass();
 }
+// When play signs out, the React shell (different origin, different localStorage)
+// must also sign out. Post STF_SIGN_OUT to the parent so it can mirror the call.
+function notifyShellSignOut() {
+  if (!embedShell) return;
+  try { window.parent.postMessage({ type: "STF_SIGN_OUT" }, "*"); } catch (_) {}
+}
 let modalOpen = false;
 let pendingRemote = null;
 let online = new Set();
@@ -3310,6 +3316,7 @@ function render() {
           <button class="mini-btn" id="loadSignOut" style="margin-top:8px">${tr('render.sign-out')}</button></div>`;
         document.getElementById("loadRetry").onclick = () => { loadError = null; game = null; kickLoad(); };
         document.getElementById("loadSignOut").onclick = async () => {
+          notifyShellSignOut();
           await sb.auth.signOut();
           authSession = null;
           membership = null;
@@ -3591,6 +3598,7 @@ function renderInvitationOnboarding(preset = null) {
 
   document.getElementById("signoutBtn2").onclick = async () => {
     clearFoundingSessionKeys();
+    notifyShellSignOut();
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
   };
 
@@ -3784,6 +3792,7 @@ function renderCreateHouseholdOnboarding(preset = null) {
 
   document.getElementById("signoutBtn2").onclick = async () => {
     clearFoundingSessionKeys();
+    notifyShellSignOut();
     await sb.auth.signOut(); authSession = null; membership = null; me = null; render();
   };
 
@@ -3927,6 +3936,7 @@ function openSettings() {
   };
   v.querySelector("#signoutBtn3").onclick = async () => {
     closeModal();
+    notifyShellSignOut();
     await sb.auth.signOut();
     authSession = null; membership = null; me = null; game = null; ob = null;
     ownerSetupStep = "mealshape"; mealShapeDraft = null; ownerSetupTz = null;
@@ -9114,6 +9124,18 @@ window.addEventListener("message", (event) => {
   }
   if (msg?.type === "STF_SNAPSHOT_REFRESH") {
     if (membership && !needsDeviceLangGate() && !needsDeviceTzGate()) pullLatest();
+    return;
+  }
+  if (msg?.type === "STF_PREFS_SYNC") {
+    // React shell saved lang/units prefs; apply on this origin.
+    const p = msg.payload || {};
+    if (p.lang && UI_LOCALES.some((l) => l.code === p.lang)) {
+      pickLanguage(p.lang);
+    }
+    if (p.units === "metric" || p.units === "imperial") {
+      saveUnitsChoice(p.units);
+      if (game) safeRender("prefs_sync");
+    }
     return;
   }
   if (!msg || msg.type !== "STF_SESSION" || !msg.payload) return;
