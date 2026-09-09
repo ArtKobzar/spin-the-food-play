@@ -25,6 +25,16 @@
     background: #fafaf7; color: #1f2937; overscroll-behavior: none;
   }
   #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 88px; }
+  /* React shell embeds play in a full-viewport iframe; its own bottom nav
+     (Menu | Settings, z-index:50) floats on top. Hide play's floating tab bar
+     and add bottom padding equal to the React nav height (56px) so menu content
+     isn't clipped behind it. The iframe viewport = 100dvh, so fixed elements
+     inside play use the full screen height correctly. */
+  html.embed-shell #app {
+    min-height: 100dvh;
+    padding-bottom: calc(56px + max(12px, env(safe-area-inset-bottom)));
+  }
+  html.embed-shell .nav { display: none !important; }
 
   /* identity gate */
   .gate { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 28px; gap: 14px; text-align: center; }
@@ -466,8 +476,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=54f9f5e";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=54f9f5e";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=55b041e";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=55b041e";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2788,6 +2798,15 @@ function wireAdvFilterPanel(root, idPrefix, f, onChange) {
 let game = null;      // { week, wishes, duel, activity, locked }
 let me = localStorage.getItem("stf_me") || null;
 let tab = "menu";
+// True when loaded inside the React shell iframe (spin-the-food.com /app/menu).
+let embedShell = window.parent !== window;
+function applyEmbedShellClass() {
+  document.documentElement.classList.toggle("embed-shell", embedShell);
+}
+function setEmbedShell(on) {
+  embedShell = !!on;
+  applyEmbedShellClass();
+}
 let modalOpen = false;
 let pendingRemote = null;
 let online = new Set();
@@ -2903,13 +2922,7 @@ async function kickLoad() {
     await load();
   } finally {
     loadInFlight = false;
-    try {
-      render();
-    } catch (e) {
-      console.error("[stf-render] kickLoad render failed:", e);
-      logClientDiagnostic("kickload_render_exception", { message: e?.message || String(e), stack: e?.stack || null });
-      toast(tr('anonymous.something-went-wrong-please-try-that-again'));
-    }
+    safeRender("kickLoad");
   }
 }
 
@@ -3256,6 +3269,15 @@ function clearSlot(day, mealKey) {
 
 // ── render ──
 const app = document.getElementById("app");
+function safeRender(context = "unknown") {
+  try {
+    render();
+  } catch (e) {
+    console.error(`[stf-render] ${context} failed:`, e);
+    logClientDiagnostic("render_exception", { context, message: e?.message || String(e), stack: e?.stack || null });
+    if (game) toast(tr('anonymous.something-went-wrong-please-try-that-again'));
+  }
+}
 function render() {
   syncLangFromStorage();
 
@@ -7013,6 +7035,7 @@ function renderFeed() {
 function ago(ts) { const s = (Date.now()-ts)/1000; if (s<60) return tr('ago.just-now'); if (s<3600) return Math.floor(s/60)+tr('ago.m-ago'); return Math.floor(s/3600)+tr('ago.h-ago'); }
 
 function nav() {
+  if (embedShell) return "";
   // Order: Spin, Wish, Menu, Duel, Family. Menu sits dead center and gets the
   // raised "big" bubble treatment below - it's the weekly-plan home screen, the one
   // tab worth a second of extra visual weight versus the other four.
@@ -9083,23 +9106,35 @@ async function startGamePlumbingIfReady() {
 window.addEventListener("message", (event) => {
   if (!isAllowedStfParentOrigin(event.origin)) return;
   const msg = event.data;
+  if (msg?.type === "STF_EMBED_SHELL") {
+    setEmbedShell(true);
+    if (game) safeRender("embed_shell");
+    return;
+  }
   if (msg?.type === "STF_SNAPSHOT_REFRESH") {
     if (membership && !needsDeviceLangGate() && !needsDeviceTzGate()) pullLatest();
     return;
   }
   if (!msg || msg.type !== "STF_SESSION" || !msg.payload) return;
+  setEmbedShell(true);
   const { access_token, refresh_token } = msg.payload;
   if (!access_token || !refresh_token) return;
   applyHandoffTokens(access_token, refresh_token).then(async (ok) => {
-    if (!ok) {
+    try {
+      if (!ok) {
+        try { event.source?.postMessage({ type: "STF_SESSION_ACK", ok: false }, event.origin); } catch (_) {}
+        return;
+      }
+      if (!needsDeviceLangGate()) {
+        await startGamePlumbingIfReady();
+        if (!loadInFlight) safeRender("stf_session");
+      }
+      try { event.source?.postMessage({ type: "STF_SESSION_ACK", ok: true }, event.origin); } catch (_) {}
+    } catch (e) {
+      console.error("[stf-auth] STF_SESSION handoff failed:", e);
+      logClientDiagnostic("stf_session_handoff_error", { message: e?.message || String(e), stack: e?.stack || null });
       try { event.source?.postMessage({ type: "STF_SESSION_ACK", ok: false }, event.origin); } catch (_) {}
-      return;
     }
-    if (!needsDeviceLangGate()) {
-      await startGamePlumbingIfReady();
-      render();
-    }
-    try { event.source?.postMessage({ type: "STF_SESSION_ACK", ok: true }, event.origin); } catch (_) {}
   });
 });
 
@@ -9107,29 +9142,36 @@ window.addEventListener("message", (event) => {
 // Auth-first: parent handoff hash/postMessage, then persisted session.
 // Only start realtime + load spin_play_state once we have session + membership.
 (async function () {
+  try {
+  applyEmbedShellClass();
   await loadUiLocales();
   await bootstrapAuthSession();
 
   // React to future auth events (magic-link login, sign-out, tab sync).
   sb.auth.onAuthStateChange(async (event, session) => {
-    authSession = session;
-    // Don't re-render over the language gate — Safari loses dynamic tap handlers.
-    if (needsDeviceLangGate()) return;
-    if (event === "SIGNED_IN") {
-      await refreshMembership();
-      if (membership && !rtChan) {
-        if (!me) me = membership.member_id;
-        joinPresence();
-        await kickLoad();
-        if (game) {
-          subscribe();
-          startSyncWatchers();
+    try {
+      authSession = session;
+      // Don't re-render over the language gate — Safari loses dynamic tap handlers.
+      if (needsDeviceLangGate()) return;
+      if (event === "SIGNED_IN") {
+        await refreshMembership();
+        if (membership && !rtChan) {
+          if (!me) me = membership.member_id;
+          joinPresence();
+          await kickLoad();
+          if (game) {
+            subscribe();
+            startSyncWatchers();
+          }
         }
+      } else if (event === "SIGNED_OUT") {
+        membership = null; me = null; game = null; loadError = null;
       }
-    } else if (event === "SIGNED_OUT") {
-      membership = null; me = null; game = null; loadError = null;
+      safeRender("auth_state_change");
+    } catch (e) {
+      console.error("[stf-auth] onAuthStateChange failed:", e);
+      logClientDiagnostic("auth_state_change_error", { message: e?.message || String(e), stack: e?.stack || null });
     }
-    render();
   });
 
   if (authSession) await refreshMembership();
@@ -9144,13 +9186,17 @@ window.addEventListener("message", (event) => {
     history.replaceState({}, "", u.toString());
   }
 
-  render(); // sign-in gate / invitation onboarding / lang gate / app
+  safeRender("boot_initial"); // sign-in gate / invitation onboarding / lang gate / app
 
   // If we already have auth + membership on cold boot, start the game plumbing.
   // Skip while the language gate is showing — let the user pick first.
   if (authSession && membership && !needsDeviceLangGate()) {
     await startGamePlumbingIfReady();
-    render();
+    if (!loadInFlight) safeRender("boot_post_plumbing");
+  }
+  } catch (e) {
+    console.error("[stf-boot] failed:", e);
+    logClientDiagnostic("boot_error", { message: e?.message || String(e), stack: e?.stack || null });
   }
 })();
 </script>
