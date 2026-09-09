@@ -25,16 +25,17 @@
     background: #fafaf7; color: #1f2937; overscroll-behavior: none;
   }
   #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 88px; }
-  /* React shell embeds play in a full-viewport iframe; its own bottom nav
-     (Menu | Settings, z-index:50) floats on top. Hide play's floating tab bar
-     and add bottom padding equal to the React nav height (56px) so menu content
-     isn't clipped behind it. The iframe viewport = 100dvh, so fixed elements
-     inside play use the full screen height correctly. */
+  /* React shell embeds play in a full-viewport iframe. Its bottom nav
+     (Menu | Settings, z-index:50) covers the bottom 56px. Push play's
+     floating tab bar above the React nav so both are accessible, and add
+     padding-bottom so content doesn't hide behind either nav. */
+  html.embed-shell .nav {
+    bottom: calc(56px + 10px + env(safe-area-inset-bottom, 0px)) !important;
+  }
   html.embed-shell #app {
     min-height: 100dvh;
-    padding-bottom: calc(56px + max(12px, env(safe-area-inset-bottom)));
+    padding-bottom: calc(56px + 88px);
   }
-  html.embed-shell .nav { display: none !important; }
 
   /* identity gate */
   .gate { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 40px 28px; gap: 14px; text-align: center; }
@@ -476,8 +477,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=55b041e";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=55b041e";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=87cd4b9";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=87cd4b9";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
