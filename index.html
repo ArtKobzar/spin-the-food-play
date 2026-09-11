@@ -25,16 +25,11 @@
     background: #fafaf7; color: #1f2937; overscroll-behavior: none;
   }
   #app { max-width: 480px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 88px; }
-  /* React shell embeds play in a full-viewport iframe. Its bottom nav
-     (Menu | Settings, z-index:50) covers the bottom 56px. Push play's
-     floating tab bar above the React nav so both are accessible, and add
-     padding-bottom so content doesn't hide behind either nav. */
-  html.embed-shell .nav {
-    bottom: calc(56px + 10px + env(safe-area-inset-bottom, 0px)) !important;
-  }
+  /* React shell embeds play in a full-viewport iframe. Play's own bottom
+     nav is hidden in embed mode; keep a little safe-area padding only. */
   html.embed-shell #app {
     min-height: 100dvh;
-    padding-bottom: calc(56px + 88px);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 
   /* identity gate */
@@ -483,8 +478,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=1fa859d";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=1fa859d";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=1b9448c";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=1b9448c";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2820,6 +2815,8 @@ function setEmbedShell(on) {
 // enrich gated separately. Backed by spin_food_my_subscription() RPC.
 const PAYWALL_GATED_MENU_DAYS = new Set([1, 3, 6]); // Tue, Thu, Sun (Mon=0)
 const STF_OPEN_PRICING_MSG = "STF_OPEN_PRICING";
+const STF_OPEN_SETTINGS_MSG = "STF_OPEN_SETTINGS";
+const STF_REDO_PROFILE_MSG = "STF_REDO_PROFILE";
 let householdSubscription = { tier: "free", monthlyImportCount: 0, importCap: 5 };
 
 function isPaidTier() { return householdSubscription.tier === "paid"; }
@@ -3961,7 +3958,15 @@ function renderCreateHouseholdOnboarding(preset = null) {
   };
 }
 
-// settings - always reachable from the ⚙️ in the top bar
+function openShellSettings() {
+  if (embedShell) {
+    try { window.parent.postMessage({ type: STF_OPEN_SETTINGS_MSG }, "*"); } catch (_) {}
+    return;
+  }
+  openSettings();
+}
+
+// settings - always reachable from the ⚙️ in the top bar (standalone play only)
 function openSettings() {
   const isOwner = Boolean(membership?.is_owner);
   const email = authSession?.user?.email || "";
@@ -7160,9 +7165,9 @@ function wire() {
   const pill = document.getElementById("mePill");
   // The "me" pill now opens Settings (which is where sign-out + invite live).
   // The old member-switcher is gone: identity is bound to the auth session.
-  if (pill) pill.onclick = openSettings;
+  if (pill) pill.onclick = openShellSettings;
   const settings = document.getElementById("settingsBtn");
-  if (settings) settings.onclick = openSettings;
+  if (settings) settings.onclick = openShellSettings;
   document.querySelectorAll("[data-feedjob]").forEach(el => el.onclick = () => {
     const f = familyFeed[+el.dataset.feedjob];
     const j = f && f.job;
@@ -9252,6 +9257,15 @@ window.addEventListener("message", (event) => {
   }
   if (msg?.type === "STF_SUBSCRIPTION_REFRESH") {
     loadSubscription().then(() => { if (game) safeRender("subscription_refresh"); });
+    return;
+  }
+  if (msg?.type === STF_REDO_PROFILE_MSG) {
+    if (me) {
+      stfDel(profileCacheKey(me));
+      if (game?.profiles) delete game.profiles[me];
+    }
+    obReset();
+    if (game) safeRender("redo_profile");
     return;
   }
   if (msg?.type === "STF_PREFS_SYNC") {
