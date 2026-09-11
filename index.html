@@ -140,6 +140,12 @@
   .menu-list { padding: 0 14px; display: flex; flex-direction: column; gap: 8px; }
   .day-block { background: #fff; border: 2px solid #eee; border-radius: 16px; overflow: hidden; }
   .day-block.locked { border-color: var(--green); }
+  .day-block.paywall-locked { opacity: .62; border-color: #e5e7eb; background: #f9fafb; }
+  .day-block.paywall-locked .day-hd { color: #9ca3af; }
+  .day-paywall-cta { padding: 10px 12px 12px; text-align: center; border-top: 1px dashed #e5e7eb; }
+  .day-paywall-cta button { border: 1.5px solid var(--amber); background: var(--amber-tint); color: var(--amber-text); border-radius: 10px; padding: 6px 12px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .menu-import-cap-banner { margin: 0 16px 10px; padding: 10px 14px; background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 12px; font-size: 12.5px; line-height: 1.45; color: #92400e; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .menu-import-cap-banner button { flex: 0 0 auto; border: none; background: var(--amber); color: var(--amber-text); border-radius: 10px; padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
   .day-hd { padding: 6px 12px 4px; font-weight: 800; font-size: 13px; color: #555; background: #fafaf9; border-bottom: 1px solid #f0f0ee; }
   .slot { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid #f7f7f5; min-height: 42px; }
   .slot:last-child { border-bottom: none; }
@@ -477,8 +483,8 @@
 // deploy on our side to explain it. Bump deliberately if a newer version is
 // ever needed, not automatically.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
-import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=68e8f86";
-import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=68e8f86";
+import { initI18n, refreshI18n } from "./i18n-runtime.mjs?v=1fa859d";
+import { buildRecipeDetailStepViewModels, sliceIndexedItems } from "./recipe-detail-steps.mjs?v=1fa859d";
 
 const SUPABASE_URL = "https://jelvmygvviomdlrziskr.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImplbHZteWd2dmlvbWRscnppc2tyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzE3MzksImV4cCI6MjA4OTk0NzczOX0.oRatIEeI84VrgrGksRWzROMn9JzppP0y0oaIUaSeJWQ";
@@ -2808,6 +2814,70 @@ function setEmbedShell(on) {
   embedShell = !!on;
   applyEmbedShellClass();
 }
+
+// ── Subscription / paywall (SPEC_MVP_SCOPE §4.1) ───────────────────────────
+// Tue/Thu/Sun (play week indices 1/3/6) gated on free tier; import cap + LLM
+// enrich gated separately. Backed by spin_food_my_subscription() RPC.
+const PAYWALL_GATED_MENU_DAYS = new Set([1, 3, 6]); // Tue, Thu, Sun (Mon=0)
+const STF_OPEN_PRICING_MSG = "STF_OPEN_PRICING";
+let householdSubscription = { tier: "free", monthlyImportCount: 0, importCap: 5 };
+
+function isPaidTier() { return householdSubscription.tier === "paid"; }
+function isMenuDayGated(di) {
+  if (isPaidTier()) return false;
+  return PAYWALL_GATED_MENU_DAYS.has(di);
+}
+function isImportCapHit() {
+  if (householdSubscription.importCap === null) return false;
+  return householdSubscription.monthlyImportCount >= householdSubscription.importCap;
+}
+function isLlmGated() { return !isPaidTier(); }
+function remainingImportsCount() {
+  if (householdSubscription.importCap === null) return null;
+  return Math.max(0, householdSubscription.importCap - householdSubscription.monthlyImportCount);
+}
+
+async function loadSubscription() {
+  const { data, error } = await sb.rpc("spin_food_my_subscription");
+  if (error) {
+    console.warn("[stf] subscription fetch failed:", error.message);
+    return;
+  }
+  const tier = data?.subscription_tier === "paid" ? "paid" : "free";
+  householdSubscription = {
+    tier,
+    monthlyImportCount: Number(data?.monthly_import_count ?? 0),
+    importCap: tier === "paid" ? null : Number(data?.import_cap ?? 5),
+  };
+}
+
+function openUpgradePaywall(reason) {
+  const titles = {
+    day: "Unlock the full week",
+    import: "Import limit reached",
+    llm: "AI features need Household",
+  };
+  const bodies = {
+    day: "Tue, Thu, and Sun are part of Household. Upgrade to plan all seven days.",
+    import: `You've used all ${householdSubscription.importCap} imports this month. Upgrade for unlimited URL, photo, and YouTube imports.`,
+    llm: "Recipe Enrich and other AI-powered tools are included with Household.",
+  };
+  const title = titles[reason] || "Upgrade to Household";
+  const body = bodies[reason] || "Get the full week, unlimited imports, and AI features.";
+  const v = modal(`<h3>🔒 ${title}</h3>
+    <div style="font-size:14px;color:#555;line-height:1.6;margin-top:8px">${body}</div>
+    <button class="btn btn-primary" id="payUpgrade" style="width:100%;margin-top:16px">✨ Upgrade</button>
+    <button class="btn btn-ghost" id="payDismiss" style="width:100%;margin-top:8px">Not now</button>`);
+  v.querySelector("#payUpgrade").onclick = () => {
+    closeModal();
+    if (embedShell) {
+      try { window.parent.postMessage({ type: STF_OPEN_PRICING_MSG }, "*"); } catch (_) {}
+    } else {
+      window.open("https://spin-the-food.com/pricing", "_blank", "noopener");
+    }
+  };
+  v.querySelector("#payDismiss").onclick = closeModal;
+}
 // When play signs out, the React shell (different origin, different localStorage)
 // must also sign out. Post STF_SIGN_OUT to the parent so it can mirror the call.
 function notifyShellSignOut() {
@@ -2872,6 +2942,7 @@ function aiPopulateWeek() {
     }
   };
   for (let i = 0; i < 7; i++) {
+    if (isMenuDayGated(i)) continue;
     // breakfast (skip weekends)
     if (i < 5 && bf.length) fillOrPropose(i, "breakfast", bf[i % bf.length].id, cooks[i % cooks.length]);
     // lunch (soup, day-2 leftover)
@@ -2893,7 +2964,7 @@ async function load() {
   loadError = null;
   try {
     await withTimeout((async () => {
-      await Promise.all([loadCatalog(), loadUnits(), loadFilterVocabulary(), loadFamilyFeed()]);
+      await Promise.all([loadCatalog(), loadUnits(), loadFilterVocabulary(), loadFamilyFeed(), loadSubscription()]);
       const snap = await ensureActivePlan();
       game = snapshotToGame(snap);
       if (!game.profiles) game.profiles = {};
@@ -3019,6 +3090,7 @@ async function pullLatest() {
   if (!error && snap) {
     clearOfflineBanner();
     if (snapshotHasUnknownDish(snap)) await loadCatalog();
+    await loadSubscription();
     applyRemoteFromSnapshot(snap);
   } else if (error && !navigator.onLine) {
     showOfflineBanner();
@@ -3216,6 +3288,10 @@ function joinPresence() {
 // ── mutations (event-sourced via spin_food_apply_event) ──
 
 function assignToSlot(day, mealKey, dishId, cook) {
+  if (isMenuDayGated(day)) {
+    openUpgradePaywall("day");
+    return;
+  }
   const cur = game.week[day][mealKey];
   const d = dishOr(dishId);
   // Session B: slot_filled's server-side assert is now grant-aware
@@ -3270,6 +3346,10 @@ function rejectProposal(day, mealKey) {
   commitAndSync(`${mem(me).en} rejected the ${dishOr(p.dish).em} swap for ${DAYS[day]}`, "dish_proposal_rejected", slotPayload(day, mealKey));
 }
 function clearSlot(day, mealKey) {
+  if (isMenuDayGated(day)) {
+    openUpgradePaywall("day");
+    return;
+  }
   game.week[day][mealKey] = null;
   commitAndSync(`${mem(me).en} cleared ${DAYS[day]} ${MEALS.find(m=>m.k===mealKey).n.toLowerCase()}`, "dish_cleared", slotPayload(day, mealKey));
 }
@@ -4976,12 +5056,20 @@ function topbar() {
 function renderMenu() {
   const g = game;
   const anyMeals = g.week.some(d => d.breakfast || d.lunch || d.dinner);
+  const remaining = remainingImportsCount();
+  const importBanner = !isPaidTier() && remaining !== null && remaining <= 2
+    ? `<div class="menu-import-cap-banner"><span>${remaining === 0
+      ? "No imports left this month on the free plan."
+      : `${remaining} import${remaining === 1 ? "" : "s"} left this month.`}</span><button type="button" id="importCapUpgrade">Upgrade</button></div>`
+    : "";
   let h = `<div class="screen-title"><h2>${tr('renderMenu.this-weeks-menu')}</h2><div class="sub">${tr('renderMenu.build-it-together-or-let-ai-draft-a-full-week')}</div></div>
+    ${importBanner}
     <div class="menu-ai-tip">💡 ${tr('renderMenu.slots-nobody-fills-get-auto-filled-by-ai-every-t')}</div>
     <button class="ai-fill" id="aiFill">🤖 ${tr('renderMenu.generate-a-full-ai-menu')}<small>${anyMeals ? tr('renderMenu.refreshes-ais-own-picks-instantly-meals-you-or-f') : tr('renderMenu.empty-slots-get-filled-cooks-accept-their-meals')}</small></button>
     <div class="menu-list">`;
   g.week.forEach((dayW, di) => {
-    h += `<div class="day-block ${g.locked ? "locked" : ""}"><div class="day-hd">${dayN(di)}</div>`;
+    const dayGated = isMenuDayGated(di);
+    h += `<div class="day-block ${g.locked ? "locked" : ""}${dayGated ? " paywall-locked" : ""}"><div class="day-hd">${dayN(di)}${dayGated ? " 🔒" : ""}</div>`;
     MEALS.forEach(m => {
       const s = dayW[m.k];
       const hasDish = !!(s && s.dish);
@@ -5020,6 +5108,9 @@ function renderMenu() {
               : `<div class="mini-row"><button class="mini-btn accept" data-propacc="${di}-${m.k}">✅ ${tr('anonymous.accept')}</button>
                 <button class="mini-btn reject" data-proprej="${di}-${m.k}">❌ ${tr('anonymous.reject')}</button></div>`}</div>`;
         }
+      } else if (dayGated) {
+        h += `<div class="slot-dish empty">${tr('anonymous.empty')}</div>
+          <div class="mini-row"><button class="mini-btn" data-paywall-day="${di}">🔒 Upgrade to plan</button></div>`;
       } else {
         h += `<div class="slot-dish empty">${tr('anonymous.empty')}</div>
           <div class="mini-row"><button class="mini-btn" data-spin="${di}-${m.k}">🎰 ${tr('anonymous.spin')}</button>
@@ -5030,8 +5121,11 @@ function renderMenu() {
       // replaces the old bare unfiltered dish-chip modal (2026-08-09). 🗑
       // clears the slot directly, since that's no longer reachable from
       // inside the (now-removed) edit modal.
-      h += `</div>${noteBadge}${!g.locked && hasDish ? `<button class="slot-edit" data-edit="${di}-${m.k}" title="${tr('anonymous.pick-a-different-dish')}">✏️</button><button class="slot-edit" data-clearslot="${di}-${m.k}" title="${tr('anonymous.clear-this-slot')}">🗑</button>` : ""}</div>`;
+      h += `</div>${noteBadge}${!g.locked && hasDish && !dayGated ? `<button class="slot-edit" data-edit="${di}-${m.k}" title="${tr('anonymous.pick-a-different-dish')}">✏️</button><button class="slot-edit" data-clearslot="${di}-${m.k}" title="${tr('anonymous.clear-this-slot')}">🗑</button>` : ""}</div>`;
     });
+    if (dayGated) {
+      h += `<div class="day-paywall-cta"><button type="button" data-paywall-day="${di}">Unlock ${dayN(di)}</button></div>`;
+    }
     h += `</div>`;
   });
   h += `</div>${g.locked ? `<div class="banner">🛒 ${tr('renderMenu.grocery-list-generated-from-the-locked-menu')}</div>` : ""}`;
@@ -7089,15 +7183,26 @@ function wire() {
   });
   const aiBtn = document.getElementById("aiFill");
   if (aiBtn) aiBtn.onclick = openAiFill;
+  document.getElementById("importCapUpgrade")?.addEventListener("click", () => openUpgradePaywall("import"));
+  document.querySelectorAll("[data-paywall-day]").forEach(b => b.onclick = () => openUpgradePaywall("day"));
   document.querySelectorAll("[data-cookacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookacc.split("-"); acceptCook(+d,k); });
   document.querySelectorAll("[data-cookrej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookrej.split("-"); declineCook(+d,k); });
   document.querySelectorAll("[data-cookreassign]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.cookreassign.split("-"); openReassignCook(+d,k); });
   document.querySelectorAll("[data-propacc]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.propacc.split("-"); acceptProposal(+d,k); });
   document.querySelectorAll("[data-proprej]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.proprej.split("-"); rejectProposal(+d,k); });
-  document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.spin.split("-"); tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(tr('anonymous.swipe-right-to-fill') + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic); });
-  document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => { const [d,k]=b.dataset.wish.split("-"); wishTarget = { day: +d, meal: k }; tab="wish"; render(); openWish(); });
+  document.querySelectorAll("[data-spin]").forEach(b => b.onclick = () => {
+    const [d,k]=b.dataset.spin.split("-");
+    if (isMenuDayGated(+d)) { openUpgradePaywall("day"); return; }
+    tab="spin"; spinTarget={day:+d,meal:k}; render(); toast(tr('anonymous.swipe-right-to-fill') + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic);
+  });
+  document.querySelectorAll("[data-wish]").forEach(b => b.onclick = () => {
+    const [d,k]=b.dataset.wish.split("-");
+    if (isMenuDayGated(+d)) { openUpgradePaywall("day"); return; }
+    wishTarget = { day: +d, meal: k }; tab="wish"; render(); openWish();
+  });
   document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => {
     const [d,k]=b.dataset.edit.split("-");
+    if (isMenuDayGated(+d)) { openUpgradePaywall("day"); return; }
     spinTarget = { day: +d, meal: k };
     tab = "spin"; render();
     toast(tr('anonymous.swipe-right-to-replace') + dayN(+d) + " " + MEALS.find(m=>m.k===k).ic);
@@ -7211,13 +7316,17 @@ function openAssign(dishId) {
   if (spinTarget) {
     const { day, meal } = spinTarget;
     spinTarget = null;
+    if (isMenuDayGated(day)) {
+      openUpgradePaywall("day");
+      return;
+    }
     const cook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
     assignToSlot(day, meal, dishId, cook);
     return;
   }
   let selDay = null, selMeal = "dinner", selCook = mem(me).cook ? me : (FAMILY.find(m => m.cook)?.id || me);
   const v = modal(`<h3>${dishOr(dishId).em} ${dName(dishOr(dishId))} → ${tr('openAssign.the-menu')}</h3>
-    <div class="sect">${tr('openAssign.which-day')}</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}" data-d="${i}">${dayN(i)}</div>`).join("")}</div>
+    <div class="sect">${tr('openAssign.which-day')}</div><div class="chips-wrap" id="D">${DAYS.map((d,i)=>`<div class="chip ${i===selDay?"on":""}${isMenuDayGated(i)?" dim":""}" data-d="${i}"${isMenuDayGated(i)?' title="Household only"':""}>${dayN(i)}${isMenuDayGated(i)?" 🔒":""}</div>`).join("")}</div>
     <div class="sect">${tr('openAssign.which-meal')}</div><div class="chips-wrap" id="M">${MEALS.map(m=>`<div class="chip ${m.k===selMeal?"on":""}" data-m="${m.k}">${m.ic} ${mealN(m)}</div>`).join("")}</div>
     <div class="sect">${tr('openAssign.who-should-cook-it')}</div><div class="chips-wrap" id="C">${FAMILY.filter(m=>m.cook).map(m=>`<div class="chip ${m.id===selCook?"on":""}" data-c="${m.id}">${m.em} ${mName(m)}</div>`).join("")}</div>
     <button class="btn btn-primary" id="go" style="width:100%;margin-top:16px;opacity:${selDay!==null?1:.4}">${tr('openAssign.send-to-the-menu')}</button>
@@ -7226,7 +7335,11 @@ function openAssign(dishId) {
     v.querySelectorAll("#M .chip").forEach(c=>c.classList.toggle("on",c.dataset.m===selMeal));
     v.querySelectorAll("#C .chip").forEach(c=>c.classList.toggle("on",c.dataset.c===selCook));
     v.querySelector("#go").style.opacity = selDay!==null?1:.4; };
-  v.querySelectorAll("#D .chip").forEach(c=>c.onclick=()=>{selDay=+c.dataset.d;upd();});
+  v.querySelectorAll("#D .chip").forEach(c=>c.onclick=()=>{
+    const di = +c.dataset.d;
+    if (isMenuDayGated(di)) { closeModal(); openUpgradePaywall("day"); return; }
+    selDay = di; upd();
+  });
   v.querySelectorAll("#M .chip").forEach(c=>c.onclick=()=>{selMeal=c.dataset.m;upd();});
   v.querySelectorAll("#C .chip").forEach(c=>c.onclick=()=>{selCook=c.dataset.c;upd();});
   v.querySelector("#go").onclick = () => { if(selDay===null)return; closeModal(); assignToSlot(selDay,selMeal,dishId,selCook); };
@@ -7679,6 +7792,14 @@ function invokeWithTimeout(fnName, opts, timeoutMs = CLIENT_INVOKE_TIMEOUT_MS) {
 // #21's final locked variant: one URL field + 🔍 site-search + 📷 camera + ➕ menu.
 function openImportSheet(targetRecipeId = null) {
   const isEnrich = Boolean(targetRecipeId);
+  if (isEnrich && isLlmGated()) {
+    openUpgradePaywall("llm");
+    return;
+  }
+  if (!isEnrich && isImportCapHit()) {
+    openUpgradePaywall("import");
+    return;
+  }
   // 2026-08-10: this sheet kicks off a network call (upload, then a
   // server-side extract that can legitimately take 30-60s for a photo) - a
   // stray backdrop tap while it's "Analyzing..." used to silently discard
@@ -9123,7 +9244,14 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (msg?.type === "STF_SNAPSHOT_REFRESH") {
-    if (membership && !needsDeviceLangGate() && !needsDeviceTzGate()) pullLatest();
+    if (membership && !needsDeviceLangGate() && !needsDeviceTzGate()) {
+      loadSubscription().then(() => { if (game) safeRender("subscription_refresh"); });
+      pullLatest();
+    }
+    return;
+  }
+  if (msg?.type === "STF_SUBSCRIPTION_REFRESH") {
+    loadSubscription().then(() => { if (game) safeRender("subscription_refresh"); });
     return;
   }
   if (msg?.type === "STF_PREFS_SYNC") {
