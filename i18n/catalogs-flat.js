@@ -345,7 +345,7 @@
     "app.duel.cooks": "cooks",
     "app.duel.cooks-this": "cooks this",
     "app.duel.declare-winner": "Declare winner",
-    "app.duel.action-error": "Action failed."
+    "app.duel.action-error": "Action failed.",
     "app.pricing.title": "Pricing",
     "app.pricing.headline": "Simple, honest pricing",
     "app.pricing.subhead": "Start free. Upgrade when your kitchen needs more days.",
@@ -1344,7 +1344,7 @@
     "app.duel.cooks": "\u0433\u043e\u0442\u043e\u0432\u0438\u0442",
     "app.duel.cooks-this": "\u0433\u043e\u0442\u043e\u0432\u0438\u0442 \u044d\u0442\u043e",
     "app.duel.declare-winner": "\u041e\u0431\u044a\u044f\u0432\u0438\u0442\u044c \u043f\u043e\u0431\u0435\u0434\u0438\u0442\u0435\u043b\u044f",
-    "app.duel.action-error": "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043d\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e."
+    "app.duel.action-error": "\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u043d\u0435 \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u043e.",
     "app.pricing.title": "Тарифы",
     "app.pricing.headline": "Простые и честные цены",
     "app.pricing.subhead": "Начните бесплатно. Обновитесь, когда кухне нужно больше дней.",
@@ -2343,7 +2343,7 @@
     "app.duel.cooks": "\u0433\u043e\u0442\u0443\u0454",
     "app.duel.cooks-this": "\u0433\u043e\u0442\u0443\u0454 \u0446\u0435",
     "app.duel.declare-winner": "\u041e\u0433\u043e\u043b\u043e\u0441\u0438\u0442\u0438 \u043f\u0435\u0440\u0435\u043c\u043e\u0436\u0446\u044f",
-    "app.duel.action-error": "\u0414\u0456\u044f \u043d\u0435 \u0432\u0438\u043a\u043e\u043d\u0430\u043d\u0430."
+    "app.duel.action-error": "\u0414\u0456\u044f \u043d\u0435 \u0432\u0438\u043a\u043e\u043d\u0430\u043d\u0430.",
     "app.pricing.title": "Тарифи",
     "app.pricing.headline": "Прості та чесні ціни",
     "app.pricing.subhead": "Почніть безкоштовно. Оновіться, коли кухні потрібно більше днів.",
@@ -3342,7 +3342,7 @@
     "app.duel.cooks": "kookt",
     "app.duel.cooks-this": "kookt dit",
     "app.duel.declare-winner": "Winnaar aanwijzen",
-    "app.duel.action-error": "Actie mislukt."
+    "app.duel.action-error": "Actie mislukt.",
     "app.pricing.title": "Prijzen",
     "app.pricing.headline": "Eerlijke, eenvoudige prijzen",
     "app.pricing.subhead": "Begin gratis. Upgrade wanneer je keuken meer dagen nodig heeft.",
